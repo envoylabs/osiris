@@ -21,6 +21,8 @@ pub enum CommandKind {
     /// Raising a substantive decision: queued, the item is set aside.
     RaiseSubstantive,
     Decide,
+    /// Recording a check's run against an item.
+    CheckRan,
     Done,
     Land,
     MessageSend,
@@ -36,6 +38,7 @@ impl CommandKind {
         Self::RaiseMechanical,
         Self::RaiseSubstantive,
         Self::Decide,
+        Self::CheckRan,
         Self::Done,
         Self::Land,
         Self::MessageSend,
@@ -103,10 +106,14 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         (S::Ready, C::Claim, Move::To(S::Claimed)),
         (S::Claimed, C::RaiseMechanical, Move::Stay),
         (S::Claimed, C::RaiseSubstantive, Move::To(S::Blocked)),
+        (S::Claimed, C::CheckRan, Move::Stay),
         (S::Claimed, C::Done, Move::To(S::Done)),
         // The last blocker clearing returns the item to Ready; while
         // blockers remain, the decision is logged and the item stays.
         (S::Blocked, C::Decide, Move::To(S::Ready)),
+        // Checks may run again on a done item (the landing runs them
+        // all); its state does not change.
+        (S::Done, C::CheckRan, Move::Stay),
         (S::Done, C::Land, Move::To(S::Landed)),
         // Landed: nothing. Changed only by a further item.
     ]

@@ -4,6 +4,13 @@
 //! it from one state to another are listed in [`crate::transitions`].
 //! Illegal moves are refused by the core, and the table is the
 //! specification the core is tested against.
+//!
+//! These records hold no free text. Where a primitive has text (a goal,
+//! a question, a rationale, a body) the record carries the sequence
+//! number of the event whose text part holds it, as `at`. The fold
+//! therefore reads only structure, and the shell joins text back in for
+//! display. The exceptions are [`Check`] and [`Evidence`], which come
+//! from configuration and disk, not from the log.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +24,8 @@ use crate::text::Text;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Phase {
     pub id: PhaseId,
-    pub goal: Text,
+    /// The event that opened it; its text part holds `goal`.
+    pub at: u64,
     pub state: PhaseState,
 }
 
@@ -36,12 +44,24 @@ pub enum PhaseState {
 pub struct Item {
     pub id: ItemId,
     pub phase: PhaseId,
-    pub goal: Text,
+    /// The event that added it; its text part holds `goal`.
+    pub at: u64,
     /// The checks that must pass for the item to be done, by name.
     pub checks: Vec<CheckId>,
-    /// Items this one cannot start before.
+    /// Items this one cannot start before they have landed.
     pub depends_on: Vec<ItemId>,
+    /// Every check run against it, in order.
+    pub check_runs: Vec<CheckRun>,
     pub state: ItemState,
+}
+
+/// One run of one check against an item.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckRun {
+    pub check: CheckId,
+    pub passed: bool,
+    pub evidence: EvidenceId,
+    pub at: u64,
 }
 
 /// Where an item is in its life.
@@ -76,9 +96,13 @@ pub enum Blocker {
 pub struct Decision {
     pub id: DecisionId,
     pub class: DecisionClass,
-    pub question: Text,
-    pub options: Vec<Text>,
-    /// Index into `options`.
+    /// Who raised it.
+    pub by: Actor,
+    /// The event that raised it; its text part holds `question` and
+    /// `option.0` to `option.{options - 1}`.
+    pub at: u64,
+    pub options: usize,
+    /// Index into the options.
     pub recommended: usize,
     /// The item that raised it, if one did.
     pub about: Option<ItemId>,
@@ -102,7 +126,8 @@ pub enum DecisionState {
         by: Actor,
         /// Index into the decision's options.
         chosen: usize,
-        rationale: Text,
+        /// The event that took it; its text part holds `rationale`.
+        at: u64,
     },
     /// Replaced by a later decision; never edited in place.
     Superseded(DecisionId),
@@ -145,7 +170,8 @@ pub enum EvidenceSource {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Claim {
     pub id: ClaimId,
-    pub statement: Text,
+    /// The event that asserted it; its text part holds `statement`.
+    pub at: u64,
     pub source: Provenance,
     /// The check that would show it false.
     pub falsifier: CheckId,
@@ -184,7 +210,8 @@ pub struct Message {
     pub to: AgentName,
     pub kind: MessageKind,
     pub about: Option<ItemId>,
-    pub body: Text,
+    /// The event that sent it; its text part holds `body`.
+    pub at: u64,
 }
 
 /// What a message is for. No broadcasts and no free chat.

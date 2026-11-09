@@ -259,6 +259,7 @@ mod tests {
     fn refused(raw: &str) -> Category {
         match Text::new("rationale", raw, &policy()) {
             Err(Refusal::Confidential { category, .. }) => category,
+            Err(other) => panic!("unexpected refusal {other:?} for {raw:?}"),
             Ok(_) => panic!("expected a refusal for {raw:?}"),
         }
     }

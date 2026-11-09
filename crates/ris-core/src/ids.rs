@@ -89,8 +89,9 @@ impl fmt::Display for CheckId {
     }
 }
 
-/// A 32-byte hash, hex-encoded when displayed.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+/// A 32-byte hash, hex-encoded when displayed. The default is all
+/// zeros: the `prev` of a log's first event.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {
