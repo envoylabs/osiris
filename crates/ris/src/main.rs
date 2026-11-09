@@ -75,6 +75,11 @@ enum Cmd {
         #[arg(long)]
         rationale: String,
     },
+    /// Run the project's checks here, recording nothing.
+    Check {
+        /// Only these checks; all of them when none are named.
+        names: Vec<String>,
+    },
     /// Mark a held item done, attaching evidence.
     Done {
         item: ItemId,
@@ -218,7 +223,7 @@ fn main() -> ExitCode {
             }
             ExitCode::from(match e {
                 CliError::Refused(_) | CliError::Leak { .. } => 2,
-                CliError::ChecksFailed { .. } => 3,
+                CliError::ChecksFailed { .. } | CliError::CheckFailed { .. } => 3,
                 _ => 1,
             })
         }
@@ -504,6 +509,38 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 text,
                 json!({ "item": item.to_string(), "commit": commit }),
             ))
+        }
+
+        Cmd::Check { names } => {
+            let names: Vec<String> = if names.is_empty() {
+                p.checks.checks.keys().cloned().collect()
+            } else {
+                names.clone()
+            };
+            let mut lines = Vec::new();
+            let mut failed = false;
+            let mut results = Vec::new();
+            for name in &names {
+                let check = p.checks.checks.get(name).cloned().ok_or_else(|| {
+                    CliError::Config(format!("check `{name}` is not in .osiris/checks.toml"))
+                })?;
+                let (passed, output) = checks::run_check_quietly(&p.work, &check)?;
+                if passed {
+                    lines.push(format!("{name}: {}", ris::style::passed("passed")));
+                } else {
+                    failed = true;
+                    lines.push(format!("{name}: {}", ris::style::failed("FAILED")));
+                    let tail: Vec<&str> = output.lines().rev().take(20).collect();
+                    for l in tail.into_iter().rev() {
+                        lines.push(format!("  | {l}"));
+                    }
+                }
+                results.push(json!({ "check": name, "passed": passed }));
+            }
+            if failed {
+                return Err(CliError::CheckFailed { lines });
+            }
+            Ok(Output::new(lines.join("\n"), json!({ "checks": results })))
         }
 
         Cmd::Release { item } => {

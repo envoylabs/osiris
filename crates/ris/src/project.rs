@@ -50,6 +50,11 @@ pub enum CliError {
         what: String,
         hits: Vec<crate::exits::Hit>,
     },
+    /// `ris check` found a failing check. Exit status 3. Nothing was
+    /// recorded.
+    CheckFailed {
+        lines: Vec<String>,
+    },
     /// One or more checks failed. Exit status 3. The runs are in the
     /// log and their output is evidence.
     ChecksFailed {
@@ -96,6 +101,7 @@ impl std::fmt::Display for CliError {
                      rotate anything that was a real secret, and run again"
                 )
             }
+            Self::CheckFailed { lines } => write!(f, "{}", lines.join("\n")),
             Self::ChecksFailed {
                 item,
                 stage,

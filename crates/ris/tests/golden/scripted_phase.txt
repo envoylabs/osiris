@@ -220,6 +220,206 @@ $ ris decide D-2 --choose 0 --rationale again
   next: a decision in state taken is settled; raise a new one to supersede it
 [exit 2]
 
+$ ris check test
+test: passed
+[exit 0]
+
+$ ris --json report
+{
+  "answered_outside_options": 0,
+  "items": [
+    {
+      "agent": "heron",
+      "checks": [
+        "test"
+      ],
+      "depends_on": [],
+      "goal": "the event envelope",
+      "id": "I-1",
+      "phase": "P-1",
+      "state": "claimed"
+    },
+    {
+      "checks": [],
+      "depends_on": [
+        "I-1"
+      ],
+      "goal": "the fold",
+      "id": "I-2",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "checks": [],
+      "depends_on": [],
+      "goal": "the cli",
+      "id": "I-3",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "checks": [
+        "lint"
+      ],
+      "depends_on": [],
+      "goal": "a lint fix",
+      "id": "I-4",
+      "phase": "P-1",
+      "state": "ready"
+    }
+  ],
+  "log": {
+    "head": "<hash>",
+    "len": 13
+  },
+  "mechanical": [
+    {
+      "about": "I-1",
+      "by": "agent heron",
+      "chosen": 0,
+      "class": "mechanical",
+      "id": "D-1",
+      "options": [
+        "sha2",
+        "blake3"
+      ],
+      "question": "sha2 or blake3?",
+      "rationale": "checkable with standard tools",
+      "recommended": 0,
+      "state": "taken",
+      "taken_by": "agent heron"
+    }
+  ],
+  "messages": 0,
+  "phase": {
+    "goal": "first slice",
+    "id": "P-1",
+    "state": "open"
+  },
+  "previous_report": "<hash>",
+  "report": "<hash>",
+  "substantive": [
+    {
+      "about": "I-3",
+      "by": "agent heron",
+      "chosen": 1,
+      "class": "substantive",
+      "id": "D-2",
+      "options": [
+        "daemon",
+        "cli-direct"
+      ],
+      "question": "daemon now or CLI-direct?",
+      "rationale": "fewer failure modes for agents",
+      "recommended": 1,
+      "state": "taken",
+      "taken_by": "the person"
+    }
+  ]
+}
+[exit 0]
+
+$ ris check
+[stderr] lint: FAILED
+  | lint error
+test: passed
+[exit 3]
+
+$ ris --json report
+{
+  "answered_outside_options": 0,
+  "items": [
+    {
+      "agent": "heron",
+      "checks": [
+        "test"
+      ],
+      "depends_on": [],
+      "goal": "the event envelope",
+      "id": "I-1",
+      "phase": "P-1",
+      "state": "claimed"
+    },
+    {
+      "checks": [],
+      "depends_on": [
+        "I-1"
+      ],
+      "goal": "the fold",
+      "id": "I-2",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "checks": [],
+      "depends_on": [],
+      "goal": "the cli",
+      "id": "I-3",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "checks": [
+        "lint"
+      ],
+      "depends_on": [],
+      "goal": "a lint fix",
+      "id": "I-4",
+      "phase": "P-1",
+      "state": "ready"
+    }
+  ],
+  "log": {
+    "head": "<hash>",
+    "len": 13
+  },
+  "mechanical": [
+    {
+      "about": "I-1",
+      "by": "agent heron",
+      "chosen": 0,
+      "class": "mechanical",
+      "id": "D-1",
+      "options": [
+        "sha2",
+        "blake3"
+      ],
+      "question": "sha2 or blake3?",
+      "rationale": "checkable with standard tools",
+      "recommended": 0,
+      "state": "taken",
+      "taken_by": "agent heron"
+    }
+  ],
+  "messages": 0,
+  "phase": {
+    "goal": "first slice",
+    "id": "P-1",
+    "state": "open"
+  },
+  "previous_report": "<hash>",
+  "report": "<hash>",
+  "substantive": [
+    {
+      "about": "I-3",
+      "by": "agent heron",
+      "chosen": 1,
+      "class": "substantive",
+      "id": "D-2",
+      "options": [
+        "daemon",
+        "cli-direct"
+      ],
+      "question": "daemon now or CLI-direct?",
+      "rationale": "fewer failure modes for agents",
+      "recommended": 1,
+      "state": "taken",
+      "taken_by": "the person"
+    }
+  ]
+}
+[exit 0]
+
 $ RIS_AGENT=wren ris claim I-4
 claimed I-4: a lint fix
   checks: lint

@@ -58,6 +58,19 @@ pub fn run_check(
     })
 }
 
+/// Run `check` in `dir` without recording anything: whether it passed,
+/// and its combined output.
+pub fn run_check_quietly(dir: &Path, check: &CheckConfig) -> Result<(bool, String), CliError> {
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(&check.command)
+        .current_dir(dir)
+        .output()?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    Ok((out.status.success(), text))
+}
+
 /// `git rev-parse HEAD` in `root`.
 pub fn git_head(root: &Path) -> Result<String, CliError> {
     let out = Command::new("git")

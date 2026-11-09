@@ -296,6 +296,22 @@ fn scripted_phase_matches_the_golden_transcript() {
         &["decide", "D-2", "--choose", "0", "--rationale", "again"],
     );
 
+    // ris check runs checks without recording anything.
+    sb.ok(None, &["check", "test"]);
+    let before = sb.ok(None, &["--json", "report"]).stdout;
+    let r = sb.ris(None, &["check"]);
+    assert_eq!(r.status, 3);
+    assert!(
+        r.stderr.contains("lint: FAILED") && r.stderr.contains("| lint error"),
+        "{}",
+        r.stderr
+    );
+    assert_eq!(
+        sb.ok(None, &["--json", "report"]).stdout,
+        before,
+        "check records nothing"
+    );
+
     // Done runs the item's checks; a failing check leaves it claimed,
     // with the failure as evidence.
     sb.ok(wren, &["claim", "I-4"]);
@@ -473,6 +489,7 @@ fn every_help_fits_one_screen() {
         &["ready"],
         &["claim"],
         &["release"],
+        &["check"],
         &["decision", "raise"],
         &["decide"],
         &["done"],
