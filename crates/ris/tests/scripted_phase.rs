@@ -350,6 +350,16 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.ok(heron, &["inbox"]);
     sb.ok(wren, &["inbox"]);
 
+    sb.ok(None, &["show", "I-1"]);
+    sb.ok(None, &["show", "I-2"]);
+    sb.ok(None, &["show", "D-2"]);
+    sb.ok(None, &["show", "P-1"]);
+    sb.ok(None, &["show", "M-1"]);
+    let r = sb.ris(None, &["show", "I-99"]);
+    assert_eq!(r.status, 1);
+    let r = sb.ris(None, &["show", "banana"]);
+    assert_eq!(r.status, 1);
+    assert!(r.stderr.contains("I-n (item)"));
     sb.ok(None, &["report"]);
     sb.ok(None, &["verify"]);
     sb.ok(None, &["phase", "close"]);
@@ -399,6 +409,7 @@ fn every_help_fits_one_screen() {
         &["merge"],
         &["inbox"],
         &["send"],
+        &["show"],
         &["report"],
         &["verify"],
         &["log"],

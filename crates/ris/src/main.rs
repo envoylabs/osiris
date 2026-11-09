@@ -23,7 +23,9 @@ use ris::render::{self, Output};
 #[command(
     name = "ris",
     version,
-    about = "osiris: decide at the boundaries, build in between"
+    about = "osiris: decide at the boundaries, build in between",
+    after_help = "Ids: I-n item (a unit of work, one commit), D-n decision, P-n phase, \
+                  M-n message, E-<hash> evidence. `ris show <id>` prints any of them."
 )]
 struct Cli {
     /// Print JSON instead of text.
@@ -91,6 +93,8 @@ enum Cmd {
         about: Option<ItemId>,
         body: String,
     },
+    /// One record in full: an item, decision, phase or message by id.
+    Show { id: String },
     /// The phase report.
     Report,
     /// Verify the chain and print the head.
@@ -489,6 +493,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 json!({ "message": id.to_string() }),
             ))
         }
+
+        Cmd::Show { id } => render::show(&p.load()?, id).map_err(CliError::Other),
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 

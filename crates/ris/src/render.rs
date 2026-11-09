@@ -370,3 +370,195 @@ fn previous_report(l: &Loaded, phase: PhaseId) -> Hash {
         .next_back()
         .unwrap_or(Hash::ZERO)
 }
+
+/// `ris show <id>`: one record in full. `id` is an item, decision,
+/// phase or message id; anything else is an error naming the forms.
+pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
+    if let Ok(item) = id.parse::<ris_core::ids::ItemId>() {
+        let i = l
+            .state
+            .items
+            .get(&item)
+            .ok_or_else(|| format!("no item {item}"))?;
+        return Ok(show_item(l, i));
+    }
+    if let Ok(decision) = id.parse::<ris_core::ids::DecisionId>() {
+        let d = l
+            .state
+            .decisions
+            .get(&decision)
+            .ok_or_else(|| format!("no decision {decision}"))?;
+        let mut json = decision_json(l, d);
+        json["raised_at_event"] = json!(d.at);
+        return Ok(Output::new(decision_block(l, d).trim_end(), json));
+    }
+    if let Ok(phase) = id.parse::<PhaseId>() {
+        let p = l
+            .state
+            .phases
+            .get(&phase)
+            .ok_or_else(|| format!("no phase {phase}"))?;
+        let items: Vec<&Item> = l
+            .state
+            .items
+            .values()
+            .filter(|i| i.phase == phase)
+            .collect();
+        let mut s = format!(
+            "{} {}: {}\n",
+            p.id,
+            match p.state {
+                PhaseState::Open => "open",
+                PhaseState::Closed { .. } => "closed",
+            },
+            l.text(p.at, "goal")
+        );
+        for i in &items {
+            s.push_str(&format!("  {}\n", item_line(l, i)));
+        }
+        if let PhaseState::Closed { report } = p.state {
+            s.push_str(&format!("report {report}\n"));
+        }
+        return Ok(Output::new(
+            s.trim_end(),
+            json!({
+                "id": p.id.to_string(),
+                "goal": l.text(p.at, "goal"),
+                "state": match p.state { PhaseState::Open => "open", PhaseState::Closed { .. } => "closed" },
+                "items": items.iter().map(|i| item_json(l, i)).collect::<Vec<_>>(),
+            }),
+        ));
+    }
+    if let Ok(message) = id.parse::<ris_core::ids::MessageId>() {
+        let m = l
+            .state
+            .messages
+            .iter()
+            .find(|m| m.id == message)
+            .ok_or_else(|| format!("no message {message}"))?;
+        return Ok(Output::new(
+            format!(
+                "{} {:?} from {} to {}{}\n  {}",
+                m.id,
+                m.kind,
+                m.from,
+                m.to,
+                m.about.map(|i| format!(" about {i}")).unwrap_or_default(),
+                l.text(m.at, "body")
+            ),
+            message_json(l, m),
+        ));
+    }
+    Err(format!(
+        "`{id}` is not an id; use I-n (item), D-n (decision), P-n (phase) or M-n (message)"
+    ))
+}
+
+fn show_item(l: &Loaded, i: &Item) -> Output {
+    let mut s = format!(
+        "{} {}  (phase {})\n  {}\n",
+        i.id,
+        state_name(&i.state),
+        i.phase,
+        l.text(i.at, "goal")
+    );
+    s.push_str(&format!(
+        "  checks: {}\n",
+        if i.checks.is_empty() {
+            "none".to_owned()
+        } else {
+            i.checks
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    ));
+    if !i.depends_on.is_empty() {
+        let waiting = l.state.unlanded_dependencies(i);
+        s.push_str(&format!(
+            "  depends on: {}{}\n",
+            i.depends_on
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            if waiting.is_empty() {
+                " (all merged)".to_owned()
+            } else {
+                format!(
+                    " (waiting on {})",
+                    waiting
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        ));
+    }
+    match &i.state {
+        ItemState::Claimed { agent } => s.push_str(&format!("  held by: {agent}\n")),
+        ItemState::Blocked { on } => s.push_str(&format!(
+            "  blocked on: {}\n",
+            on.iter()
+                .map(|b| match b {
+                    ris_core::primitives::Blocker::Decision(d) => d.to_string(),
+                    ris_core::primitives::Blocker::Item(i) => i.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        ItemState::Done { evidence } | ItemState::Merged { evidence, .. } => {
+            s.push_str(&format!(
+                "  evidence: {}\n",
+                evidence
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            if let ItemState::Merged { commit, .. } = &i.state {
+                s.push_str(&format!("  commit: {commit}\n"));
+            }
+        }
+        ItemState::Ready => {}
+    }
+    let decisions: Vec<&Decision> = l
+        .state
+        .decisions
+        .values()
+        .filter(|d| d.about == Some(i.id))
+        .collect();
+    if !decisions.is_empty() {
+        s.push_str("  decisions:\n");
+        for d in &decisions {
+            s.push_str(&format!("    {}\n", decision_line(l, d)));
+        }
+    }
+    if !i.check_runs.is_empty() {
+        s.push_str("  check runs:\n");
+        for r in &i.check_runs {
+            s.push_str(&format!(
+                "    {} {} ({})\n",
+                r.check,
+                if r.passed { "passed" } else { "FAILED" },
+                r.evidence
+            ));
+        }
+    }
+    let mut json = item_json(l, i);
+    json["decisions"] = json!(
+        decisions
+            .iter()
+            .map(|d| decision_json(l, d))
+            .collect::<Vec<_>>()
+    );
+    json["check_runs"] = json!(
+        i.check_runs
+            .iter()
+            .map(|r| json!({ "check": r.check.to_string(), "passed": r.passed, "evidence": r.evidence.to_string() }))
+            .collect::<Vec<_>>()
+    );
+    Output::new(s.trim_end(), json)
+}

@@ -300,6 +300,59 @@ holding I-4   claimed  a lint fix (wren)
 no messages
 [exit 0]
 
+$ ris show I-1
+I-1 merged  (phase P-1)
+  the event envelope
+  checks: test
+  evidence: E-<hash>
+  commit: <hash>
+  decisions:
+    D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
+  check runs:
+    test passed (E-<hash>)
+    test passed (E-<hash>)
+    lint FAILED (E-<hash>)
+    test passed (E-<hash>)
+    lint passed (E-<hash>)
+    test passed (E-<hash>)
+[exit 0]
+
+$ ris show I-2
+I-2 claimed  (phase P-1)
+  the fold
+  checks: none
+  depends on: I-1 (all merged)
+  held by: wren
+[exit 0]
+
+$ ris show D-2
+D-2 [substantive] daemon now or CLI-direct?  (about I-3)
+     0: daemon
+   * 1: cli-direct
+     taken by the person: 1. fewer failure modes for agents
+[exit 0]
+
+$ ris show P-1
+P-1 open: first slice
+  I-1   merged   the event envelope (<hash>)
+  I-2   claimed  the fold (wren)
+  I-3   done     the cli
+  I-4   claimed  a lint fix (wren)
+[exit 0]
+
+$ ris show M-1
+M-1 Question from agent wren to heron about I-2
+  is the fold's interface settled?
+[exit 0]
+
+$ ris show I-99
+[stderr] no item I-99
+[exit 1]
+
+$ ris show banana
+[stderr] `banana` is not an id; use I-n (item), D-n (decision), P-n (phase) or M-n (message)
+[exit 1]
+
 $ ris report
 P-1 open: first slice
 items: 2 claimed, 1 done, 1 merged
