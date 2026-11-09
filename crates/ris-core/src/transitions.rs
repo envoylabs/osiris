@@ -28,6 +28,8 @@ pub enum CommandKind {
     MessageSend,
     /// Returning a claimed item to ready: by its holder, or the person.
     Release,
+    /// An auditor recording that it has reviewed an item.
+    Audit,
 }
 
 impl CommandKind {
@@ -45,6 +47,7 @@ impl CommandKind {
         Self::Merge,
         Self::MessageSend,
         Self::Release,
+        Self::Audit,
     ];
 }
 
@@ -121,6 +124,10 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         // all); its state does not change.
         (S::Done, C::CheckRan, Move::Stay),
         (S::Done, C::Merge, Move::To(S::Merged)),
+        // Audit never holds anything up: it is recorded against a done
+        // or merged item, and findings are fixed forward.
+        (S::Done, C::Audit, Move::Stay),
+        (S::Merged, C::Audit, Move::Stay),
         // Merged: nothing. Changed only by a further item.
     ]
 };
@@ -220,10 +227,20 @@ mod tests {
 
     #[test]
     fn merged_and_taken_are_terminal() {
+        // Nothing moves an item out of Merged: the only command it
+        // accepts is a review, which leaves it where it is.
         for command in CommandKind::ALL {
-            assert_eq!(lookup(ITEM, ItemStateKind::Merged, *command), None);
+            let m = lookup(ITEM, ItemStateKind::Merged, *command);
+            assert!(
+                m.is_none() || m == Some(Move::Stay),
+                "{command:?} moves a merged item"
+            );
             assert_eq!(lookup(DECISION, DecisionStateKind::Taken, *command), None);
         }
+        assert_eq!(
+            lookup(ITEM, ItemStateKind::Merged, CommandKind::Audit),
+            Some(Move::Stay)
+        );
     }
 
     #[test]

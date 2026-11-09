@@ -442,6 +442,12 @@ fn scripted_phase_matches_the_golden_transcript() {
         ],
     );
     sb.ok(None, &["show", "D-3"]);
+    // The auditor's queue: wren reviews heron's merged I-1, not its own.
+    let q = sb.ok(wren, &["audit"]).stdout;
+    assert!(q.contains("I-1") && !q.contains("I-2 "), "{q}");
+    sb.refused(heron, &["audit", "I-1"]);
+    sb.ok(wren, &["audit", "I-1"]);
+    sb.refused(wren, &["audit", "I-1"]);
     sb.ok(None, &["show", "I-1"]);
     sb.ok(None, &["show", "I-2"]);
     sb.ok(None, &["show", "D-2"]);
@@ -500,6 +506,7 @@ fn every_help_fits_one_screen() {
         &["ready"],
         &["claim"],
         &["release"],
+        &["audit"],
         &["check"],
         &["decision", "raise"],
         &["decide"],

@@ -82,6 +82,12 @@ pub enum Structure {
         item: ItemId,
         commit: CommitHash,
     },
+    /// An auditor reviewed a done or merged item. Findings travel as
+    /// messages; this records only that the review happened.
+    ItemAudited {
+        item: ItemId,
+        by: AgentName,
+    },
     DecisionRaised {
         decision: DecisionId,
         class: DecisionClass,

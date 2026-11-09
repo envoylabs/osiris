@@ -93,11 +93,15 @@ Kinds: `handoff`, `interface-changed`, `question`, `finding`.
 
 ## An auditor's seat
 
-An auditor never writes to the tree. For each done item it reads the
-diff and the evidence against the goal, the decisions that touch it and
-these rules, and checks the item's mechanical decisions for any that
-should have been substantive. Findings go to the author as messages; a
-finding the author disputes is raised as a substantive decision.
+An auditor never writes to the tree. `ris audit` is its queue: done and
+merged items it did not write and has not reviewed. For each, it reads
+the diff and the evidence against the goal, the decisions that touch it
+and these rules, and checks the item's mechanical decisions for any
+that should have been substantive. Findings go to the author with
+`ris send <author> --kind finding --about I-n "..."`; a finding the
+author disputes is raised as a substantive decision. `ris audit I-n`
+records the review. Merges never wait for it: findings are fixed
+forward.
 
 ## Onboarding a project
 

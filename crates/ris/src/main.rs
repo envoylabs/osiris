@@ -65,6 +65,8 @@ enum Cmd {
     Claim { item: ItemId },
     /// Return a claimed item to ready: its holder, or the person.
     Release { item: ItemId },
+    /// The review queue; with an item, record that you reviewed it.
+    Audit { item: Option<ItemId> },
     /// Raise a decision: mechanical ones are taken at once and logged;
     /// substantive ones wait for the person and set the item aside.
     Decision {
@@ -650,6 +652,20 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 return Err(CliError::CheckFailed { lines });
             }
             Ok(Output::new(lines.join("\n"), json!({ "checks": results })))
+        }
+
+        Cmd::Audit { item: None } => Ok(render::audit_queue(&p.load()?, &actor)),
+
+        Cmd::Audit { item: Some(item) } => {
+            let by = agent_only(&actor)?;
+            p.run(&Command::Audit {
+                item: *item,
+                by: by.clone(),
+            })?;
+            Ok(Output::new(
+                format!("{item} reviewed by {by}"),
+                json!({ "item": item.to_string(), "by": by.to_string() }),
+            ))
         }
 
         Cmd::Release { item } => {

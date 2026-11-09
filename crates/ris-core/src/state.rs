@@ -149,14 +149,21 @@ impl State {
                         checks: checks.clone(),
                         depends_on: depends_on.clone(),
                         check_runs: Vec::new(),
+                        author: None,
+                        audited_by: Vec::new(),
                         state: ItemState::Ready,
                     },
                 );
             }
             Structure::ItemClaimed { item, agent } => {
-                self.item_mut(seq, *item)?.state = ItemState::Claimed {
+                let i = self.item_mut(seq, *item)?;
+                i.author = Some(agent.clone());
+                i.state = ItemState::Claimed {
                     agent: agent.clone(),
                 };
+            }
+            Structure::ItemAudited { item, by } => {
+                self.item_mut(seq, *item)?.audited_by.push(by.clone());
             }
             Structure::ItemBlocked { item, on } => {
                 self.item_mut(seq, *item)?.state = ItemState::Blocked { on: on.clone() };
