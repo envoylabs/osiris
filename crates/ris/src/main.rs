@@ -338,6 +338,15 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 // Refusals first, so a refused open creates no branch.
                 let l = p.load()?;
                 ris_core::apply(&l.state, &command)?;
+                if p.config.denylist.is_empty() && !p.config.confirm_empty_denylist {
+                    return Err(CliError::Config(
+                        "the denylist in .osiris/config.toml is empty; text is scanned as it is \
+                         written and the log cannot be redacted, so fill it before work starts\n  \
+                         next: add your name, the client's and product names, your home directory; \
+                         or set confirm_empty_denylist = true if empty is deliberate"
+                            .into(),
+                    ));
+                }
                 let branch = open_phase_branch(&p, l.state.next_phase_id())?;
                 let (l, _) = p.run(&command)?;
                 let phase = l.state.open_phase().expect("just opened");

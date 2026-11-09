@@ -63,7 +63,7 @@ fn setup(name: &str, checks: &str, agents: &[&str]) -> (PathBuf, Vec<PathBuf>) {
         .collect();
     fs::write(
         main.join(".osiris/config.toml"),
-        format!("denylist = []\n{seats}"),
+        format!("denylist = [\"example client\"]\n{seats}"),
     )
     .unwrap();
     ok(&main, None, &["phase", "open", "width test"]);
@@ -421,6 +421,10 @@ fn a_local_setup_leaves_nothing_for_git_to_see() {
         "",
         "init --local changes nothing git can see"
     );
+    // The denylist gate: no phase until the denylist is filled.
+    let r = ris(&repo, None, &["phase", "open", "too soon"]);
+    assert_eq!(r.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&r.stderr).contains("denylist"));
     assert!(!repo.join("OSIRIS.md").exists());
     assert!(!repo.join(".gitignore").exists());
     assert!(repo.join(".osiris/OSIRIS.md").exists());

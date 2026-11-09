@@ -199,7 +199,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     let c = fs::read_to_string(&config).unwrap();
     fs::write(
         &config,
-        c.replace("phase_branches = true", "phase_branches = false"),
+        c.replace("phase_branches = true", "phase_branches = false")
+            .replace("denylist = []", "denylist = [\"example client\"]"),
     )
     .unwrap();
     // Checks the sandbox can run: one that passes, one that fails.

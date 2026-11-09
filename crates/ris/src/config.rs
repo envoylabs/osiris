@@ -34,6 +34,11 @@ pub struct Config {
     /// main worktree has checked out, if it is not the main line.
     #[serde(default = "default_true")]
     pub phase_branches: bool,
+    /// `ris phase open` refuses while the denylist is empty, since text
+    /// is scanned as it is written and the log cannot be redacted. Set
+    /// this to say that an empty denylist is deliberate.
+    #[serde(default)]
+    pub confirm_empty_denylist: bool,
 }
 
 fn default_true() -> bool {
@@ -51,6 +56,7 @@ impl Default for Config {
             denylist: Vec::new(),
             main_line: default_main_line(),
             phase_branches: true,
+            confirm_empty_denylist: false,
         }
     }
 }
@@ -106,7 +112,8 @@ impl Config {
 # Terms that must never appear in harness state or commits: your name,
 # client names, your home directory. Matching is case-insensitive.
 # (Top-level keys go above the first [table]; below it, TOML reads them
-# as part of that table.)
+# as part of that table.) `ris phase open` refuses while this is empty:
+# fill it first, or set confirm_empty_denylist = true if empty is right.
 denylist = []
 
 # The branch each phase's branch merges into when the phase closes.
