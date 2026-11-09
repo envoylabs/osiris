@@ -5,12 +5,14 @@
 //! event log. No clock, no filesystem, no database. Those live in the
 //! shell that hosts this crate.
 
+pub mod event;
 pub mod ids;
 pub mod primitives;
 pub mod refusal;
 pub mod text;
 pub mod transitions;
 
+pub use event::{Event, Salt, Structure, TextPart, verify};
 pub use ids::{
     Actor, AgentName, CheckId, ClaimId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
     MessageId, PhaseId,

@@ -1,0 +1,499 @@
+//! The event: one entry in the log, in two parts, hash-chained.
+//!
+//! The structural part (ids, states, which option was chosen) enters the
+//! chain hash directly. The free text (a goal, a rationale, a message
+//! body) enters it by salted hash, so that toxic text can be removed
+//! later without breaking the chain. The fold reads only the structural
+//! part, so state never depends on text that might be gone.
+//!
+//! ```text
+//! text_hash(n) = H("ris-text-v1"  || salt(n) || text(n))
+//! hash(n)      = H("ris-event-v1" || hash(n-1) || structure(n) || text_hash(n))
+//! ```
+//!
+//! The core has no randomness: the shell supplies the salt. Hashing is
+//! SHA-256 over length-prefixed parts, and the canonical form of a part
+//! is its compact JSON, so a chain can be checked outside the harness
+//! with standard tools.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::ids::{
+    Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId, MessageId, PhaseId,
+};
+use crate::primitives::{Blocker, DecisionClass, MessageKind};
+use crate::text::Text;
+
+/// The event format version. Events are versioned from the first
+/// release, with an upgrade step for old versions.
+pub const FORMAT_VERSION: u16 = 1;
+
+/// Random bytes the shell supplies for each event's text hash. Deleted
+/// with the text, so a short text cannot be recovered by guessing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Salt(pub [u8; 16]);
+
+/// The structural part of an event: everything the fold reads. No free
+/// text lives here, by construction: none of these fields is a `Text`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event")]
+pub enum Structure {
+    PhaseOpened {
+        phase: PhaseId,
+    },
+    PhaseClosed {
+        phase: PhaseId,
+        /// Taken over the log's head at close, not over the rendering.
+        report: Hash,
+    },
+    ItemAdded {
+        item: ItemId,
+        phase: PhaseId,
+        checks: Vec<CheckId>,
+        depends_on: Vec<ItemId>,
+    },
+    ItemClaimed {
+        item: ItemId,
+        agent: AgentName,
+    },
+    /// A substantive decision was raised about a claimed item, which is
+    /// set aside until it is taken.
+    ItemBlocked {
+        item: ItemId,
+        on: Vec<Blocker>,
+    },
+    /// An item's blockers all cleared.
+    ItemReady {
+        item: ItemId,
+    },
+    ItemDone {
+        item: ItemId,
+        evidence: Vec<EvidenceId>,
+    },
+    ItemLanded {
+        item: ItemId,
+        commit: CommitHash,
+    },
+    DecisionRaised {
+        decision: DecisionId,
+        class: DecisionClass,
+        by: Actor,
+        about: Option<ItemId>,
+        /// How many options the text part carries, as `option.0` and so
+        /// on.
+        options: usize,
+        recommended: usize,
+    },
+    DecisionTaken {
+        decision: DecisionId,
+        by: Actor,
+        chosen: usize,
+    },
+    CheckRan {
+        item: ItemId,
+        check: CheckId,
+        passed: bool,
+        evidence: EvidenceId,
+    },
+    MessageSent {
+        message: MessageId,
+        from: Actor,
+        to: AgentName,
+        kind: MessageKind,
+        about: Option<ItemId>,
+    },
+}
+
+/// The free-text part of an event, by field name. Which names an event
+/// kind carries is documented on [`Structure`]'s variants; the fold
+/// never reads this.
+pub type TextPart = BTreeMap<String, Text>;
+
+/// One entry in the log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Event {
+    /// Position in the log, from 1.
+    pub seq: u64,
+    pub version: u16,
+    /// The previous event's `hash`; all zeros for the first.
+    pub prev: Hash,
+    pub structure: Structure,
+    /// `H(salt, text)`, kept after the text is removed.
+    pub text_hash: Hash,
+    /// `None` once the text has been removed.
+    pub salt: Option<Salt>,
+    /// `None` once the text has been removed.
+    pub text: Option<TextPart>,
+    /// The chain hash of this event.
+    pub hash: Hash,
+}
+
+impl Event {
+    /// Build the event that follows `prev` (the head's hash, or
+    /// [`Hash::ZERO`] for an empty log).
+    pub fn new(seq: u64, prev: Hash, structure: Structure, text: TextPart, salt: Salt) -> Self {
+        let text_hash = hash_text(&salt, &text);
+        let hash = hash_event(&prev, &structure, &text_hash);
+        Self {
+            seq,
+            version: FORMAT_VERSION,
+            prev,
+            structure,
+            text_hash,
+            salt: Some(salt),
+            text: Some(text),
+            hash,
+        }
+    }
+
+    /// Remove the text and its salt. The chain hash is unchanged.
+    pub fn redacted(mut self) -> Self {
+        self.salt = None;
+        self.text = None;
+        self
+    }
+
+    /// One text field, if the event still has its text.
+    pub fn text_field(&self, name: &str) -> Option<&Text> {
+        self.text.as_ref()?.get(name)
+    }
+}
+
+impl Hash {
+    /// The `prev` of the first event.
+    pub const ZERO: Hash = Hash([0; 32]);
+}
+
+fn canonical<T: Serialize>(value: &T) -> Vec<u8> {
+    serde_json::to_vec(value).expect("event parts serialize")
+}
+
+fn digest(domain: &str, parts: &[&[u8]]) -> Hash {
+    let mut h = Sha256::new();
+    h.update(domain.as_bytes());
+    for part in parts {
+        h.update((part.len() as u64).to_be_bytes());
+        h.update(part);
+    }
+    Hash(h.finalize().into())
+}
+
+/// `H("ris-text-v1" || salt || canonical(text))`.
+pub fn hash_text(salt: &Salt, text: &TextPart) -> Hash {
+    digest("ris-text-v1", &[&salt.0, &canonical(text)])
+}
+
+/// `H("ris-event-v1" || prev || canonical(structure) || text_hash)`.
+pub fn hash_event(prev: &Hash, structure: &Structure, text_hash: &Hash) -> Hash {
+    digest(
+        "ris-event-v1",
+        &[&prev.0, &canonical(structure), &text_hash.0],
+    )
+}
+
+/// What verification found in a log that holds together.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Verified {
+    /// The last event's hash; [`Hash::ZERO`] for an empty log.
+    pub head: Hash,
+    pub len: u64,
+    /// Events whose text has been removed. The chain still verifies.
+    pub missing_text: Vec<u64>,
+}
+
+/// Why a log does not hold together.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChainError {
+    /// Sequence numbers must run 1, 2, 3 with no gaps.
+    Sequence {
+        at: usize,
+        expected: u64,
+        found: u64,
+    },
+    /// An event's `prev` is not the hash of the one before.
+    Link { seq: u64 },
+    /// An event's structural part or text hash does not give its hash.
+    Hash { seq: u64 },
+    /// An event's text does not give its text hash.
+    TextHash { seq: u64 },
+    /// Text present without a salt, or a salt without text.
+    HalfRedacted { seq: u64 },
+    /// An event format this version cannot read.
+    Version { seq: u64, version: u16 },
+}
+
+impl std::fmt::Display for ChainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sequence {
+                at,
+                expected,
+                found,
+            } => write!(
+                f,
+                "event at index {at} has seq {found}, expected {expected}"
+            ),
+            Self::Link { seq } => write!(f, "event {seq} does not link to the one before"),
+            Self::Hash { seq } => write!(f, "event {seq} does not match its hash"),
+            Self::TextHash { seq } => write!(f, "event {seq}'s text does not match its text hash"),
+            Self::HalfRedacted { seq } => {
+                write!(f, "event {seq} has text without salt or salt without text")
+            }
+            Self::Version { seq, version } => write!(
+                f,
+                "event {seq} has format version {version}, which this build cannot read"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ChainError {}
+
+/// Check a log from its first event. Every link and every hash is
+/// recomputed; removed text is reported, not failed.
+pub fn verify(events: &[Event]) -> Result<Verified, ChainError> {
+    let mut prev = Hash::ZERO;
+    let mut missing_text = Vec::new();
+    for (at, e) in events.iter().enumerate() {
+        let expected = at as u64 + 1;
+        if e.seq != expected {
+            return Err(ChainError::Sequence {
+                at,
+                expected,
+                found: e.seq,
+            });
+        }
+        if e.version != FORMAT_VERSION {
+            return Err(ChainError::Version {
+                seq: e.seq,
+                version: e.version,
+            });
+        }
+        if e.prev != prev {
+            return Err(ChainError::Link { seq: e.seq });
+        }
+        if hash_event(&e.prev, &e.structure, &e.text_hash) != e.hash {
+            return Err(ChainError::Hash { seq: e.seq });
+        }
+        match (&e.salt, &e.text) {
+            (Some(salt), Some(text)) => {
+                if hash_text(salt, text) != e.text_hash {
+                    return Err(ChainError::TextHash { seq: e.seq });
+                }
+            }
+            (None, None) => missing_text.push(e.seq),
+            _ => return Err(ChainError::HalfRedacted { seq: e.seq }),
+        }
+        prev = e.hash;
+    }
+    Ok(Verified {
+        head: prev,
+        len: events.len() as u64,
+        missing_text,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::text::Policy;
+
+    fn text(pairs: &[(&str, &str)]) -> TextPart {
+        pairs
+            .iter()
+            .map(|(k, v)| {
+                (
+                    (*k).to_owned(),
+                    Text::new(k, *v, &Policy::default()).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    fn salt(n: u8) -> Salt {
+        Salt([n; 16])
+    }
+
+    fn sample_log() -> Vec<Event> {
+        let mut log = Vec::new();
+        let mut prev = Hash::ZERO;
+        let steps: Vec<(Structure, TextPart)> = vec![
+            (
+                Structure::PhaseOpened { phase: PhaseId(1) },
+                text(&[("goal", "first slice")]),
+            ),
+            (
+                Structure::ItemAdded {
+                    item: ItemId(1),
+                    phase: PhaseId(1),
+                    checks: vec![CheckId("cargo-test".into())],
+                    depends_on: vec![],
+                },
+                text(&[("goal", "the event envelope")]),
+            ),
+            (
+                Structure::ItemClaimed {
+                    item: ItemId(1),
+                    agent: AgentName("heron".into()),
+                },
+                TextPart::new(),
+            ),
+            (
+                Structure::DecisionRaised {
+                    decision: DecisionId(1),
+                    class: DecisionClass::Mechanical,
+                    by: Actor::Agent(AgentName("heron".into())),
+                    about: Some(ItemId(1)),
+                    options: 2,
+                    recommended: 0,
+                },
+                text(&[
+                    ("question", "sha2 or blake3?"),
+                    ("option.0", "sha2"),
+                    ("option.1", "blake3"),
+                ]),
+            ),
+        ];
+        for (i, (structure, t)) in steps.into_iter().enumerate() {
+            let e = Event::new(i as u64 + 1, prev, structure, t, salt(i as u8));
+            prev = e.hash;
+            log.push(e);
+        }
+        log
+    }
+
+    #[test]
+    fn a_fresh_log_verifies() {
+        let log = sample_log();
+        let v = verify(&log).unwrap();
+        assert_eq!(v.len, 4);
+        assert_eq!(v.head, log[3].hash);
+        assert!(v.missing_text.is_empty());
+        assert_eq!(verify(&[]).unwrap().head, Hash::ZERO);
+    }
+
+    #[test]
+    fn altering_a_structural_field_breaks_the_chain() {
+        let mut log = sample_log();
+        log[2].structure = Structure::ItemClaimed {
+            item: ItemId(1),
+            agent: AgentName("wren".into()),
+        };
+        assert_eq!(verify(&log), Err(ChainError::Hash { seq: 3 }));
+    }
+
+    #[test]
+    fn altering_text_breaks_the_chain() {
+        let mut log = sample_log();
+        log[1].text = Some(text(&[("goal", "something else")]));
+        assert_eq!(verify(&log), Err(ChainError::TextHash { seq: 2 }));
+    }
+
+    #[test]
+    fn rewriting_history_breaks_every_later_link() {
+        let mut log = sample_log();
+        let replaced = Event::new(
+            1,
+            Hash::ZERO,
+            Structure::PhaseOpened { phase: PhaseId(2) },
+            text(&[("goal", "rewritten")]),
+            salt(9),
+        );
+        log[0] = replaced;
+        assert_eq!(verify(&log), Err(ChainError::Link { seq: 2 }));
+    }
+
+    #[test]
+    fn a_gap_in_sequence_is_refused() {
+        let mut log = sample_log();
+        log.remove(1);
+        assert_eq!(
+            verify(&log),
+            Err(ChainError::Sequence {
+                at: 1,
+                expected: 2,
+                found: 3
+            })
+        );
+    }
+
+    #[test]
+    fn removed_text_leaves_the_chain_verifying_and_is_reported() {
+        let mut log = sample_log();
+        log[3] = log[3].clone().redacted();
+        let v = verify(&log).unwrap();
+        assert_eq!(v.missing_text, vec![4]);
+        assert_eq!(v.head, log[3].hash);
+        assert!(log[3].text_field("question").is_none());
+        assert!(log[1].text_field("goal").is_some());
+    }
+
+    #[test]
+    fn half_redaction_is_refused() {
+        let mut log = sample_log();
+        log[3].salt = None;
+        assert_eq!(verify(&log), Err(ChainError::HalfRedacted { seq: 4 }));
+    }
+
+    #[test]
+    fn a_short_text_is_not_recoverable_from_its_hash_by_guessing() {
+        // The text is one of a handful of obvious answers. Without the
+        // salt, hashing each candidate under the obvious salts does not
+        // find it.
+        let secret = text(&[("rationale", "yes")]);
+        let real_salt = Salt(*b"0123456789abcdef");
+        let e = Event::new(
+            1,
+            Hash::ZERO,
+            Structure::DecisionTaken {
+                decision: DecisionId(1),
+                by: Actor::Person,
+                chosen: 0,
+            },
+            secret,
+            real_salt,
+        )
+        .redacted();
+        let guessed_salts = [Salt([0; 16]), Salt([0xff; 16]), Salt(*b"saltsaltsaltsalt")];
+        for candidate in ["yes", "no", "ship it", "later"] {
+            let t = text(&[("rationale", candidate)]);
+            for s in &guessed_salts {
+                assert_ne!(hash_text(s, &t), e.text_hash);
+            }
+        }
+        // With the real salt, the hash is of course reproducible.
+        assert_eq!(
+            hash_text(&real_salt, &text(&[("rationale", "yes")])),
+            e.text_hash
+        );
+    }
+
+    #[test]
+    fn events_round_trip_through_json() {
+        let log = sample_log();
+        let json = serde_json::to_string(&log).unwrap();
+        let back: Vec<Event> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, log);
+        assert!(verify(&back).is_ok());
+    }
+
+    #[test]
+    fn the_hash_is_stable_across_builds() {
+        // Pins the canonical form. If this changes, old logs no longer
+        // verify, so it is a format version bump, not a refactor.
+        let e = Event::new(
+            1,
+            Hash::ZERO,
+            Structure::PhaseOpened { phase: PhaseId(1) },
+            text(&[("goal", "first slice")]),
+            Salt([7; 16]),
+        );
+        assert_eq!(
+            e.hash.to_hex(),
+            "d53eda8c85e22202055f57e9b7fdd24c524b269437f0e506a51c839b68cb0304",
+        );
+    }
+}
