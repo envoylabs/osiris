@@ -10,8 +10,11 @@ use std::collections::BTreeMap;
 use ris_core::text::{Policy, scan};
 use serde::{Deserialize, Serialize};
 
-/// What `config.toml` holds.
+/// What `config.toml` holds. Unknown keys are refused, so a key in the
+/// wrong place (such as a denylist written under a seat's table) is an
+/// error, not a silent no-op.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Agent seats by durable name.
     #[serde(default)]
@@ -24,6 +27,7 @@ pub struct Config {
 
 /// One agent seat.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     pub role: Role,
     /// The runner adapter that drives this seat, when runners exist.
@@ -69,6 +73,12 @@ impl Config {
     pub const TEMPLATE: &'static str = "\
 # osiris configuration. Local to this machine; never exported.
 
+# Terms that must never appear in harness state or commits: your name,
+# client names, your home directory. Matching is case-insensitive.
+# (Top-level keys go above the first [table]; below it, TOML reads them
+# as part of that table.)
+denylist = []
+
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment.
 [agents.heron]
@@ -76,15 +86,12 @@ role = \"lead\"
 
 [agents.wren]
 role = \"auditor\"
-
-# Terms that must never appear in harness state or commits: your name,
-# client names, your home directory. Matching is case-insensitive.
-denylist = []
 ";
 }
 
 /// What `checks.toml` holds.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ChecksConfig {
     #[serde(default)]
     pub checks: BTreeMap<String, CheckConfig>,
@@ -124,6 +131,19 @@ mod tests {
         c.check_agent_names().unwrap();
         let k = ChecksConfig::parse(ChecksConfig::TEMPLATE).unwrap();
         assert_eq!(k.checks["test"].command, "cargo test --workspace");
+    }
+
+    #[test]
+    fn a_denylist_filled_in_the_template_takes_effect() {
+        let c = Config::parse(&Config::TEMPLATE.replace("denylist = []", "denylist = [\"acme\"]"))
+            .unwrap();
+        assert_eq!(c.policy().denylist_len(), 1);
+    }
+
+    #[test]
+    fn a_key_in_the_wrong_table_is_an_error() {
+        let misplaced = "[agents.wren]\nrole = \"auditor\"\ndenylist = [\"acme\"]\n";
+        assert!(Config::parse(misplaced).is_err());
     }
 
     #[test]

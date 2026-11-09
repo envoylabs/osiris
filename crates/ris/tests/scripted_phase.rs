@@ -501,6 +501,7 @@ fn every_help_fits_one_screen() {
         &["report"],
         &["scan"],
         &["verify"],
+        &["export"],
         &["log"],
     ];
     for sub in subcommands {

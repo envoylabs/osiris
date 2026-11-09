@@ -116,6 +116,9 @@ enum Cmd {
     Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
+    /// Write each closed phase's events to <dir>/P-n.jsonl, scanned
+    /// first. Nothing is exported unless you run this.
+    Export { dir: PathBuf },
     /// Dump the log as JSON lines, from a sequence number.
     Log {
         #[arg(long, default_value_t = 1)]
@@ -598,6 +601,28 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(
                 format!("clean: {} file(s) scanned", files.len()),
                 json!({ "files": files.len(), "hits": [] }),
+            ))
+        }
+
+        Cmd::Export { dir } => {
+            let l = p.load()?;
+            let hits = ris::export::rescan(&l.log, &p.policy);
+            if !hits.is_empty() {
+                return Err(CliError::Other(format!(
+                    "refused: the log holds text the current policy refuses; nothing was written\n  {}\n  \
+                     next: the text cannot be removed yet (no redact command); keep this log local",
+                    hits.join("\n  ")
+                )));
+            }
+            let files = ris::export::phase_files(&l.log)?;
+            let new = ris::export::write(dir, &files)?;
+            Ok(Output::new(
+                format!(
+                    "exported {} closed phase(s) to {} ({new} new)",
+                    files.len(),
+                    dir.display()
+                ),
+                json!({ "phases": files.iter().map(|f| f.name.clone()).collect::<Vec<_>>(), "new": new }),
             ))
         }
 

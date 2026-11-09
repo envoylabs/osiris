@@ -23,3 +23,4 @@ anstyle.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+ris-core.workspace = true
