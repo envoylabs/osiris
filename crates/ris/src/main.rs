@@ -180,6 +180,7 @@ impl From<Kind> for MessageKind {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    ris::style::init(cli.json);
     match run(&cli) {
         Ok(out) => {
             if cli.json {
@@ -199,7 +200,14 @@ fn main() -> ExitCode {
                 };
                 eprintln!("{}", json!({ kind: detail }));
             } else {
-                eprintln!("{e}");
+                let text = e.to_string();
+                // Colour the leading "refused:" when styling is on.
+                match text.strip_prefix("refused:") {
+                    Some(rest) if ris::style::on() => {
+                        eprintln!("{}{rest}", ris::style::failed("refused:"));
+                    }
+                    _ => eprintln!("{text}"),
+                }
             }
             ExitCode::from(match e {
                 CliError::Refused(_) => 2,
@@ -579,7 +587,11 @@ fn run_checks(p: &mut Project, item: ItemId, names: &[String]) -> Result<CheckRu
         })?;
         lines.push(format!(
             "{item}: check {name} {} ({})",
-            if outcome.passed { "passed" } else { "FAILED" },
+            if outcome.passed {
+                ris::style::passed("passed")
+            } else {
+                ris::style::failed("FAILED")
+            },
             outcome.evidence
         ));
         ids.push(outcome.evidence);

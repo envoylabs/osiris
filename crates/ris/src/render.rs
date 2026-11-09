@@ -11,6 +11,7 @@ use ris_core::primitives::{
 use serde_json::{Value, json};
 
 use crate::project::Loaded;
+use crate::style;
 
 /// One command's output.
 pub struct Output {
@@ -70,9 +71,9 @@ fn item_line(l: &Loaded, i: &Item) -> String {
         _ => String::new(),
     };
     format!(
-        "{:<5} {:<8} {}{}",
+        "{:<5} {} {}{}",
         i.id.to_string(),
-        state_name(&i.state),
+        style::state(&format!("{:<8}", state_name(&i.state))),
         l.text(i.at, "goal"),
         who
     )
@@ -122,7 +123,11 @@ fn decision_block(l: &Loaded, d: &Decision) -> String {
             .unwrap_or_default()
     );
     for n in 0..d.options {
-        let mark = if n == d.recommended { "*" } else { " " };
+        let mark = if n == d.recommended {
+            style::recommended("*")
+        } else {
+            " ".to_owned()
+        };
         s.push_str(&format!(
             "   {mark} {n}: {}\n",
             l.text(d.at, &format!("option.{n}"))
@@ -132,7 +137,8 @@ fn decision_block(l: &Loaded, d: &Decision) -> String {
         DecisionState::Open => s.push_str("     open; * marks the recommendation\n"),
         DecisionState::Taken { by, chosen, at } if *chosen >= d.options => {
             s.push_str(&format!(
-                "   + {chosen}: {}\n     taken by {by}: {chosen}, outside the offered options. {}\n",
+                "   {} {chosen}: {}\n     taken by {by}: {chosen}, outside the offered options. {}\n",
+                style::other("+"),
                 l.text(*at, "other"),
                 l.text(*at, "rationale")
             ));
@@ -214,13 +220,13 @@ pub fn inbox(l: &Loaded, actor: &Actor) -> Output {
             let mut text = if open.is_empty() {
                 "no decisions waiting\n".to_owned()
             } else {
-                let mut s = format!("{} decision(s) waiting\n", open.len());
+                let mut s = style::heading(&format!("{} decision(s) waiting", open.len())) + "\n";
                 for d in &open {
                     s.push_str(&decision_block(l, d));
                 }
                 s
             };
-            text.push_str(PERSON_FOOTER);
+            text.push_str(&style::dim(PERSON_FOOTER));
             let text = text.trim_end().to_owned();
             Output::new(
                 text,
@@ -319,10 +325,10 @@ pub fn report(l: &Loaded) -> Output {
         .filter(|d| matches!(&d.state, DecisionState::Taken { chosen, .. } if *chosen >= d.options))
         .count();
     if !substantive.is_empty() {
-        s.push_str(&format!(
-            "substantive decisions ({} answered outside the offered options):\n",
-            outside
-        ));
+        s.push_str(&style::heading(&format!(
+            "substantive decisions ({outside} answered outside the offered options):"
+        )));
+        s.push('\n');
         for d in &substantive {
             for line in decision_block(l, d).lines() {
                 s.push_str(&format!("  {line}\n"));
@@ -330,7 +336,8 @@ pub fn report(l: &Loaded) -> Output {
         }
     }
     if !mechanical.is_empty() {
-        s.push_str("mechanical decisions (check the class):\n");
+        s.push_str(&style::heading("mechanical decisions (check the class):"));
+        s.push('\n');
         for d in &mechanical {
             s.push_str(&format!("  {}\n", decision_line(l, d)));
         }
@@ -345,7 +352,8 @@ pub fn report(l: &Loaded) -> Output {
         })
         .collect();
     if !failed.is_empty() {
-        s.push_str("failed checks:\n");
+        s.push_str(&style::heading("failed checks:"));
+        s.push('\n');
         s.push_str(&failed.join("\n"));
         s.push('\n');
     }
@@ -574,7 +582,11 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
             s.push_str(&format!(
                 "    {} {} ({})\n",
                 r.check,
-                if r.passed { "passed" } else { "FAILED" },
+                if r.passed {
+                    style::passed("passed")
+                } else {
+                    style::failed("FAILED")
+                },
                 r.evidence
             ));
         }
@@ -604,8 +616,13 @@ pub fn summary(l: &Loaded, actor: &Actor) -> Output {
     let rep = report(l);
     let rdy = ready(l);
     let text = format!(
-        "== decisions ==\n{}\n\n== report ==\n{}\n\n== ready ==\n{}",
-        queue.text, rep.text, rdy.text
+        "{}\n{}\n\n{}\n{}\n\n{}\n{}",
+        style::header("== decisions =="),
+        queue.text,
+        style::header("== report =="),
+        rep.text,
+        style::header("== ready =="),
+        rdy.text
     );
     Output::new(
         text,
