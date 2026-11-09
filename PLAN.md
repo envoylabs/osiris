@@ -269,7 +269,9 @@ phase has one branch, and every item of the phase lands on it.
   commits. Which agent wrote an item is in the log, under the agent's
   name.
 - **Commit messages are agent-written free text,** and pass the
-  confidentiality scan with the diff.
+  confidentiality scan with the diff. They follow the conventional
+  style, `type(scope): summary`, so a log scans at a glance, with the
+  item's id as a trailer.
 
 ### Arrangements: width and audit
 
