@@ -350,6 +350,35 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.ok(heron, &["inbox"]);
     sb.ok(wren, &["inbox"]);
 
+    // An answer outside the offered options.
+    sb.ok(
+        wren,
+        &[
+            "decision",
+            "raise",
+            "--substantive",
+            "--about",
+            "I-2",
+            "--question",
+            "rocksdb or sqlite?",
+            "--option",
+            "rocksdb",
+            "--option",
+            "sqlite",
+        ],
+    );
+    sb.ok(
+        None,
+        &[
+            "decide",
+            "D-3",
+            "--other",
+            "sqlite now, bench rocksdb later",
+            "--rationale",
+            "the plan's own answer",
+        ],
+    );
+    sb.ok(None, &["show", "D-3"]);
     sb.ok(None, &["show", "I-1"]);
     sb.ok(None, &["show", "I-2"]);
     sb.ok(None, &["show", "D-2"]);
@@ -368,7 +397,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     let v: serde_json::Value = serde_json::from_str(&r.stdout).unwrap();
     assert_eq!(v["phase"]["state"], "closed");
     assert_eq!(v["items"].as_array().unwrap().len(), 4);
-    assert_eq!(v["substantive"].as_array().unwrap().len(), 1);
+    assert_eq!(v["substantive"].as_array().unwrap().len(), 2);
+    assert_eq!(v["answered_outside_options"], 1);
     assert_eq!(v["mechanical"].as_array().unwrap().len(), 1);
 
     let got = normalise(&sb.transcript, &sb.dir);

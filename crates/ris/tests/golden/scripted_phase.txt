@@ -128,6 +128,7 @@ I-4 not done: 1 check(s) failed
 
 $ ris --json report
 {
+  "answered_outside_options": 0,
   "items": [
     {
       "agent": "heron",
@@ -304,6 +305,22 @@ holding I-4   claimed  a lint fix (wren)
 no messages
 [exit 0]
 
+$ RIS_AGENT=wren ris decision raise --substantive --about I-2 --question rocksdb or sqlite? --option rocksdb --option sqlite
+D-3 queued for the person; I-2 is set aside, take another
+[exit 0]
+
+$ ris decide D-3 --other sqlite now, bench rocksdb later --rationale the plan's own answer
+D-3 taken: your own answer, recorded as a new option; ready again: I-2
+[exit 0]
+
+$ ris show D-3
+D-3 [substantive] rocksdb or sqlite?  (about I-2)
+   * 0: rocksdb
+     1: sqlite
+   + 2: sqlite now, bench rocksdb later
+     taken by the person: 2, outside the offered options. the plan's own answer
+[exit 0]
+
 $ ris show I-1
 I-1 merged  (phase P-1)
   the event envelope
@@ -322,11 +339,12 @@ I-1 merged  (phase P-1)
 [exit 0]
 
 $ ris show I-2
-I-2 claimed  (phase P-1)
+I-2 ready  (phase P-1)
   the fold
   checks: none
   depends on: I-1 (all merged)
-  held by: wren
+  decisions:
+    D-3   rocksdb or sqlite?  → sqlite now, bench rocksdb later  (agent wren, I-2)
 [exit 0]
 
 $ ris show D-2
@@ -339,7 +357,7 @@ D-2 [substantive] daemon now or CLI-direct?  (about I-3)
 $ ris show P-1
 P-1 open: first slice
   I-1   merged   the event envelope (<hash>)
-  I-2   claimed  the fold (wren)
+  I-2   ready    the fold
   I-3   done     the cli
   I-4   claimed  a lint fix (wren)
 [exit 0]
@@ -359,50 +377,60 @@ $ ris show banana
 
 $ ris report
 P-1 open: first slice
-items: 2 claimed, 1 done, 1 merged
+items: 1 claimed, 1 done, 1 merged, 1 ready
   I-1   merged   the event envelope (<hash>)
-  I-2   claimed  the fold (wren)
+  I-2   ready    the fold
   I-3   done     the cli
   I-4   claimed  a lint fix (wren)
-substantive decisions:
+substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
      * 1: cli-direct
        taken by the person: 1. fewer failure modes for agents
+  D-3 [substantive] rocksdb or sqlite?  (about I-2)
+     * 0: rocksdb
+       1: sqlite
+     + 2: sqlite now, bench rocksdb later
+       taken by the person: 2, outside the offered options. the plan's own answer
 mechanical decisions (check the class):
   D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
 failed checks:
   I-1 lint failed (E-<hash>)
   I-4 lint failed (E-<hash>)
 messages: 1
-log: 27 events, head <hash>
+log: 31 events, head <hash>
 report: <hash> (if closed now)
 previous report: <hash>
 [exit 0]
 
 $ ris verify
-ok: 27 events, head <hash>
+ok: 31 events, head <hash>
 [exit 0]
 
 $ ris phase close
 P-1 closed: first slice
-items: 2 claimed, 1 done, 1 merged
+items: 1 claimed, 1 done, 1 merged, 1 ready
   I-1   merged   the event envelope (<hash>)
-  I-2   claimed  the fold (wren)
+  I-2   ready    the fold
   I-3   done     the cli
   I-4   claimed  a lint fix (wren)
-substantive decisions:
+substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
      * 1: cli-direct
        taken by the person: 1. fewer failure modes for agents
+  D-3 [substantive] rocksdb or sqlite?  (about I-2)
+     * 0: rocksdb
+       1: sqlite
+     + 2: sqlite now, bench rocksdb later
+       taken by the person: 2, outside the offered options. the plan's own answer
 mechanical decisions (check the class):
   D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
 failed checks:
   I-1 lint failed (E-<hash>)
   I-4 lint failed (E-<hash>)
 messages: 1
-log: 28 events, head <hash>
+log: 32 events, head <hash>
 report: <hash>
 previous report: <hash>
 [exit 0]
@@ -414,6 +442,7 @@ $ ris phase close
 
 $ ris --json report
 {
+  "answered_outside_options": 1,
   "items": [
     {
       "checks": [
@@ -430,7 +459,6 @@ $ ris --json report
       "state": "merged"
     },
     {
-      "agent": "wren",
       "checks": [],
       "depends_on": [
         "I-1"
@@ -438,7 +466,7 @@ $ ris --json report
       "goal": "the fold",
       "id": "I-2",
       "phase": "P-1",
-      "state": "claimed"
+      "state": "ready"
     },
     {
       "checks": [],
@@ -465,7 +493,7 @@ $ ris --json report
   ],
   "log": {
     "head": "<hash>",
-    "len": 28
+    "len": 32
   },
   "mechanical": [
     {
@@ -507,6 +535,23 @@ $ ris --json report
       "question": "daemon now or CLI-direct?",
       "rationale": "fewer failure modes for agents",
       "recommended": 1,
+      "state": "taken",
+      "taken_by": "the person"
+    },
+    {
+      "about": "I-2",
+      "by": "agent wren",
+      "chosen": 2,
+      "class": "substantive",
+      "id": "D-3",
+      "options": [
+        "rocksdb",
+        "sqlite"
+      ],
+      "other": "sqlite now, bench rocksdb later",
+      "question": "rocksdb or sqlite?",
+      "rationale": "the plan's own answer",
+      "recommended": 0,
       "state": "taken",
       "taken_by": "the person"
     }

@@ -100,6 +100,9 @@ fn decision_json(l: &Loaded, d: &Decision) -> Value {
         v["taken_by"] = json!(by.to_string());
         v["chosen"] = json!(chosen);
         v["rationale"] = json!(l.text(*at, "rationale"));
+        if *chosen >= d.options {
+            v["other"] = json!(l.text(*at, "other"));
+        }
     }
     v
 }
@@ -127,6 +130,13 @@ fn decision_block(l: &Loaded, d: &Decision) -> String {
     }
     match &d.state {
         DecisionState::Open => s.push_str("     open; * marks the recommendation\n"),
+        DecisionState::Taken { by, chosen, at } if *chosen >= d.options => {
+            s.push_str(&format!(
+                "   + {chosen}: {}\n     taken by {by}: {chosen}, outside the offered options. {}\n",
+                l.text(*at, "other"),
+                l.text(*at, "rationale")
+            ));
+        }
         DecisionState::Taken { by, chosen, at } => s.push_str(&format!(
             "     taken by {by}: {chosen}. {}\n",
             l.text(*at, "rationale")
@@ -139,6 +149,7 @@ fn decision_block(l: &Loaded, d: &Decision) -> String {
 /// A mechanical decision in one line, for the report.
 fn decision_line(l: &Loaded, d: &Decision) -> String {
     let chosen = match &d.state {
+        DecisionState::Taken { chosen, at, .. } if *chosen >= d.options => l.text(*at, "other"),
         DecisionState::Taken { chosen, .. } => l.text(d.at, &format!("option.{chosen}")),
         _ => "open",
     };
@@ -300,8 +311,17 @@ pub fn report(l: &Loaded) -> Output {
     for i in &items {
         s.push_str(&format!("  {}\n", item_line(l, i)));
     }
+    let outside = l
+        .state
+        .decisions
+        .values()
+        .filter(|d| matches!(&d.state, DecisionState::Taken { chosen, .. } if *chosen >= d.options))
+        .count();
     if !substantive.is_empty() {
-        s.push_str("substantive decisions:\n");
+        s.push_str(&format!(
+            "substantive decisions ({} answered outside the offered options):\n",
+            outside
+        ));
         for d in &substantive {
             for line in decision_block(l, d).lines() {
                 s.push_str(&format!("  {line}\n"));
@@ -360,6 +380,7 @@ pub fn report(l: &Loaded) -> Output {
             "substantive": substantive.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
             "mechanical": mechanical.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
             "messages": l.state.messages.len(),
+            "answered_outside_options": outside,
             "log": { "len": l.state.len, "head": l.state.head.to_string() },
             "report": report_hash.to_string(),
             "previous_report": previous_report(l, phase.id).to_string(),

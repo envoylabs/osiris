@@ -48,7 +48,7 @@ pub enum Command {
     Decide {
         decision: DecisionId,
         by: Actor,
-        chosen: usize,
+        chosen: Choice,
         rationale: Text,
     },
     /// Record a check's run against an item. Any state but Merged.
@@ -99,6 +99,17 @@ impl Command {
             Self::MessageSend { .. } => CommandKind::MessageSend,
         }
     }
+}
+
+/// What a decider picks: one of the offered options, or an answer of
+/// their own. An answer outside the options is recorded as one more
+/// option on the decision (index `options`), so the record is complete
+/// and the report can mark it. How often that happens per phase says
+/// how well the agents are framing options.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Choice {
+    Option(usize),
+    Other(Text),
 }
 
 /// One event's worth of outcome, before it is sealed into the chain.
@@ -328,21 +339,31 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             if d.class == DecisionClass::Substantive && *by != Actor::Person {
                 return Err(Refusal::SubstantiveIsForThePerson(*decision));
             }
-            if *chosen >= d.options {
-                return Err(Refusal::NoSuchOption {
-                    decision: *decision,
-                    chosen: *chosen,
-                    options: d.options,
-                });
-            }
-            let mut effects = vec![
-                Effect::new(Structure::DecisionTaken {
+            let taken = match chosen {
+                Choice::Option(n) => {
+                    if *n >= d.options {
+                        return Err(Refusal::NoSuchOption {
+                            decision: *decision,
+                            chosen: *n,
+                            options: d.options,
+                        });
+                    }
+                    Effect::new(Structure::DecisionTaken {
+                        decision: *decision,
+                        by: by.clone(),
+                        chosen: *n,
+                    })
+                }
+                // One past the offered options; the answer's text rides on
+                // this event as `other`.
+                Choice::Other(answer) => Effect::new(Structure::DecisionTaken {
                     decision: *decision,
                     by: by.clone(),
-                    chosen: *chosen,
+                    chosen: d.options,
                 })
-                .with("rationale", rationale),
-            ];
+                .with("other", answer),
+            };
+            let mut effects = vec![taken.with("rationale", rationale)];
             // Items blocked only on this decision come back to Ready.
             for i in state.items.values() {
                 if let ItemState::Blocked { on } = &i.state
@@ -644,7 +665,7 @@ mod tests {
         let decide = |by: Actor| Command::Decide {
             decision: DecisionId(1),
             by,
-            chosen: 1,
+            chosen: Choice::Option(1),
             rationale: t("b is cheaper to reverse"),
         };
         // Substantive: the person's to take.
@@ -671,6 +692,38 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn an_answer_outside_the_options_is_recorded_as_one_more() {
+        let mut h = item_in(ItemStateKind::Blocked);
+        assert_eq!(
+            h.run(Command::Decide {
+                decision: DecisionId(1),
+                by: Actor::Person,
+                chosen: Choice::Option(2),
+                rationale: t("x"),
+            }),
+            Err(Refusal::NoSuchOption {
+                decision: DecisionId(1),
+                chosen: 2,
+                options: 2
+            })
+        );
+        h.must(Command::Decide {
+            decision: DecisionId(1),
+            by: Actor::Person,
+            chosen: Choice::Other(t("neither: do c")),
+            rationale: t("both options assume the daemon exists"),
+        });
+        let d = &h.state.decisions[&DecisionId(1)];
+        let DecisionState::Taken { chosen, at, .. } = &d.state else {
+            panic!("taken");
+        };
+        assert_eq!(*chosen, d.options, "one past the offered options");
+        let taken = h.log.iter().find(|e| e.seq == *at).unwrap();
+        assert_eq!(taken.text_field("other").unwrap().as_str(), "neither: do c");
+        assert_eq!(h.state.items[&ItemId(1)].state, ItemState::Ready);
     }
 
     #[test]

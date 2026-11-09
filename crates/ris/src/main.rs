@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use ris_core::command::Command;
+use ris_core::command::{Choice, Command};
 use ris_core::ids::{Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, ItemId};
 use ris_core::primitives::{DecisionClass, MessageKind};
 use serde_json::json;
@@ -59,12 +59,15 @@ enum Cmd {
         #[command(subcommand)]
         action: DecisionCmd,
     },
-    /// Take a queued decision.
+    /// Take a queued decision: one of its options, or your own answer.
     Decide {
         decision: DecisionId,
         /// The option number.
+        #[arg(long, conflicts_with = "other", required_unless_present = "other")]
+        choose: Option<usize>,
+        /// An answer that is not among the options.
         #[arg(long)]
-        choose: usize,
+        other: Option<String>,
         #[arg(long)]
         rationale: String,
     },
@@ -345,13 +348,19 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Decide {
             decision,
             choose,
+            other,
             rationale,
         } => {
             let rationale = p.text("rationale", rationale)?;
+            let chosen = match (choose, other) {
+                (Some(n), None) => Choice::Option(*n),
+                (None, Some(answer)) => Choice::Other(p.text("other", answer)?),
+                _ => unreachable!("clap requires exactly one of --choose and --other"),
+            };
             let (l, events) = p.run(&Command::Decide {
                 decision: *decision,
                 by: actor.clone(),
-                chosen: *choose,
+                chosen,
                 rationale,
             })?;
             let unblocked: Vec<String> = events
@@ -362,9 +371,13 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 })
                 .collect();
             let _ = l;
+            let picked = match choose {
+                Some(n) => format!("option {n}"),
+                None => "your own answer, recorded as a new option".to_owned(),
+            };
             Ok(Output::new(
                 format!(
-                    "{decision} taken: option {choose}{}",
+                    "{decision} taken: {picked}{}",
                     if unblocked.is_empty() {
                         String::new()
                     } else {
