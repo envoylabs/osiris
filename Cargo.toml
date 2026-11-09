@@ -14,5 +14,6 @@ ris-store-sqlite = { path = "crates/ris-store-sqlite" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }

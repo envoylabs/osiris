@@ -6,10 +6,11 @@
 //! constructor, [`Text::new`], and it scans. Events hold `Text`, so no
 //! free-text field reaches the log without passing here.
 //!
-//! The scan is patterns plus a local denylist, and is best effort by
-//! design: it catches the formats secrets take and the obvious
+//! The scan is a table of patterns plus a local denylist, and is best
+//! effort by design: it catches the formats secrets take and the obvious
 //! identifiers, not prose that identifies someone without matching a
-//! pattern. The second line of defence is the two exits (export and
+//! pattern. Patterns are regular expressions so that they read as data
+//! and can be lifted from published scanner rule sets. The second line of defence is the two exits (export and
 //! each item's diff), and the third is the two-part event format, which
 //! lets text be removed without breaking the log.
 //!
@@ -17,7 +18,9 @@
 //! back out of the log. That text passed the scan when it went in.
 
 use std::fmt;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::refusal::Refusal;
@@ -140,20 +143,14 @@ impl fmt::Debug for Text {
 /// Scan a string. `None` means nothing was found. Exposed for the exits:
 /// the export of state, and each item's diff and commit message.
 pub fn scan(raw: &str, policy: &Policy) -> Option<Category> {
-    if has_private_key_block(raw) {
-        return Some(Category::PrivateKey);
+    if let Some((category, _)) = PATTERNS.iter().find(|(_, re)| re.is_match(raw)) {
+        return Some(*category);
     }
-    if has_known_token(raw) || has_high_entropy_run(raw) {
+    if has_high_entropy_run(raw) {
         return Some(Category::Secret);
     }
-    if has_credential_assignment(raw) {
-        return Some(Category::CredentialAssignment);
-    }
-    if has_email(raw) {
-        return Some(Category::Email);
-    }
-    if has_identifying_path(raw) {
-        return Some(Category::AbsolutePath);
+    if let Some((category, _)) = LATE_PATTERNS.iter().find(|(_, re)| re.is_match(raw)) {
+        return Some(*category);
     }
     if has_denylisted(raw, policy) {
         return Some(Category::Denylisted);
@@ -161,177 +158,83 @@ pub fn scan(raw: &str, policy: &Policy) -> Option<Category> {
     None
 }
 
-fn has_private_key_block(s: &str) -> bool {
-    s.contains("-----BEGIN") && s.contains("PRIVATE KEY")
+fn compile(table: &[(Category, &str)]) -> Vec<(Category, Regex)> {
+    table
+        .iter()
+        .map(|(category, pattern)| {
+            let re = Regex::new(pattern).unwrap_or_else(|e| {
+                panic!("confidentiality pattern {pattern:?} does not compile: {e}")
+            });
+            (*category, re)
+        })
+        .collect()
 }
 
-fn is_token_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '/' | '=' | '.')
-}
+/// Formats a credential takes. Checked first, so a token inside an
+/// assignment or a URL is reported as what it is. These are the shapes
+/// secret scanners publish rules for; a format not listed here is what
+/// the high-entropy check and the exits are for.
+static PATTERNS: LazyLock<Vec<(Category, Regex)>> = LazyLock::new(|| {
+    use Category::*;
+    compile(&[
+        (PrivateKey, r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+        // AWS access key id.
+        (Secret, r"\bAKIA[0-9A-Z]{16}\b"),
+        // GitHub tokens, classic and fine-grained.
+        (Secret, r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"),
+        (Secret, r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
+        // Anthropic, then OpenAI-style keys; the long run rules out words.
+        (Secret, r"\bsk-ant-[A-Za-z0-9_-]{20,}"),
+        (Secret, r"\bsk-[A-Za-z0-9_-]{32,}"),
+        // Slack.
+        (Secret, r"\bxox[abpr]-[A-Za-z0-9-]{10,}"),
+        // Google API key.
+        (Secret, r"\bAIza[0-9A-Za-z_-]{35}"),
+        // GitLab personal token.
+        (Secret, r"\bglpat-[A-Za-z0-9_-]{20,}"),
+        // A bearer token in a header.
+        (Secret, r"\bBearer [A-Za-z0-9._~+/=-]{20,}"),
+        // A JWT: three base64url segments, the first two JSON objects.
+        (
+            Secret,
+            r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+        ),
+    ])
+});
 
-/// The length of the token-character run starting at byte `at`.
-fn run_len(s: &str, at: usize) -> usize {
-    s[at..].chars().take_while(|&c| is_token_char(c)).count()
-}
-
-/// True when the byte before `at` is not a token character, so a prefix
-/// found at `at` starts a token rather than sitting inside a word.
-fn at_token_start(s: &str, at: usize) -> bool {
-    s[..at]
-        .chars()
-        .next_back()
-        .is_none_or(|c| !is_token_char(c))
-}
-
-fn has_known_token(s: &str) -> bool {
-    // Prefix, and the minimum run length after it, for formats whose
-    // prefix alone identifies them.
-    const PREFIXED: &[(&str, usize)] = &[
-        ("AKIA", 16), // AWS access key id
-        ("ghp_", 20), // GitHub personal token
-        ("gho_", 20), // GitHub OAuth token
-        ("ghu_", 20), // GitHub user-to-server token
-        ("ghs_", 20), // GitHub server-to-server token
-        ("ghr_", 20), // GitHub refresh token
-        ("github_pat_", 20),
-        ("sk-ant-", 20), // Anthropic API key
-        ("sk-", 32),     // OpenAI-style key; the run is long enough to rule out words
-        ("xoxb-", 10),   // Slack tokens
-        ("xoxp-", 10),
-        ("xoxa-", 10),
-        ("xoxr-", 10),
-        ("AIza", 35),   // Google API key
-        ("glpat-", 20), // GitLab personal token
-    ];
-    for (prefix, min_after) in PREFIXED {
-        let mut from = 0;
-        while let Some(pos) = s[from..].find(prefix) {
-            let at = from + pos;
-            if at_token_start(s, at) && run_len(s, at) >= prefix.len() + min_after {
-                return true;
-            }
-            from = at + prefix.len();
-        }
-    }
-    // A bearer token: the word, a space, and a long run.
-    let mut from = 0;
-    while let Some(pos) = s[from..].find("Bearer ") {
-        let at = from + pos + "Bearer ".len();
-        if run_len(s, at) >= 20 {
-            return true;
-        }
-        from = at;
-    }
-    // A JWT: three base64url segments, the first two starting `eyJ`.
-    let mut from = 0;
-    while let Some(pos) = s[from..].find("eyJ") {
-        let at = from + pos;
-        if at_token_start(s, at) {
-            let run: String = s[at..].chars().take_while(|&c| is_token_char(c)).collect();
-            let parts: Vec<&str> = run.split('.').collect();
-            if parts.len() >= 3
-                && parts[1].starts_with("eyJ")
-                && parts.iter().take(3).all(|p| p.len() >= 8)
-            {
-                return true;
-            }
-        }
-        from = at + 3;
-    }
-    false
-}
+/// Identifiers, checked after the credential formats.
+static LATE_PATTERNS: LazyLock<Vec<(Category, Regex)>> = LazyLock::new(|| {
+    use Category::*;
+    compile(&[
+        // `password = …`, `token: "…"` and the like, with a value of at
+        // least eight characters: short enough to catch real ones, long
+        // enough that "token: see env" passes.
+        (
+            CredentialAssignment,
+            r#"(?i)\b(?:password|passwd|secret|api[_-]?key|access_key|private_key|token)\b[ \t]*[=:][ \t]*["']?[^\s"']{8,}"#,
+        ),
+        (Email, r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+        // A path under a home directory or a Windows profile carries a
+        // username.
+        (
+            AbsolutePath,
+            r"(?:/Users/|/home/|/root/|[A-Za-z]:\\Users\\)",
+        ),
+    ])
+});
 
 /// A run of 32 or more token characters mixing upper case, lower case
 /// and digits. Hex hashes are excluded: they are lower case throughout
 /// and legitimately appear in text (commit and evidence ids).
 fn has_high_entropy_run(s: &str) -> bool {
-    let mut run = String::new();
-    let check = |run: &str| -> bool {
-        run.len() >= 32
-            && run.chars().any(|c| c.is_ascii_uppercase())
+    static RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/=_-]{32,}").unwrap());
+    RUN.find_iter(s).any(|m| {
+        let run = m.as_str();
+        run.chars().any(|c| c.is_ascii_uppercase())
             && run.chars().any(|c| c.is_ascii_lowercase())
             && run.chars().any(|c| c.is_ascii_digit())
             && !run.chars().all(|c| c.is_ascii_hexdigit())
-    };
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '_' | '-') {
-            run.push(c);
-        } else {
-            if check(&run) {
-                return true;
-            }
-            run.clear();
-        }
-    }
-    check(&run)
-}
-
-fn has_credential_assignment(s: &str) -> bool {
-    const KEYWORDS: &[&str] = &[
-        "password",
-        "passwd",
-        "secret",
-        "api_key",
-        "apikey",
-        "api-key",
-        "access_key",
-        "private_key",
-        "token",
-    ];
-    let lower = s.to_lowercase();
-    for kw in KEYWORDS {
-        let mut from = 0;
-        while let Some(pos) = lower[from..].find(kw) {
-            let after = from + pos + kw.len();
-            let rest = &lower[after..];
-            let rest = rest.trim_start_matches([' ', '\t']);
-            if let Some(rest) = rest.strip_prefix(['=', ':']) {
-                let rest = rest.trim_start_matches([' ', '\t', '"', '\'']);
-                let value_len = rest
-                    .chars()
-                    .take_while(|c| !c.is_whitespace() && !matches!(c, '"' | '\''))
-                    .count();
-                if value_len >= 8 {
-                    return true;
-                }
-            }
-            from = after;
-        }
-    }
-    false
-}
-
-fn has_email(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    for (i, &b) in bytes.iter().enumerate() {
-        if b != b'@' {
-            continue;
-        }
-        let local_ok = s[..i]
-            .chars()
-            .next_back()
-            .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-'));
-        if !local_ok {
-            continue;
-        }
-        let domain: String = s[i + 1..]
-            .chars()
-            .take_while(|&c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
-            .collect();
-        let domain = domain.trim_end_matches('.');
-        if let Some((_, tld)) = domain.rsplit_once('.')
-            && tld.len() >= 2
-            && tld.chars().all(|c| c.is_ascii_alphabetic())
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn has_identifying_path(s: &str) -> bool {
-    const PREFIXES: &[&str] = &["/Users/", "/home/", "/root/", "C:\\Users\\", "c:\\Users\\"];
-    PREFIXES.iter().any(|p| s.contains(p))
+    })
 }
 
 fn has_denylisted(s: &str, policy: &Policy) -> bool {
