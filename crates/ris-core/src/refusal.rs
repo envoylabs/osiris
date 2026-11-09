@@ -83,9 +83,22 @@ impl Refusal {
             }
             Self::UnknownItem(_) => "list items with `ris ready` or `ris report`".into(),
             Self::UnknownDecision(_) => "list decisions with `ris inbox`".into(),
-            Self::IllegalItemTransition { state, command, .. } => {
-                format!("an item in state {state} does not accept {command:?}; see `ris report`")
-            }
+            Self::IllegalItemTransition { state, command, .. } => match (*state, command) {
+                ("claimed", CommandKind::Claim) => {
+                    "another agent holds it; take another item from `ris ready`".into()
+                }
+                ("blocked", CommandKind::Claim) => {
+                    "it waits on a decision; take another item from `ris ready`".into()
+                }
+                (
+                    _,
+                    CommandKind::Done
+                    | CommandKind::RaiseMechanical
+                    | CommandKind::RaiseSubstantive,
+                ) => "claim it first: `ris claim <item>`".into(),
+                ("landed", _) => "it has landed; further work is a new item".into(),
+                _ => "see its state in `ris report`".into(),
+            },
             Self::IllegalDecisionTransition { state, .. } => {
                 format!("a decision in state {state} is settled; raise a new one to supersede it")
             }

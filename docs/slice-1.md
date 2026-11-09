@@ -27,7 +27,8 @@ Substantive, answered before the slice (recorded in `PLAN.md`):
 - SQLite is the first engine.
 - No daemon in this slice; the CLI hosts the core.
 - Dependencies, as one set: `rusqlite` (bundled), `serde` and
-  `serde_json`, `clap`, `regex`, and one of `sha2` or `blake3`.
+  `serde_json`, `clap`, `regex`, `toml`, `getrandom`, and one of `sha2`
+  or `blake3`.
 - The confidentiality scan is built-in patterns plus a local denylist.
 
 Mechanical, taken while drafting this list; each is one line, so a

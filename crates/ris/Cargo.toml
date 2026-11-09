@@ -16,3 +16,9 @@ ris-store-sqlite.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+serde.workspace = true
+toml.workspace = true
+getrandom.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
