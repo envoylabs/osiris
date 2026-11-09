@@ -277,6 +277,13 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 ))
             }
             PhaseCmd::Close => {
+                let l = p.load()?;
+                let phase = l
+                    .state
+                    .open_phase()
+                    .ok_or(CliError::Refused(ris_core::Refusal::NoOpenPhase))?;
+                let (phase_id, goal) = (phase.id, l.text(phase.at, "goal").to_owned());
+                let closing = closing_merge(&mut p, phase_id, &goal)?;
                 let (l, events) = p.run(&Command::PhaseClose)?;
                 let closed = events.last().expect("close emits one event");
                 let report = match &closed.structure {
@@ -285,8 +292,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 };
                 let out = render::report(&l);
                 Ok(Output::new(
-                    out.text,
-                    json!({ "report": report, "phase": out.json }),
+                    format!("{}\n{closing}", out.text),
+                    json!({ "report": report, "phase": out.json, "closing_merge": closing }),
                 ))
             }
         },
@@ -824,4 +831,83 @@ fn merge_from_worktree(
         ))
     })?;
     Ok((commit, lines))
+}
+
+/// The closing merge: the phase branch into the main line, `--no-ff`,
+/// in the main worktree, with every check run on the merged result
+/// before the phase closes. When the phase's work is already on the
+/// main line there is nothing to merge. On a conflict or a failing
+/// check the merge is undone (it was never pushed) and the phase stays
+/// open. Returns a line saying what happened.
+fn closing_merge(
+    p: &mut Project,
+    phase: ris_core::ids::PhaseId,
+    goal: &str,
+) -> Result<String, CliError> {
+    let _lock = ris_store_sqlite::MergeLock::acquire(
+        &p.root.join(ris::project::DIR).join("merge.lock"),
+        std::time::Duration::from_secs(30 * 60),
+    )?;
+    let main = p.config.main_line.clone();
+    let branch = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
+    if branch == main {
+        return Ok(format!(
+            "closing merge: none needed; the phase's work is already on {main}"
+        ));
+    }
+    if branch == "HEAD" {
+        return Err(CliError::Other(
+            "the main worktree is detached; check out the phase branch there".into(),
+        ));
+    }
+    let dirty = git(&p.root, &["status", "--porcelain", "--untracked-files=no"])
+        .map_err(CliError::Other)?;
+    if !dirty.is_empty() {
+        return Err(CliError::Other(format!(
+            "the main worktree has uncommitted changes; commit or stash them before closing\n  \
+             next: the phase stays open until {branch} can merge into {main}"
+        )));
+    }
+    git(&p.root, &["switch", "--quiet", &main])
+        .map_err(|e| CliError::Other(format!("cannot switch to the main line {main}: {e}")))?;
+    let undo = |p: &Project| {
+        let _ = git(&p.root, &["merge", "--abort"]);
+        let _ = git(&p.root, &["reset", "--quiet", "--hard", "ORIG_HEAD"]);
+        let _ = git(&p.root, &["switch", "--quiet", &branch]);
+    };
+    let message = format!("chore: close {phase}: {goal}");
+    if let Err(e) = git(
+        &p.root,
+        &["merge", "--quiet", "--no-ff", "-m", &message, &branch],
+    ) {
+        let _ = git(&p.root, &["merge", "--abort"]);
+        let _ = git(&p.root, &["switch", "--quiet", &branch]);
+        return Err(CliError::Other(format!(
+            "refused: {branch} conflicts with {main}, which moved during the phase ({})\n  \
+             next: merge {main} into {branch}, resolve, merge that as an item, and close again",
+            e.lines().next().unwrap_or("merge failed")
+        )));
+    }
+    // The full checks on the merged result, in the main worktree.
+    let mut failed = Vec::new();
+    let names: Vec<String> = p.checks.checks.keys().cloned().collect();
+    for name in &names {
+        let check = p.checks.checks[name].clone();
+        let (passed, _) = checks::run_check_quietly(&p.root, &check)?;
+        if !passed {
+            failed.push(name.clone());
+        }
+    }
+    if !failed.is_empty() {
+        undo(p);
+        return Err(CliError::Other(format!(
+            "refused: {branch} merged into {main} fails {}; the merge was undone and the phase stays open\n  \
+             next: `ris check` after merging {main} into {branch} shows the failure",
+            failed.join(", ")
+        )));
+    }
+    let head = git(&p.root, &["rev-parse", "HEAD"]).map_err(CliError::Other)?;
+    Ok(format!(
+        "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}"
+    ))
 }

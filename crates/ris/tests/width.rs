@@ -268,3 +268,100 @@ fn simultaneous_merges_are_serialised() {
         "base plus one commit per item: {subjects}"
     );
 }
+
+fn rev(dir: &Path, what: &str) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", what])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+fn branch(dir: &Path) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// Closing a phase merges its branch into the main line with a real
+/// merge commit, after the checks pass on the merged result.
+#[test]
+fn closing_a_phase_merges_its_branch_into_the_main_line() {
+    let (main, trees) = setup("close", "[checks.ok]\ncommand = \"true\"\n", &["heron"]);
+    git(&main, &["branch", "main"]);
+    let h = &trees[0];
+    ok(&main, None, &["item", "add", "a file", "--check", "ok"]);
+    ok(h, Some("heron"), &["claim", "I-1"]);
+    fs::write(h.join("a"), "a\n").unwrap();
+    ok(h, Some("heron"), &["done", "I-1"]);
+    commit(h, "I-1", "heron");
+    ok(h, Some("heron"), &["merge", "I-1"]);
+    let phase_tip = head(&main);
+
+    let out = ok(&main, None, &["phase", "close"]);
+    assert!(out.contains("closing merge: phase into main"), "{out}");
+    assert_eq!(branch(&main), "main");
+    assert_eq!(
+        rev(&main, "HEAD^2"),
+        phase_tip,
+        "a merge commit whose second parent is the phase tip"
+    );
+    assert!(main.join("a").exists());
+}
+
+/// When the main line moved during the phase and the merged result
+/// fails a check, nothing changes: the main line stays where it was,
+/// the main worktree goes back to the phase branch, and the phase stays
+/// open.
+#[test]
+fn a_closing_merge_that_fails_the_checks_changes_nothing() {
+    let (main, trees) = setup(
+        "close-fail",
+        "[checks.flags]\ncommand = \"n=$(ls *.flag 2>/dev/null | wc -l); [ $n -le 1 ]\"\n",
+        &["heron"],
+    );
+    git(&main, &["branch", "main"]);
+    let h = &trees[0];
+    ok(&main, None, &["item", "add", "a flag", "--check", "flags"]);
+    ok(h, Some("heron"), &["claim", "I-1"]);
+    fs::write(h.join("a.flag"), "a\n").unwrap();
+    ok(h, Some("heron"), &["done", "I-1"]);
+    commit(h, "I-1", "heron");
+    ok(h, Some("heron"), &["merge", "I-1"]);
+
+    // Someone else commits to the main line during the phase.
+    let other = main.parent().unwrap().join("other");
+    git(
+        &main,
+        &["worktree", "add", "-q", other.to_str().unwrap(), "main"],
+    );
+    fs::write(other.join("b.flag"), "b\n").unwrap();
+    git(&other, &["add", "-A"]);
+    git(&other, &["commit", "-q", "-m", "elsewhere"]);
+    git(&main, &["worktree", "remove", other.to_str().unwrap()]);
+    let main_before = rev(&main, "main");
+
+    let r = ris(&main, None, &["phase", "close"]);
+    assert_eq!(r.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        err.contains("fails flags") && err.contains("undone"),
+        "{err}"
+    );
+    assert_eq!(
+        rev(&main, "main"),
+        main_before,
+        "the main line did not move"
+    );
+    assert_eq!(
+        branch(&main),
+        "phase",
+        "the main worktree is back on the phase branch"
+    );
+    let report = ok(&main, None, &["report"]);
+    assert!(report.starts_with("P-1 open"), "{report}");
+}

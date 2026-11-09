@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// What `config.toml` holds. Unknown keys are refused, so a key in the
 /// wrong place (such as a denylist written under a seat's table) is an
 /// error, not a silent no-op.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Agent seats by durable name.
@@ -23,6 +23,25 @@ pub struct Config {
     /// names, the home directory. Case-insensitive.
     #[serde(default)]
     pub denylist: Vec<String>,
+    /// The main line: the branch each phase's branch merges into at
+    /// close. When the phase's work is on the main line itself, there
+    /// is nothing to merge.
+    #[serde(default = "default_main_line")]
+    pub main_line: String,
+}
+
+fn default_main_line() -> String {
+    "main".to_owned()
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            agents: BTreeMap::new(),
+            denylist: Vec::new(),
+            main_line: default_main_line(),
+        }
+    }
 }
 
 /// One agent seat.
@@ -78,6 +97,9 @@ impl Config {
 # (Top-level keys go above the first [table]; below it, TOML reads them
 # as part of that table.)
 denylist = []
+
+# The branch each phase's branch merges into when the phase closes.
+main_line = \"main\"
 
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment.
