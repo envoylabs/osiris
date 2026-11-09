@@ -70,8 +70,15 @@ impl Sandbox {
         run
     }
 
-    /// An empty commit with `trailer` as its last message line.
+    /// Stage everything and commit it (empty commits allowed) with
+    /// `trailer` as the last message line.
     fn commit(&self, subject: &str, trailer: &str) {
+        let added = Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(&self.dir)
+            .status()
+            .unwrap();
+        assert!(added.success());
         let status = Command::new("git")
             .args([
                 "-c",
@@ -331,6 +338,24 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.refused(heron, &["done", "I-3"]);
     fs::write(sb.dir.join("bench.txt"), "1200 events/s\n").unwrap();
     sb.ok(heron, &["done", "I-3", "--evidence", "bench.txt"]);
+    // The exit scan: a commit that adds an identifying path is refused
+    // at merge, naming the file and line and not the text; `ris scan`
+    // finds the same thing in the tree.
+    fs::write(
+        sb.dir.join("notes.txt"),
+        format!("fine line\nsee {canary}\n"),
+    )
+    .unwrap();
+    sb.commit("docs: notes", "Item: I-3");
+    let r = sb.refused(None, &["merge", "I-3"]);
+    assert!(r.stderr.contains("notes.txt:2"), "{}", r.stderr);
+    assert!(!r.stderr.contains(&canary[..12]));
+    let r = sb.ris(None, &["scan"]);
+    assert_eq!(r.status, 2);
+    fs::remove_file(sb.dir.join("notes.txt")).unwrap();
+    sb.commit("docs: notes, without the path", "Item: I-3");
+    sb.ok(None, &["scan"]);
+    sb.ok(None, &["merge", "I-3"]);
 
     // I-2's dependency has merged.
     sb.ok(wren, &["claim", "I-2"]);
@@ -443,6 +468,7 @@ fn every_help_fits_one_screen() {
         &["show"],
         &["summary"],
         &["report"],
+        &["scan"],
         &["verify"],
         &["log"],
     ];

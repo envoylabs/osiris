@@ -403,6 +403,7 @@ dependencies = [
  "ris-core",
  "rusqlite",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

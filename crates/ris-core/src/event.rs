@@ -532,7 +532,9 @@ mod tests {
         // The text is one of a handful of obvious answers. Without the
         // salt, hashing each candidate under the obvious salts does not
         // find it.
-        let secret = text(&[("rationale", "yes")]);
+        // Named `hidden`, not `secret`: a variable called `secret = ...`
+        // reads as a credential assignment to the exit scan.
+        let hidden = text(&[("rationale", "yes")]);
         let real_salt = Salt(*b"0123456789abcdef");
         let e = Event::new(
             1,
@@ -543,7 +545,7 @@ mod tests {
                 by: Actor::Person,
                 chosen: 0,
             },
-            secret,
+            hidden,
             real_salt,
         )
         .redacted();

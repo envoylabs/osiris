@@ -63,9 +63,13 @@ into harness state or into a commit: no credentials, no names or
 addresses of real people, no hostnames or usernames, no absolute paths
 (a home directory carries a username; paths are relative to the repo
 root). `ris` scans every free-text field and refuses on a hit without
-echoing it; the same rule applies to what you write in code, comments,
-commit messages and docs. Test fixtures that need a planted secret or
-path assemble it at runtime so the literal is never in the tree.
+echoing it, and `ris merge` scans the commit's message and every line
+its diff adds, so the same rule applies to what you write in code,
+comments, commit messages and docs. `ris scan [paths]` runs that scan
+over the tree before you commit. There is no allowance mechanism: a
+test fixture that needs a planted secret or path assembles it at
+runtime from pieces, with a comment saying why, so the literal is never
+in the tree.
 
 ## Writing for the repository
 

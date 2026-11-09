@@ -36,6 +36,14 @@ pub enum CliError {
     UnknownAgent(String),
     /// Two writers kept colliding; the caller may retry.
     Contended,
+    /// The exit scan found something in a commit or in files. Exit
+    /// status 2, like any confidentiality refusal. Hits name a place and
+    /// a category, never the text.
+    Leak {
+        /// What was scanned: a commit's short hash, or "working tree".
+        what: String,
+        hits: Vec<crate::exits::Hit>,
+    },
     /// One or more checks failed. Exit status 3. The runs are in the
     /// log and their output is evidence.
     ChecksFailed {
@@ -68,6 +76,20 @@ impl std::fmt::Display for CliError {
                 "RIS_AGENT={a} is not a seat in {DIR}/config.toml\n  next: add [agents.{a}] there, or unset RIS_AGENT to act as the person"
             ),
             Self::Contended => write!(f, "the log kept moving under this command; try again"),
+            Self::Leak { what, hits } => {
+                writeln!(
+                    f,
+                    "refused: {what} contains what the ground rule keeps out:"
+                )?;
+                for h in hits {
+                    writeln!(f, "  {h}")?;
+                }
+                write!(
+                    f,
+                    "  next: remove it (a test fixture assembles its canary at runtime), \
+                     rotate anything that was a real secret, and run again"
+                )
+            }
             Self::ChecksFailed {
                 item,
                 stage,

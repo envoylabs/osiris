@@ -281,6 +281,28 @@ I-3 done with 1 piece(s) of evidence
   next: commit with `Item: I-3` as a trailer, then `ris merge I-3`
 [exit 0]
 
+$ ris merge I-3
+[stderr] refused: commit <hash> contains what the ground rule keeps out:
+  notes.txt:2: an absolute path that identifies a user or machine
+  next: remove it (a test fixture assembles its canary at runtime), rotate anything that was a real secret, and run again
+[exit 2]
+
+$ ris scan
+[stderr] refused: the working tree contains what the ground rule keeps out:
+  notes.txt:2: an absolute path that identifies a user or machine
+  next: remove it (a test fixture assembles its canary at runtime), rotate anything that was a real secret, and run again
+[exit 2]
+
+$ ris scan
+clean: 2 file(s) scanned
+[exit 0]
+
+$ ris merge I-3
+I-3: check lint passed (E-<hash>)
+I-3: check test passed (E-<hash>)
+I-3 merged at <hash>
+[exit 0]
+
 $ RIS_AGENT=wren ris claim I-2
 claimed I-2: the fold
   checks: none
@@ -359,7 +381,7 @@ $ ris show P-1
 P-1 open: first slice
   I-1   merged   the event envelope (<hash>)
   I-2   ready    the fold
-  I-3   done     the cli
+  I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
 [exit 0]
 
@@ -378,10 +400,10 @@ $ ris show banana
 
 $ ris report
 P-1 open: first slice
-items: 1 claimed, 1 done, 1 merged, 1 ready
+items: 1 claimed, 2 merged, 1 ready
   I-1   merged   the event envelope (<hash>)
   I-2   ready    the fold
-  I-3   done     the cli
+  I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
@@ -399,7 +421,7 @@ failed checks:
   I-1 lint failed (E-<hash>)
   I-4 lint failed (E-<hash>)
 messages: 1
-log: 31 events, head <hash>
+log: 34 events, head <hash>
 report: <hash> (if closed now)
 previous report: <hash>
 [exit 0]
@@ -415,10 +437,10 @@ ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 
 == report ==
 P-1 open: first slice
-items: 1 claimed, 1 done, 1 merged, 1 ready
+items: 1 claimed, 2 merged, 1 ready
   I-1   merged   the event envelope (<hash>)
   I-2   ready    the fold
-  I-3   done     the cli
+  I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
@@ -436,7 +458,7 @@ failed checks:
   I-1 lint failed (E-<hash>)
   I-4 lint failed (E-<hash>)
 messages: 1
-log: 31 events, head <hash>
+log: 34 events, head <hash>
 report: <hash> (if closed now)
 previous report: <hash>
 
@@ -445,15 +467,15 @@ I-2   ready    the fold
 [exit 0]
 
 $ ris verify
-ok: 31 events, head <hash>
+ok: 34 events, head <hash>
 [exit 0]
 
 $ ris phase close
 P-1 closed: first slice
-items: 1 claimed, 1 done, 1 merged, 1 ready
+items: 1 claimed, 2 merged, 1 ready
   I-1   merged   the event envelope (<hash>)
   I-2   ready    the fold
-  I-3   done     the cli
+  I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
@@ -471,7 +493,7 @@ failed checks:
   I-1 lint failed (E-<hash>)
   I-4 lint failed (E-<hash>)
 messages: 1
-log: 32 events, head <hash>
+log: 35 events, head <hash>
 report: <hash>
 previous report: <hash>
 [exit 0]
@@ -511,6 +533,7 @@ $ ris --json report
     },
     {
       "checks": [],
+      "commit": "<hash>",
       "depends_on": [],
       "evidence": [
         "E-<hash>"
@@ -518,7 +541,7 @@ $ ris --json report
       "goal": "the cli",
       "id": "I-3",
       "phase": "P-1",
-      "state": "done"
+      "state": "merged"
     },
     {
       "agent": "wren",
@@ -534,7 +557,7 @@ $ ris --json report
   ],
   "log": {
     "head": "<hash>",
-    "len": 32
+    "len": 35
   },
   "mechanical": [
     {

@@ -102,6 +102,9 @@ enum Cmd {
     Summary,
     /// The phase report.
     Report,
+    /// Scan tracked files (or the given paths) as `ris merge` scans a
+    /// commit: exit 2 on a hit, naming the place and never the text.
+    Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
     /// Dump the log as JSON lines, from a sequence number.
@@ -210,7 +213,7 @@ fn main() -> ExitCode {
                 }
             }
             ExitCode::from(match e {
-                CliError::Refused(_) => 2,
+                CliError::Refused(_) | CliError::Leak { .. } => 2,
                 CliError::ChecksFailed { .. } => 3,
                 _ => 1,
             })
@@ -465,6 +468,14 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             };
             let message = checks::commit_message(&p.root, &commit)?;
             checks::require_trailer(&message, *item, &commit)?;
+            // The exit scan: the message and every line the diff adds.
+            let hits = ris::exits::scan_commit(&p.root, &commit, &message, &p.policy)?;
+            if !hits.is_empty() {
+                return Err(CliError::Leak {
+                    what: format!("commit {}", &commit[..commit.len().min(12)]),
+                    hits,
+                });
+            }
             // The full checks: every check the project declares.
             let names: Vec<String> = p.checks.checks.keys().cloned().collect();
             let CheckRuns { lines, failed, .. } = run_checks(&mut p, *item, &names)?;
@@ -522,6 +533,21 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Summary => Ok(render::summary(&p.load()?, &actor)),
 
         Cmd::Report => Ok(render::report(&p.load()?)),
+
+        Cmd::Scan { paths } => {
+            let files = ris::exits::tracked_files(&p.root, paths)?;
+            let hits = ris::exits::scan_files(&p.root, &files, &p.policy)?;
+            if !hits.is_empty() {
+                return Err(CliError::Leak {
+                    what: "the working tree".into(),
+                    hits,
+                });
+            }
+            Ok(Output::new(
+                format!("clean: {} file(s) scanned", files.len()),
+                json!({ "files": files.len(), "hits": [] }),
+            ))
+        }
 
         Cmd::Verify => {
             let l = p.load()?;
