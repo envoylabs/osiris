@@ -513,6 +513,7 @@ fn every_help_fits_one_screen() {
         &["scan"],
         &["verify"],
         &["export"],
+        &["import"],
         &["log"],
     ];
     for sub in subcommands {

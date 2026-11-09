@@ -124,6 +124,15 @@ enum Cmd {
     Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
+    /// Import items and standing decisions from a TOML file into the
+    /// open phase. The whole file is validated first; see `ris import
+    /// --help` and the onboarding skill for the format.
+    Import {
+        file: PathBuf,
+        /// Validate and report, writing nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Write each closed phase's events to <dir>/P-n.jsonl, scanned
     /// first. Nothing is exported unless you run this.
     Export { dir: PathBuf },
@@ -698,6 +707,54 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(
                 format!("clean: {} file(s) scanned", files.len()),
                 json!({ "files": files.len(), "hits": [] }),
+            ))
+        }
+
+        Cmd::Import { file, dry_run } => {
+            if actor != Actor::Person {
+                return Err(CliError::Other(
+                    "imported decisions are the person's; run ris import without RIS_AGENT".into(),
+                ));
+            }
+            let l = p.load()?;
+            if l.state.open_phase().is_none() {
+                return Err(CliError::Refused(ris_core::Refusal::NoOpenPhase));
+            }
+            let source = std::fs::read_to_string(file)?;
+            let plan =
+                ris::import::plan(&source, &l.state, &p.checks, &p.policy).map_err(|problems| {
+                    CliError::Other(format!(
+                        "refused: nothing was imported; {} problem(s):\n  {}",
+                        problems.len(),
+                        problems.join("\n  ")
+                    ))
+                })?;
+            if *dry_run {
+                return Ok(Output::new(
+                    format!(
+                        "valid: would import {} item(s) and {} decision(s); nothing written",
+                        plan.items, plan.decisions
+                    ),
+                    json!({ "items": plan.items, "decisions": plan.decisions, "written": false }),
+                ));
+            }
+            let first_item = l.state.next_item_id().0;
+            let first_decision = l.state.next_decision_id().0;
+            for c in &plan.commands {
+                p.run(c)?;
+            }
+            let range = |prefix: &str, first: u32, n: usize| match n {
+                0 => "none".to_owned(),
+                1 => format!("{prefix}-{first}"),
+                _ => format!("{prefix}-{first} to {prefix}-{}", first + n as u32 - 1),
+            };
+            Ok(Output::new(
+                format!(
+                    "imported items {} and decisions {}",
+                    range("I", first_item, plan.items),
+                    range("D", first_decision, plan.decisions)
+                ),
+                json!({ "items": plan.items, "decisions": plan.decisions, "written": true }),
             ))
         }
 
