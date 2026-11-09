@@ -181,6 +181,14 @@ pub fn ready(l: &Loaded) -> Output {
     )
 }
 
+/// What the person's inbox ends with: how to act, and what the ids mean.
+const PERSON_FOOTER: &str = "\
+--
+answer:  ris decide D-n --choose <option number> --rationale \"...\"
+look:    ris show <id>    ris ready    ris report
+ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
+";
+
 /// `ris inbox`: for the person, the decision queue; for an agent, its
 /// messages and the items it holds.
 pub fn inbox(l: &Loaded, actor: &Actor) -> Output {
@@ -191,15 +199,17 @@ pub fn inbox(l: &Loaded, actor: &Actor) -> Output {
                 .open_decisions()
                 .filter(|d| d.class == DecisionClass::Substantive)
                 .collect();
-            let text = if open.is_empty() {
-                "no decisions waiting".to_owned()
+            let mut text = if open.is_empty() {
+                "no decisions waiting\n".to_owned()
             } else {
                 let mut s = format!("{} decision(s) waiting\n", open.len());
                 for d in &open {
                     s.push_str(&decision_block(l, d));
                 }
-                s.trim_end().to_owned()
+                s
             };
+            text.push_str(PERSON_FOOTER);
+            let text = text.trim_end().to_owned();
             Output::new(
                 text,
                 json!({ "decisions": open.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>() }),

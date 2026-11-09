@@ -95,6 +95,10 @@ D-2 [substantive] daemon now or CLI-direct?  (about I-3)
      0: daemon
    * 1: cli-direct
      open; * marks the recommendation
+--
+answer:  ris decide D-n --choose <option number> --rationale "..."
+look:    ris show <id>    ris ready    ris report
+ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 [exit 0]
 
 $ RIS_AGENT=heron ris decide D-2 --choose 1 --rationale agents do not take these
