@@ -21,6 +21,12 @@ use crate::evidence::EvidenceStore;
 /// The directory name.
 pub const DIR: &str = ".osiris";
 
+/// The rules file `ris init` writes at the project root.
+pub const RULES_FILE: &str = "OSIRIS.md";
+
+/// The agents' rules, generic to any project.
+pub const RULES: &str = include_str!("rules.md");
+
 /// Why the shell could not do what was asked.
 #[derive(Debug)]
 pub enum CliError {
@@ -218,6 +224,11 @@ impl Project {
         fs::create_dir_all(&dir)?;
         fs::write(dir.join("config.toml"), Config::TEMPLATE)?;
         fs::write(dir.join("checks.toml"), ChecksConfig::TEMPLATE)?;
+        // The agents' rules, generic to any project. Never overwritten.
+        let rules = root.join(RULES_FILE);
+        if !rules.exists() {
+            fs::write(&rules, RULES)?;
+        }
         // The store stays out of git. Export, when wanted, is explicit.
         if root.join(".git").exists() {
             let gitignore = root.join(".gitignore");

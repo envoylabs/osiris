@@ -183,6 +183,9 @@ fn scripted_phase_matches_the_golden_transcript() {
     assert!(r.stderr.contains("ris init"));
 
     sb.ok(None, &["init"]);
+    let rules = fs::read_to_string(sb.dir.join("OSIRIS.md")).unwrap();
+    assert!(rules.contains("RIS_AGENT") && rules.contains("Agent:"));
+    assert_eq!(sb.ok(None, &["rules"]).stdout.trim_end(), rules.trim_end());
     assert!(
         fs::read_to_string(sb.dir.join(".gitignore"))
             .unwrap()
@@ -463,6 +466,7 @@ fn every_help_fits_one_screen() {
     let subcommands: &[&[&str]] = &[
         &[],
         &["init"],
+        &["rules"],
         &["phase"],
         &["phase", "open"],
         &["item", "add"],

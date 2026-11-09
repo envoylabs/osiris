@@ -37,8 +37,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Create .osiris/ in the current directory.
+    /// Create .osiris/ in the current directory, and OSIRIS.md if absent.
     Init,
+    /// Print the agents' rules (what OSIRIS.md holds).
+    Rules,
     /// Open or close a phase.
     Phase {
         #[command(subcommand)]
@@ -237,18 +239,24 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     if let Cmd::Init = cli.command {
         let p = Project::init(&cwd)?;
         return Ok(Output::new(
-            format!(
-                "initialised {}/.osiris\n  next: edit .osiris/config.toml (agents, denylist), then `ris phase open <goal>`",
-                p.root.display()
-            ),
+            "initialised .osiris and wrote OSIRIS.md (the agents' rules)\n  \
+             next: point your agents' rules file at OSIRIS.md (for example `@OSIRIS.md` in CLAUDE.md),\n        \
+             set seats and the denylist in .osiris/config.toml and checks in .osiris/checks.toml,\n        \
+             then `ris phase open <goal>`",
             json!({ "root": p.root }),
+        ));
+    }
+    if let Cmd::Rules = cli.command {
+        return Ok(Output::new(
+            ris::project::RULES.trim_end(),
+            json!({ "rules": ris::project::RULES }),
         ));
     }
     let mut p = Project::find(&cwd)?;
     let actor = p.actor()?;
 
     match &cli.command {
-        Cmd::Init => unreachable!(),
+        Cmd::Init | Cmd::Rules => unreachable!(),
 
         Cmd::Phase { action } => match action {
             PhaseCmd::Open { goal } => {
