@@ -162,7 +162,11 @@ impl Loaded {
 
 /// An open project.
 pub struct Project {
+    /// Where `.osiris/` lives: the main worktree of the repository.
     pub root: PathBuf,
+    /// The caller's own worktree: where checks run and where its commits
+    /// are read. The same as `root` at width one.
+    pub work: PathBuf,
     pub config: Config,
     pub checks: ChecksConfig,
     pub policy: Policy,
@@ -172,15 +176,37 @@ pub struct Project {
 
 impl Project {
     /// Walk up from `start` to the directory holding `.osiris/`.
+    /// Find the store from `start`: `RIS_ROOT` if set, else the nearest
+    /// directory above with `.osiris/`, else the main worktree of the
+    /// git repository `start` is in (so every worktree of a repository
+    /// shares one store). Checks run in `start`'s own worktree.
     pub fn find(start: &Path) -> Result<Self, CliError> {
+        let root = Self::locate(start).ok_or_else(|| CliError::NotAProject(start.to_path_buf()))?;
+        let mut p = Self::open(&root)?;
+        if let Some(work) = git_path(start, &["rev-parse", "--show-toplevel"]) {
+            p.work = work;
+        }
+        Ok(p)
+    }
+
+    fn locate(start: &Path) -> Option<PathBuf> {
+        if let Some(root) = env::var_os("RIS_ROOT") {
+            let root = PathBuf::from(root);
+            return root.join(DIR).is_dir().then_some(root);
+        }
         let mut dir = Some(start);
         while let Some(d) = dir {
             if d.join(DIR).is_dir() {
-                return Self::open(d);
+                return Some(d.to_path_buf());
             }
             dir = d.parent();
         }
-        Err(CliError::NotAProject(start.to_path_buf()))
+        let common = git_path(
+            start,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        let main = common.parent()?.to_path_buf();
+        main.join(DIR).is_dir().then_some(main)
     }
 
     /// Create `.osiris/` in `root` from the templates.
@@ -223,6 +249,7 @@ impl Project {
         let store = SqliteStore::open(&dir.join("store.sqlite"))?;
         Ok(Self {
             root: root.to_path_buf(),
+            work: root.to_path_buf(),
             config,
             checks,
             policy,
@@ -281,6 +308,20 @@ impl Project {
     pub fn head(&self) -> Result<(u64, ris_core::ids::Hash), CliError> {
         Ok(self.store.head()?)
     }
+}
+
+/// Run git in `dir` and read one path from its output.
+fn git_path(dir: &Path, args: &[&str]) -> Option<PathBuf> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    (!s.is_empty()).then(|| PathBuf::from(s))
 }
 
 /// The shell's clock: milliseconds since the Unix epoch.

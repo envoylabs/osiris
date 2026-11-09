@@ -467,15 +467,15 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             }
             let commit = match commit {
                 Some(c) => c.clone(),
-                None => checks::git_head(&p.root)?,
+                None => checks::git_head(&p.work)?,
             };
-            let message = checks::commit_message(&p.root, &commit)?;
+            let message = checks::commit_message(&p.work, &commit)?;
             checks::require_trailer(&message, *item, &commit)?;
             let author = last_claimant(&l, *item)
                 .ok_or_else(|| CliError::Other(format!("{item} has no claim in the log")))?;
             checks::require_agent_trailer(&message, &author, &commit)?;
             // The exit scan: the message and every line the diff adds.
-            let hits = ris::exits::scan_commit(&p.root, &commit, &message, &p.policy)?;
+            let hits = ris::exits::scan_commit(&p.work, &commit, &message, &p.policy)?;
             if !hits.is_empty() {
                 return Err(CliError::Leak {
                     what: format!("commit {}", &commit[..commit.len().min(12)]),
@@ -552,8 +552,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Report => Ok(render::report(&p.load()?)),
 
         Cmd::Scan { paths } => {
-            let files = ris::exits::tracked_files(&p.root, paths)?;
-            let hits = ris::exits::scan_files(&p.root, &files, &p.policy)?;
+            let files = ris::exits::tracked_files(&p.work, paths)?;
+            let hits = ris::exits::scan_files(&p.work, &files, &p.policy)?;
             if !hits.is_empty() {
                 return Err(CliError::Leak {
                     what: "the working tree".into(),
@@ -621,7 +621,7 @@ fn run_checks(p: &mut Project, item: ItemId, names: &[String]) -> Result<CheckRu
             )));
         };
         let check = check.clone();
-        let outcome = checks::run_check(&p.root, name, &check, &p.evidence)?;
+        let outcome = checks::run_check(&p.work, name, &check, &p.evidence)?;
         p.run(&Command::CheckRan {
             item,
             check: CheckId(name.clone()),
