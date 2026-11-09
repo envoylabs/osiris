@@ -146,11 +146,16 @@ pub fn scan(raw: &str, policy: &Policy) -> Option<Category> {
     if let Some((category, _)) = PATTERNS.iter().find(|(_, re)| re.is_match(raw)) {
         return Some(*category);
     }
-    if has_high_entropy_run(raw) {
-        return Some(Category::Secret);
-    }
+    // The narrower hand patterns name the category best, so they go
+    // first; the vendored rule set catches the formats they do not.
     if let Some((category, _)) = LATE_PATTERNS.iter().find(|(_, re)| re.is_match(raw)) {
         return Some(*category);
+    }
+    if crate::rules::find(raw).is_some() {
+        return Some(Category::Secret);
+    }
+    if has_high_entropy_run(raw) {
+        return Some(Category::Secret);
     }
     if has_denylisted(raw, policy) {
         return Some(Category::Denylisted);

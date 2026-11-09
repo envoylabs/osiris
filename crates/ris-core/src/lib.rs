@@ -10,6 +10,7 @@ pub mod event;
 pub mod ids;
 pub mod primitives;
 pub mod refusal;
+pub mod rules;
 pub mod state;
 pub mod store;
 pub mod text;
