@@ -473,34 +473,24 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 })?;
                 unreachable!("the core refuses a merge of an item that is not done");
             }
-            let commit = match commit {
-                Some(c) => c.clone(),
-                None => checks::git_head(&p.work)?,
-            };
-            let message = checks::commit_message(&p.work, &commit)?;
-            checks::require_trailer(&message, *item, &commit)?;
             let author = last_claimant(&l, *item)
                 .ok_or_else(|| CliError::Other(format!("{item} has no claim in the log")))?;
-            checks::require_agent_trailer(&message, &author, &commit)?;
-            // The exit scan: the message and every line the diff adds.
-            let hits = ris::exits::scan_commit(&p.work, &commit, &message, &p.policy)?;
-            if !hits.is_empty() {
-                return Err(CliError::Leak {
-                    what: format!("commit {}", &commit[..commit.len().min(12)]),
-                    hits,
-                });
-            }
-            // The full checks: every check the project declares.
-            let names: Vec<String> = p.checks.checks.keys().cloned().collect();
-            let CheckRuns { lines, failed, .. } = run_checks(&mut p, *item, &names)?;
-            if !failed.is_empty() {
-                return Err(CliError::ChecksFailed {
-                    item: *item,
-                    stage: "merged",
-                    failed,
-                    lines,
-                });
-            }
+            let (commit, lines) = if same_dir(&p.work, &p.root) {
+                // Width one: the commit is already on the phase branch.
+                let commit = match commit {
+                    Some(c) => c.clone(),
+                    None => checks::git_head(&p.work)?,
+                };
+                let lines = vet_and_check(&mut p, *item, &author, &commit)?;
+                (commit, lines)
+            } else {
+                if commit.is_some() {
+                    return Err(CliError::Other(
+                        "--commit is for width one; from a worktree, merge commits HEAD".into(),
+                    ));
+                }
+                merge_from_worktree(&mut p, *item, &author)?
+            };
             let (_, _) = p.run(&Command::Merge {
                 item: *item,
                 commit: CommitHash(commit.clone()),
@@ -665,4 +655,111 @@ fn last_claimant(l: &ris::project::Loaded, item: ItemId) -> Option<String> {
         }
         _ => None,
     })
+}
+
+fn same_dir(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// Everything a commit must pass before it merges: its trailers, the
+/// exit scan, and every project check, run in the caller's worktree.
+/// Returns the per-check lines.
+fn vet_and_check(
+    p: &mut Project,
+    item: ItemId,
+    author: &str,
+    commit: &str,
+) -> Result<Vec<String>, CliError> {
+    let message = checks::commit_message(&p.work, commit)?;
+    checks::require_trailer(&message, item, commit)?;
+    checks::require_agent_trailer(&message, author, commit)?;
+    let hits = ris::exits::scan_commit(&p.work, commit, &message, &p.policy)?;
+    if !hits.is_empty() {
+        return Err(CliError::Leak {
+            what: format!("commit {}", &commit[..commit.len().min(12)]),
+            hits,
+        });
+    }
+    let names: Vec<String> = p.checks.checks.keys().cloned().collect();
+    let CheckRuns { lines, failed, .. } = run_checks(p, item, &names)?;
+    if !failed.is_empty() {
+        return Err(CliError::ChecksFailed {
+            item,
+            stage: "merged",
+            failed,
+            lines,
+        });
+    }
+    Ok(lines)
+}
+
+/// Run git in `dir`; the trimmed stdout, or the trimmed stderr as the
+/// error.
+fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+    }
+}
+
+/// Width above one. Under the merge lock: rebase the builder's branch
+/// onto the phase branch, require exactly one commit on top, vet it and
+/// run every check on the combined tree, then fast-forward the phase
+/// branch. Nothing moves unless every step passes.
+fn merge_from_worktree(
+    p: &mut Project,
+    item: ItemId,
+    author: &str,
+) -> Result<(String, Vec<String>), CliError> {
+    let _lock = ris_store_sqlite::MergeLock::acquire(
+        &p.root.join(ris::project::DIR).join("merge.lock"),
+        std::time::Duration::from_secs(30 * 60),
+    )?;
+    let phase = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
+    if phase == "HEAD" {
+        return Err(CliError::Other(
+            "the main worktree is detached; check out the phase branch there".into(),
+        ));
+    }
+    if let Err(e) = git(&p.work, &["rebase", "--quiet", &phase]) {
+        let _ = git(&p.work, &["rebase", "--abort"]);
+        return Err(CliError::Other(format!(
+            "refused: {item} conflicts with work merged to {phase} before it ({})\n  \
+             next: `git rebase {phase}` in your worktree, resolve, keep one commit, and run `ris merge {item}` again",
+            e.lines().next().unwrap_or("rebase failed")
+        )));
+    }
+    let count = git(&p.work, &["rev-list", "--count", &format!("{phase}..HEAD")])
+        .map_err(CliError::Other)?;
+    match count.as_str() {
+        "1" => {}
+        "0" => {
+            return Err(CliError::Other(format!(
+                "nothing to merge: your branch has no commit beyond {phase}\n  next: commit the item first"
+            )));
+        }
+        n => {
+            return Err(CliError::Other(format!(
+                "your branch has {n} commits beyond {phase}; an item merges as one\n  \
+                 next: squash them (`git reset --soft {phase}` then commit with the trailers)"
+            )));
+        }
+    }
+    let commit = checks::git_head(&p.work)?;
+    let lines = vet_and_check(p, item, author, &commit)?;
+    git(&p.root, &["merge", "--quiet", "--ff-only", &commit]).map_err(|e| {
+        CliError::Other(format!(
+            "could not move {phase} to {commit}: {e}\n  next: the main worktree may have uncommitted changes in the way"
+        ))
+    })?;
+    Ok((commit, lines))
 }

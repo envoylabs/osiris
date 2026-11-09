@@ -262,6 +262,24 @@ impl Store for SqliteStore {
     }
 }
 
+/// A lock held for the length of one merge, so merges happen one at a
+/// time. It is an exclusive transaction on its own SQLite file: other
+/// processes wait up to `wait` for it, and the operating system releases
+/// it if the holding process dies, so a crash never leaves it stuck.
+pub struct MergeLock {
+    _conn: Connection,
+}
+
+impl MergeLock {
+    pub fn acquire(path: &Path, wait: std::time::Duration) -> Result<Self, StoreError> {
+        let conn = Connection::open(path).map_err(backend)?;
+        conn.busy_timeout(wait).map_err(backend)?;
+        conn.execute_batch("BEGIN EXCLUSIVE")
+            .map_err(|e| StoreError::Backend(format!("another merge holds the lock: {e}")))?;
+        Ok(Self { _conn: conn })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,6 +591,18 @@ mod tests {
             ris_core::event::verify(&back).unwrap().missing_text,
             vec![1]
         );
+    }
+
+    #[test]
+    fn the_merge_lock_excludes_and_is_released_on_drop() {
+        let path = temp_db("lock");
+        let held = MergeLock::acquire(&path, std::time::Duration::from_millis(0)).unwrap();
+        assert!(
+            MergeLock::acquire(&path, std::time::Duration::from_millis(50)).is_err(),
+            "a second holder waits, then gives up"
+        );
+        drop(held);
+        MergeLock::acquire(&path, std::time::Duration::from_millis(0)).unwrap();
     }
 
     /// The append-path bench: at least a hundred times five agents'
