@@ -98,3 +98,11 @@ diff and the evidence against the goal, the decisions that touch it and
 these rules, and checks the item's mechanical decisions for any that
 should have been substantive. Findings go to the author as messages; a
 finding the author disputes is raised as a substantive decision.
+
+## Onboarding a project
+
+To load an existing project's backlog and standing decisions, follow
+the osiris-onboard skill (in the osiris repository under
+`skills/osiris-onboard`): checks first, then an import file kept in
+`.osiris/`, checked with `ris import --dry-run`, approved by the person,
+then imported. Never record a decision the project has not made.
