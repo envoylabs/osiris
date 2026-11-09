@@ -27,6 +27,40 @@ pub const RULES_FILE: &str = "OSIRIS.md";
 /// The agents' rules, generic to any project.
 pub const RULES: &str = include_str!("rules.md");
 
+/// The agent tool's local, uncommitted rules file, which imports the
+/// rules in a local setup.
+pub const LOCAL_IMPORT_FILE: &str = "CLAUDE.local.md";
+
+/// Add `lines` to git's local exclude file (shared by every worktree,
+/// never committed) unless already there.
+pub fn exclude_locally(root: &Path, lines: &[&str]) -> Result<(), CliError> {
+    let path = git_path(
+        root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+        ],
+    )
+    .ok_or_else(|| CliError::Other("cannot find git's info/exclude".into()))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut existing = fs::read_to_string(&path).unwrap_or_default();
+    for line in lines {
+        if !existing.lines().any(|l| l.trim() == *line) {
+            if !existing.is_empty() && !existing.ends_with('\n') {
+                existing.push('\n');
+            }
+            existing.push_str(line);
+            existing.push('\n');
+        }
+    }
+    fs::write(&path, existing)?;
+    Ok(())
+}
+
 /// Why the shell could not do what was asked.
 #[derive(Debug)]
 pub enum CliError {
@@ -187,6 +221,17 @@ pub struct Project {
 }
 
 impl Project {
+    /// Where the agents' rules live: inside `.osiris/` in a local setup,
+    /// at the root otherwise.
+    pub fn rules_path(&self) -> PathBuf {
+        let local = self.root.join(DIR).join(RULES_FILE);
+        if local.exists() {
+            local
+        } else {
+            self.root.join(RULES_FILE)
+        }
+    }
+
     /// Walk up from `start` to the directory holding `.osiris/`.
     /// Find the store from `start`: `RIS_ROOT` if set, else the nearest
     /// directory above with `.osiris/`, else the main worktree of the
@@ -222,7 +267,10 @@ impl Project {
     }
 
     /// Create `.osiris/` in `root` from the templates.
-    pub fn init(root: &Path) -> Result<Self, CliError> {
+    /// Create `.osiris/`. With `local`, nothing tracked changes: the
+    /// rules go inside `.osiris/`, and the ignore lines go in git's
+    /// local exclude file, which is never committed.
+    pub fn init(root: &Path, local: bool) -> Result<Self, CliError> {
         let dir = root.join(DIR);
         if dir.exists() {
             return Err(CliError::AlreadyAProject(dir));
@@ -230,6 +278,19 @@ impl Project {
         fs::create_dir_all(&dir)?;
         fs::write(dir.join("config.toml"), Config::TEMPLATE)?;
         fs::write(dir.join("checks.toml"), ChecksConfig::TEMPLATE)?;
+        if local {
+            fs::write(dir.join(RULES_FILE), RULES)?;
+            if git_path(root, &["rev-parse", "--git-dir"]).is_some() {
+                exclude_locally(root, &[&format!("{DIR}/"), LOCAL_IMPORT_FILE])?;
+                // The agent tool's local rules file imports the rules.
+                // An existing one is left alone.
+                let import = root.join(LOCAL_IMPORT_FILE);
+                if !import.exists() {
+                    fs::write(&import, format!("@{DIR}/{RULES_FILE}\n"))?;
+                }
+            }
+            return Self::open(root);
+        }
         // The agents' rules, generic to any project. Never overwritten.
         let rules = root.join(RULES_FILE);
         if !rules.exists() {

@@ -6,7 +6,7 @@ $ ris ready
 $ ris init
 initialised .osiris and wrote OSIRIS.md (the agents' rules)
   next: point your agents' rules file at OSIRIS.md (for example `@OSIRIS.md` in CLAUDE.md),
-        set seats and the denylist in .osiris/config.toml and checks in .osiris/checks.toml,
+        set the denylist and seats in .osiris/config.toml and checks in .osiris/checks.toml,
         then `ris phase open <goal>`
 [exit 0]
 

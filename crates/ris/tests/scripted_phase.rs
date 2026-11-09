@@ -492,6 +492,7 @@ fn every_help_fits_one_screen() {
         &[],
         &["init"],
         &["rules"],
+        &["worktree"],
         &["phase"],
         &["phase", "open"],
         &["item", "add"],

@@ -392,3 +392,53 @@ fn phase_branches_follow_the_phase_and_can_be_turned_off() {
     let out = ok(&main, None, &["phase", "close"]);
     assert!(out.contains("already on main"), "{out}");
 }
+
+fn porcelain(dir: &Path) -> String {
+    let out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// The falsifier for "no residue": after `ris init --local` and a
+/// builder's worktree, git sees no change at all in either tree.
+#[test]
+fn a_local_setup_leaves_nothing_for_git_to_see() {
+    let base = std::env::temp_dir().join(format!("ris-width-local-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let repo = base.join("client");
+    fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    fs::write(repo.join("README"), "theirs\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+
+    ok(&repo, None, &["init", "--local"]);
+    assert_eq!(
+        porcelain(&repo),
+        "",
+        "init --local changes nothing git can see"
+    );
+    assert!(!repo.join("OSIRIS.md").exists());
+    assert!(!repo.join(".gitignore").exists());
+    assert!(repo.join(".osiris/OSIRIS.md").exists());
+    assert_eq!(
+        fs::read_to_string(repo.join("CLAUDE.local.md")).unwrap(),
+        "@.osiris/OSIRIS.md\n"
+    );
+
+    let out = ok(&repo, None, &["worktree", "heron"]);
+    let wt = base.join("client-heron");
+    assert!(out.contains("client-heron"), "{out}");
+    assert_eq!(porcelain(&wt), "", "the worktree is clean too");
+    let import = fs::read_to_string(wt.join("CLAUDE.local.md")).unwrap();
+    assert!(
+        import.starts_with('@') && import.trim_end().ends_with(".osiris/OSIRIS.md"),
+        "{import}"
+    );
+    assert_eq!(porcelain(&repo), "");
+    // The worktree finds the shared store.
+    ok(&wt, Some("heron"), &["ready"]);
+}

@@ -38,7 +38,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Create .osiris/ in the current directory, and OSIRIS.md if absent.
-    Init,
+    Init {
+        /// Change nothing tracked: rules inside .osiris/, ignore lines
+        /// in .git/info/exclude, CLAUDE.local.md importing the rules.
+        #[arg(long)]
+        local: bool,
+    },
+    /// Create a builder's worktree beside the repository, on its own
+    /// branch from the phase branch, with the rules imported.
+    Worktree { seat: String },
     /// Print the agents' rules (what OSIRIS.md holds).
     Rules,
     /// Open or close a phase.
@@ -244,15 +252,21 @@ fn agent_only(actor: &Actor) -> Result<AgentName, CliError> {
 
 fn run(cli: &Cli) -> Result<Output, CliError> {
     let cwd = std::env::current_dir()?;
-    if let Cmd::Init = cli.command {
-        let p = Project::init(&cwd)?;
-        return Ok(Output::new(
+    if let Cmd::Init { local } = cli.command {
+        let p = Project::init(&cwd, local)?;
+        let text = if local {
+            "initialised .osiris with the rules inside it; nothing tracked changed\n  \
+             (.osiris/ and CLAUDE.local.md are excluded in .git/info/exclude;\n   \
+             CLAUDE.local.md imports .osiris/OSIRIS.md unless it already existed)\n  \
+             next: set the denylist and seats in .osiris/config.toml and checks in .osiris/checks.toml,\n        \
+             then `ris phase open <goal>`"
+        } else {
             "initialised .osiris and wrote OSIRIS.md (the agents' rules)\n  \
              next: point your agents' rules file at OSIRIS.md (for example `@OSIRIS.md` in CLAUDE.md),\n        \
-             set seats and the denylist in .osiris/config.toml and checks in .osiris/checks.toml,\n        \
-             then `ris phase open <goal>`",
-            json!({ "root": p.root }),
-        ));
+             set the denylist and seats in .osiris/config.toml and checks in .osiris/checks.toml,\n        \
+             then `ris phase open <goal>`"
+        };
+        return Ok(Output::new(text, json!({ "root": p.root, "local": local })));
     }
     if let Cmd::Rules = cli.command {
         return Ok(Output::new(
@@ -264,7 +278,58 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     let actor = p.actor()?;
 
     match &cli.command {
-        Cmd::Init | Cmd::Rules => unreachable!(),
+        Cmd::Init { .. } | Cmd::Rules => unreachable!(),
+
+        Cmd::Worktree { seat } => {
+            if !p.config.agents.contains_key(seat) {
+                return Err(CliError::UnknownAgent(seat.clone()));
+            }
+            let name = p
+                .root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "repo".into());
+            let path = p
+                .root
+                .parent()
+                .unwrap_or(&p.root)
+                .join(format!("{name}-{seat}"));
+            if path.exists() {
+                return Err(CliError::Other(format!(
+                    "{} already exists\n  next: start the agent there, or remove it with `git worktree remove`",
+                    path.display()
+                )));
+            }
+            let has_branch = git(
+                &p.root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{seat}"),
+                ],
+            )
+            .is_ok();
+            let target = path.to_string_lossy().into_owned();
+            let args: Vec<&str> = if has_branch {
+                vec!["worktree", "add", "--quiet", &target, seat]
+            } else {
+                vec!["worktree", "add", "--quiet", "-b", seat, &target]
+            };
+            git(&p.root, &args).map_err(|e| CliError::Other(format!("git worktree add: {e}")))?;
+            ris::project::exclude_locally(&p.root, &[ris::project::LOCAL_IMPORT_FILE])?;
+            let import = path.join(ris::project::LOCAL_IMPORT_FILE);
+            if !import.exists() {
+                std::fs::write(&import, format!("@{}\n", p.rules_path().display()))?;
+            }
+            Ok(Output::new(
+                format!(
+                    "worktree for {seat} at {}\n  next: cd there and start the agent with RIS_AGENT={seat}",
+                    path.display()
+                ),
+                json!({ "seat": seat, "path": path }),
+            ))
+        }
 
         Cmd::Phase { action } => match action {
             PhaseCmd::Open { goal } => {

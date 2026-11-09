@@ -7,13 +7,12 @@ agents build and test in between. Design: `PLAN.md`.
 
 ```
 cargo install --path crates/ris
-cd your-repo && ris init                 # .osiris/ and OSIRIS.md
-# add @OSIRIS.md to CLAUDE.md; seats and denylist in .osiris/config.toml,
-# checks in .osiris/checks.toml
+cd your-repo && ris init --local         # nothing tracked changes
+# .osiris/config.toml: denylist first, then seats; .osiris/checks.toml
 ris phase open "the goal"               # branches phase/P-1 from main
-ris item add "a task" --check test
-git worktree add ../repo-kovacs -b kovacs        # one per agent
-cd ../repo-kovacs && RIS_AGENT=kovacs claude     # likewise for each
+ris item add "a task" --check test       # or: ris import backlog.toml
+ris worktree kovacs                      # ../your-repo-kovacs, rules loaded
+cd ../your-repo-kovacs && RIS_AGENT=kovacs claude
 ris summary          # check in; answer with ris decide
 ris phase close      # review; merges the phase branch into main
 ```
