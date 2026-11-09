@@ -6,7 +6,7 @@ $ ris ready
 $ ris init
 initialised .osiris and wrote OSIRIS.md (the agents' rules)
   next: point your agents' rules file at OSIRIS.md (for example `@OSIRIS.md` in CLAUDE.md),
-        set seats and the denylist in .osiris/config.toml and checks in .osiris/checks.toml,
+        set the denylist and seats in .osiris/config.toml and checks in .osiris/checks.toml,
         then `ris phase open <goal>`
 [exit 0]
 
@@ -43,7 +43,8 @@ ris inbox                       # messages to you; read between items
 ```
 
 - An item lands as one commit, carrying exactly one `Item:` trailer and
-  exactly one `Agent:` trailer naming your seat. `ris merge` refuses
+  exactly one `Agent:` trailer naming your seat, unless the project has
+  turned trailers off (`ris done` says which). `ris merge` refuses
   anything else.
 - `ris done` and `ris merge` exit 3 when a check fails. The output is
   evidence under `.osiris/evidence/`, named in the message. Fix and run
@@ -105,11 +106,23 @@ Kinds: `handoff`, `interface-changed`, `question`, `finding`.
 
 ## An auditor's seat
 
-An auditor never writes to the tree. For each done item it reads the
-diff and the evidence against the goal, the decisions that touch it and
-these rules, and checks the item's mechanical decisions for any that
-should have been substantive. Findings go to the author as messages; a
-finding the author disputes is raised as a substantive decision.
+An auditor never writes to the tree. `ris audit` is its queue: done and
+merged items it did not write and has not reviewed. For each, it reads
+the diff and the evidence against the goal, the decisions that touch it
+and these rules, and checks the item's mechanical decisions for any
+that should have been substantive. Findings go to the author with
+`ris send <author> --kind finding --about I-n "..."`; a finding the
+author disputes is raised as a substantive decision. `ris audit I-n`
+records the review. Merges never wait for it: findings are fixed
+forward.
+
+## Onboarding a project
+
+To load an existing project's backlog and standing decisions, follow
+the osiris-onboard skill (in the osiris repository under
+`skills/osiris-onboard`): checks first, then an import file kept in
+`.osiris/`, checked with `ris import --dry-run`, approved by the person,
+then imported. Never record a decision the project has not made.
 [exit 0]
 
 $ ris init
@@ -230,6 +243,7 @@ $ ris --json report
   "items": [
     {
       "agent": "heron",
+      "audited_by": [],
       "checks": [
         "test"
       ],
@@ -240,6 +254,7 @@ $ ris --json report
       "state": "claimed"
     },
     {
+      "audited_by": [],
       "checks": [],
       "depends_on": [
         "I-1"
@@ -250,6 +265,7 @@ $ ris --json report
       "state": "ready"
     },
     {
+      "audited_by": [],
       "checks": [],
       "depends_on": [],
       "goal": "the cli",
@@ -258,6 +274,7 @@ $ ris --json report
       "state": "ready"
     },
     {
+      "audited_by": [],
       "checks": [
         "lint"
       ],
@@ -331,6 +348,7 @@ $ ris --json report
   "items": [
     {
       "agent": "heron",
+      "audited_by": [],
       "checks": [
         "test"
       ],
@@ -341,6 +359,7 @@ $ ris --json report
       "state": "claimed"
     },
     {
+      "audited_by": [],
       "checks": [],
       "depends_on": [
         "I-1"
@@ -351,6 +370,7 @@ $ ris --json report
       "state": "ready"
     },
     {
+      "audited_by": [],
       "checks": [],
       "depends_on": [],
       "goal": "the cli",
@@ -359,6 +379,7 @@ $ ris --json report
       "state": "ready"
     },
     {
+      "audited_by": [],
       "checks": [
         "lint"
       ],
@@ -437,6 +458,7 @@ $ ris --json report
   "items": [
     {
       "agent": "heron",
+      "audited_by": [],
       "checks": [
         "test"
       ],
@@ -447,6 +469,7 @@ $ ris --json report
       "state": "claimed"
     },
     {
+      "audited_by": [],
       "checks": [],
       "depends_on": [
         "I-1"
@@ -457,6 +480,7 @@ $ ris --json report
       "state": "ready"
     },
     {
+      "audited_by": [],
       "checks": [],
       "depends_on": [],
       "goal": "the cli",
@@ -466,6 +490,7 @@ $ ris --json report
     },
     {
       "agent": "wren",
+      "audited_by": [],
       "checks": [
         "lint"
       ],
@@ -658,12 +683,34 @@ D-3 [substantive] rocksdb or sqlite?  (about I-2)
      taken by the person: 2, outside the offered options. the plan's own answer
 [exit 0]
 
+$ RIS_AGENT=wren ris audit
+I-1   merged   the event envelope (<hash>)
+I-3   merged   the cli (<hash>)
+--
+review: ris show I-n, the diff, the evidence; findings: ris send <author> --kind finding --about I-n "..."; then ris audit I-n
+[exit 0]
+
+$ RIS_AGENT=heron ris audit I-1
+[stderr] refused: I-1 is your own work; an auditor reviews others'
+  next: another seat audits it; take the next item in `ris audit`
+[exit 2]
+
+$ RIS_AGENT=wren ris audit I-1
+I-1 reviewed by wren
+[exit 0]
+
+$ RIS_AGENT=wren ris audit I-1
+[stderr] refused: wren has already reviewed I-1
+  next: take the next item in `ris audit`
+[exit 2]
+
 $ ris show I-1
 I-1 merged  (phase P-1)
   the event envelope
   checks: test
   evidence: E-<hash>
   commit: <hash>
+  audited by: wren
   decisions:
     D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
   check runs:
@@ -734,8 +781,9 @@ mechanical decisions (check the class):
 failed checks:
   I-1 lint failed (E-<hash>)
   I-4 lint failed (E-<hash>)
+audited: 1 of 2 done or merged
 messages: 1
-log: 34 events, head <hash>
+log: 35 events, head <hash>
 report: <hash> (if closed now)
 previous report: <hash>
 [exit 0]
@@ -771,8 +819,9 @@ mechanical decisions (check the class):
 failed checks:
   I-1 lint failed (E-<hash>)
   I-4 lint failed (E-<hash>)
+audited: 1 of 2 done or merged
 messages: 1
-log: 34 events, head <hash>
+log: 35 events, head <hash>
 report: <hash> (if closed now)
 previous report: <hash>
 
@@ -781,7 +830,7 @@ I-2   ready    the fold
 [exit 0]
 
 $ ris verify
-ok: 34 events, head <hash>
+ok: 35 events, head <hash>
 [exit 0]
 
 $ ris phase close
@@ -806,8 +855,9 @@ mechanical decisions (check the class):
 failed checks:
   I-1 lint failed (E-<hash>)
   I-4 lint failed (E-<hash>)
+audited: 1 of 2 done or merged
 messages: 1
-log: 35 events, head <hash>
+log: 36 events, head <hash>
 report: <hash>
 previous report: <hash>
 closing merge: none needed; the phase's work is already on main
@@ -823,6 +873,9 @@ $ ris --json report
   "answered_outside_options": 1,
   "items": [
     {
+      "audited_by": [
+        "wren"
+      ],
       "checks": [
         "test"
       ],
@@ -837,6 +890,7 @@ $ ris --json report
       "state": "merged"
     },
     {
+      "audited_by": [],
       "checks": [],
       "depends_on": [
         "I-1"
@@ -847,6 +901,7 @@ $ ris --json report
       "state": "ready"
     },
     {
+      "audited_by": [],
       "checks": [],
       "commit": "<hash>",
       "depends_on": [],
@@ -860,6 +915,7 @@ $ ris --json report
     },
     {
       "agent": "wren",
+      "audited_by": [],
       "checks": [
         "lint"
       ],
@@ -872,7 +928,7 @@ $ ris --json report
   ],
   "log": {
     "head": "<hash>",
-    "len": 35
+    "len": 36
   },
   "mechanical": [
     {

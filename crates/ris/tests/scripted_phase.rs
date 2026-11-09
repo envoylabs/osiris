@@ -199,7 +199,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     let c = fs::read_to_string(&config).unwrap();
     fs::write(
         &config,
-        c.replace("phase_branches = true", "phase_branches = false"),
+        c.replace("phase_branches = true", "phase_branches = false")
+            .replace("denylist = []", "denylist = [\"example client\"]"),
     )
     .unwrap();
     // Checks the sandbox can run: one that passes, one that fails.
@@ -441,6 +442,12 @@ fn scripted_phase_matches_the_golden_transcript() {
         ],
     );
     sb.ok(None, &["show", "D-3"]);
+    // The auditor's queue: wren reviews heron's merged I-1, not its own.
+    let q = sb.ok(wren, &["audit"]).stdout;
+    assert!(q.contains("I-1") && !q.contains("I-2 "), "{q}");
+    sb.refused(heron, &["audit", "I-1"]);
+    sb.ok(wren, &["audit", "I-1"]);
+    sb.refused(wren, &["audit", "I-1"]);
     sb.ok(None, &["show", "I-1"]);
     sb.ok(None, &["show", "I-2"]);
     sb.ok(None, &["show", "D-2"]);
@@ -492,12 +499,14 @@ fn every_help_fits_one_screen() {
         &[],
         &["init"],
         &["rules"],
+        &["worktree"],
         &["phase"],
         &["phase", "open"],
         &["item", "add"],
         &["ready"],
         &["claim"],
         &["release"],
+        &["audit"],
         &["check"],
         &["decision", "raise"],
         &["decide"],
@@ -511,6 +520,7 @@ fn every_help_fits_one_screen() {
         &["scan"],
         &["verify"],
         &["export"],
+        &["import"],
         &["log"],
     ];
     for sub in subcommands {

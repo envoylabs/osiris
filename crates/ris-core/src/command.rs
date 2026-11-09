@@ -67,6 +67,11 @@ pub enum Command {
         item: ItemId,
         commit: CommitHash,
     },
+    /// Record that an auditor has reviewed a done or merged item.
+    Audit {
+        item: ItemId,
+        by: AgentName,
+    },
     /// Return a claimed item to ready. The holder may; so may the
     /// person, for a claim whose agent has gone.
     Release {
@@ -104,6 +109,7 @@ impl Command {
             Self::Merge { .. } => CommandKind::Merge,
             Self::MessageSend { .. } => CommandKind::MessageSend,
             Self::Release { .. } => CommandKind::Release,
+            Self::Audit { .. } => CommandKind::Audit,
         }
     }
 }
@@ -417,6 +423,24 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             })])
         }
 
+        Command::Audit { item, by } => {
+            item_move(state, *item, kind)?;
+            let i = &state.items[item];
+            if i.author.as_ref() == Some(by) {
+                return Err(Refusal::AuditOwnWork(*item));
+            }
+            if i.audited_by.contains(by) {
+                return Err(Refusal::AlreadyAudited {
+                    item: *item,
+                    by: by.clone(),
+                });
+            }
+            Ok(vec![Effect::new(Structure::ItemAudited {
+                item: *item,
+                by: by.clone(),
+            })])
+        }
+
         Command::Release { item, by } => {
             item_move(state, *item, kind)?;
             if *by != Actor::Person {
@@ -642,6 +666,10 @@ mod tests {
                 item,
                 by: Actor::Agent(agent("heron")),
             },
+            CommandKind::Audit => Command::Audit {
+                item,
+                by: agent("wren"),
+            },
             // Decide acts on a decision, and reaches the item through
             // the blocker; covered by the decision table and a test
             // below.
@@ -803,6 +831,34 @@ mod tests {
                 evidence: vec![],
             }),
             Err(Refusal::NoEvidence(ItemId(1)))
+        );
+    }
+
+    #[test]
+    fn an_auditor_reviews_others_work_once() {
+        let mut h = item_in(ItemStateKind::Merged);
+        assert_eq!(
+            h.run(Command::Audit {
+                item: ItemId(1),
+                by: agent("heron"),
+            }),
+            Err(Refusal::AuditOwnWork(ItemId(1))),
+            "heron wrote it"
+        );
+        h.must(Command::Audit {
+            item: ItemId(1),
+            by: agent("wren"),
+        });
+        assert_eq!(h.state.items[&ItemId(1)].audited_by, vec![agent("wren")]);
+        assert_eq!(
+            h.run(Command::Audit {
+                item: ItemId(1),
+                by: agent("wren"),
+            }),
+            Err(Refusal::AlreadyAudited {
+                item: ItemId(1),
+                by: agent("wren")
+            })
         );
     }
 

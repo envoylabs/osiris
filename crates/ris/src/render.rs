@@ -46,6 +46,7 @@ fn item_json(l: &Loaded, i: &Item) -> Value {
         "state": state_name(&i.state),
         "checks": i.checks.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "depends_on": i.depends_on.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "audited_by": i.audited_by.iter().map(ToString::to_string).collect::<Vec<_>>(),
     });
     match &i.state {
         ItemState::Claimed { agent } => v["agent"] = json!(agent.to_string()),
@@ -364,6 +365,15 @@ pub fn report(l: &Loaded) -> Output {
         PhaseState::Closed { report } => report,
         PhaseState::Open => report_hash(&l.state.last_report, &l.state.head),
     };
+    let finished: Vec<&&Item> = items
+        .iter()
+        .filter(|i| matches!(i.state, ItemState::Done { .. } | ItemState::Merged { .. }))
+        .collect();
+    let audited = finished.iter().filter(|i| !i.audited_by.is_empty()).count();
+    s.push_str(&format!(
+        "audited: {audited} of {} done or merged\n",
+        finished.len()
+    ));
     s.push_str(&format!(
         "messages: {}\nlog: {} events, head {}\nreport: {}{}\nprevious report: {}",
         l.state.messages.len(),
@@ -564,6 +574,16 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
         }
         ItemState::Ready => {}
     }
+    if !i.audited_by.is_empty() {
+        s.push_str(&format!(
+            "  audited by: {}\n",
+            i.audited_by
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     let decisions: Vec<&Decision> = l
         .state
         .decisions
@@ -627,5 +647,36 @@ pub fn summary(l: &Loaded, actor: &Actor) -> Output {
     Output::new(
         text,
         json!({ "inbox": queue.json, "report": rep.json, "ready": rdy.json }),
+    )
+}
+
+/// `ris audit`: the review queue. For an agent, done and merged items it
+/// did not author and has not reviewed; for the person, those nobody has
+/// reviewed.
+pub fn audit_queue(l: &Loaded, actor: &Actor) -> Output {
+    let queue: Vec<&Item> = l
+        .state
+        .items
+        .values()
+        .filter(|i| matches!(i.state, ItemState::Done { .. } | ItemState::Merged { .. }))
+        .filter(|i| match actor {
+            Actor::Agent(me) => i.author.as_ref() != Some(me) && !i.audited_by.contains(me),
+            Actor::Person => i.audited_by.is_empty(),
+        })
+        .collect();
+    let text = if queue.is_empty() {
+        "nothing to review".to_owned()
+    } else {
+        let mut s = queue
+            .iter()
+            .map(|i| item_line(l, i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        s.push_str("\n--\nreview: ris show I-n, the diff, the evidence; findings: ris send <author> --kind finding --about I-n \"...\"; then ris audit I-n");
+        s
+    };
+    Output::new(
+        text,
+        json!({ "queue": queue.iter().map(|i| item_json(l, i)).collect::<Vec<_>>() }),
     )
 }

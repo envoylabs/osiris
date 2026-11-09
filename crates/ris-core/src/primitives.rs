@@ -52,6 +52,10 @@ pub struct Item {
     pub depends_on: Vec<ItemId>,
     /// Every check run against it, in order.
     pub check_runs: Vec<CheckRun>,
+    /// The agent that last claimed it: its author once done.
+    pub author: Option<AgentName>,
+    /// Agents that have reviewed it, in order.
+    pub audited_by: Vec<AgentName>,
     pub state: ItemState,
 }
 

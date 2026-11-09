@@ -35,6 +35,16 @@ fn closed_phases_export_verify_and_replay() {
     let repo = base.join("repo");
     fs::create_dir_all(&repo).unwrap();
     ok(&repo, &["init"]);
+    let config = repo.join(".osiris/config.toml");
+    // The denylist gate refuses the first phase until it is filled.
+    let r = ris(&repo, &["phase", "open", "first"]);
+    assert_eq!(r.status.code(), Some(1));
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(
+        &config,
+        c.replace("denylist = []", "denylist = [\"example client\"]"),
+    )
+    .unwrap();
     ok(&repo, &["phase", "open", "first"]);
     ok(&repo, &["item", "add", "one"]);
     ok(&repo, &["phase", "close"]);
@@ -71,10 +81,9 @@ fn closed_phases_export_verify_and_replay() {
 
     // A denylist that grew since the text went in stops the export
     // before anything is written.
-    let config = repo.join(".osiris/config.toml");
     let c = fs::read_to_string(&config)
         .unwrap()
-        .replace("denylist = []", "denylist = [\"acme\"]");
+        .replace("denylist = [\"example client\"]", "denylist = [\"acme\"]");
     fs::write(&config, c).unwrap();
     let fresh = base.join("fresh");
     let r = ris(&repo, &["export", fresh.to_str().unwrap()]);

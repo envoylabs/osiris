@@ -63,7 +63,7 @@ fn setup(name: &str, checks: &str, agents: &[&str]) -> (PathBuf, Vec<PathBuf>) {
         .collect();
     fs::write(
         main.join(".osiris/config.toml"),
-        format!("denylist = []\n{seats}"),
+        format!("denylist = [\"example client\"]\n{seats}"),
     )
     .unwrap();
     ok(&main, None, &["phase", "open", "width test"]);
@@ -391,4 +391,95 @@ fn phase_branches_follow_the_phase_and_can_be_turned_off() {
     assert_eq!(branch(&main), "main");
     let out = ok(&main, None, &["phase", "close"]);
     assert!(out.contains("already on main"), "{out}");
+}
+
+fn porcelain(dir: &Path) -> String {
+    let out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// The falsifier for "no residue": after `ris init --local` and a
+/// builder's worktree, git sees no change at all in either tree.
+#[test]
+fn a_local_setup_leaves_nothing_for_git_to_see() {
+    let base = std::env::temp_dir().join(format!("ris-width-local-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let repo = base.join("client");
+    fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    fs::write(repo.join("README"), "theirs\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+
+    ok(&repo, None, &["init", "--local"]);
+    assert_eq!(
+        porcelain(&repo),
+        "",
+        "init --local changes nothing git can see"
+    );
+    // The denylist gate: no phase until the denylist is filled.
+    let r = ris(&repo, None, &["phase", "open", "too soon"]);
+    assert_eq!(r.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&r.stderr).contains("denylist"));
+    assert!(!repo.join("OSIRIS.md").exists());
+    assert!(!repo.join(".gitignore").exists());
+    assert!(repo.join(".osiris/OSIRIS.md").exists());
+    assert_eq!(
+        fs::read_to_string(repo.join("CLAUDE.local.md")).unwrap(),
+        "@.osiris/OSIRIS.md\n"
+    );
+
+    let out = ok(&repo, None, &["worktree", "heron"]);
+    let wt = base.join("client-heron");
+    assert!(out.contains("client-heron"), "{out}");
+    assert_eq!(porcelain(&wt), "", "the worktree is clean too");
+    let import = fs::read_to_string(wt.join("CLAUDE.local.md")).unwrap();
+    assert!(
+        import.starts_with('@') && import.trim_end().ends_with(".osiris/OSIRIS.md"),
+        "{import}"
+    );
+    assert_eq!(porcelain(&repo), "");
+    // The worktree finds the shared store.
+    ok(&wt, Some("heron"), &["ready"]);
+}
+
+/// The remote-merge settings: without trailers, a plain commit merges;
+/// without merge_on_close, closing leaves the main line and the phase
+/// branch untouched for a merge on the git server.
+#[test]
+fn trailers_and_the_closing_merge_can_be_left_to_the_git_server() {
+    let (main, trees) = setup("remote", "[checks.ok]\ncommand = \"true\"\n", &["heron"]);
+    let config = main.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(
+        &config,
+        format!("trailers = false\nmerge_on_close = false\n{c}"),
+    )
+    .unwrap();
+    let h = &trees[0];
+    ok(&main, None, &["item", "add", "a file", "--check", "ok"]);
+    ok(h, Some("heron"), &["claim", "I-1"]);
+    fs::write(h.join("a"), "a\n").unwrap();
+    let out = ok(h, Some("heron"), &["done", "I-1"]);
+    assert!(!out.contains("trailer"), "{out}");
+    git(h, &["add", "-A"]);
+    git(
+        h,
+        &["commit", "-q", "-m", "Add a, in the project's own words"],
+    );
+    ok(h, Some("heron"), &["merge", "I-1"]);
+    let main_before = rev(&main, "main");
+    let out = ok(&main, None, &["phase", "close"]);
+    assert!(out.contains("left to the git server"), "{out}");
+    assert_eq!(rev(&main, "main"), main_before, "main did not move");
+    assert_eq!(
+        branch(&main),
+        "phase/P-1",
+        "the phase branch is still checked out"
+    );
+    assert!(ok(&main, None, &["report"]).starts_with("P-1 closed"));
 }

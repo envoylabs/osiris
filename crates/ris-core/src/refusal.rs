@@ -66,6 +66,10 @@ pub enum Refusal {
     SubstantiveIsForThePerson(DecisionId),
     /// A message must go to a named agent other than its sender.
     MessageToSelf,
+    /// An agent cannot audit an item it authored.
+    AuditOwnWork(ItemId),
+    /// This agent has already reviewed this item.
+    AlreadyAudited { item: ItemId, by: AgentName },
 }
 
 impl Refusal {
@@ -120,6 +124,10 @@ impl Refusal {
                 "leave it in the queue; the person takes it at the next check-in".into()
             }
             Self::MessageToSelf => "address the message to another agent".into(),
+            Self::AuditOwnWork(_) => {
+                "another seat audits it; take the next item in `ris audit`".into()
+            }
+            Self::AlreadyAudited { .. } => "take the next item in `ris audit`".into(),
         }
     }
 }
@@ -183,6 +191,15 @@ impl fmt::Display for Refusal {
             }
             Self::MessageToSelf => {
                 f.write_str("refused: a message cannot be addressed to its sender")
+            }
+            Self::AuditOwnWork(item) => {
+                write!(
+                    f,
+                    "refused: {item} is your own work; an auditor reviews others'"
+                )
+            }
+            Self::AlreadyAudited { item, by } => {
+                write!(f, "refused: {by} has already reviewed {item}")
             }
         }
     }

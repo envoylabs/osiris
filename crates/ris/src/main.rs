@@ -38,7 +38,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Create .osiris/ in the current directory, and OSIRIS.md if absent.
-    Init,
+    Init {
+        /// Change nothing tracked: rules inside .osiris/, ignore lines
+        /// in .git/info/exclude, CLAUDE.local.md importing the rules.
+        #[arg(long)]
+        local: bool,
+    },
+    /// Create a builder's worktree beside the repository, on its own
+    /// branch from the phase branch, with the rules imported.
+    Worktree { seat: String },
     /// Print the agents' rules (what OSIRIS.md holds).
     Rules,
     /// Open or close a phase.
@@ -57,6 +65,8 @@ enum Cmd {
     Claim { item: ItemId },
     /// Return a claimed item to ready: its holder, or the person.
     Release { item: ItemId },
+    /// The review queue; with an item, record that you reviewed it.
+    Audit { item: Option<ItemId> },
     /// Raise a decision: mechanical ones are taken at once and logged;
     /// substantive ones wait for the person and set the item aside.
     Decision {
@@ -116,6 +126,15 @@ enum Cmd {
     Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
+    /// Import items and standing decisions from a TOML file into the
+    /// open phase. The whole file is validated first; see `ris import
+    /// --help` and the onboarding skill for the format.
+    Import {
+        file: PathBuf,
+        /// Validate and report, writing nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Write each closed phase's events to <dir>/P-n.jsonl, scanned
     /// first. Nothing is exported unless you run this.
     Export { dir: PathBuf },
@@ -244,15 +263,21 @@ fn agent_only(actor: &Actor) -> Result<AgentName, CliError> {
 
 fn run(cli: &Cli) -> Result<Output, CliError> {
     let cwd = std::env::current_dir()?;
-    if let Cmd::Init = cli.command {
-        let p = Project::init(&cwd)?;
-        return Ok(Output::new(
+    if let Cmd::Init { local } = cli.command {
+        let p = Project::init(&cwd, local)?;
+        let text = if local {
+            "initialised .osiris with the rules inside it; nothing tracked changed\n  \
+             (.osiris/ and CLAUDE.local.md are excluded in .git/info/exclude;\n   \
+             CLAUDE.local.md imports .osiris/OSIRIS.md unless it already existed)\n  \
+             next: set the denylist and seats in .osiris/config.toml and checks in .osiris/checks.toml,\n        \
+             then `ris phase open <goal>`"
+        } else {
             "initialised .osiris and wrote OSIRIS.md (the agents' rules)\n  \
              next: point your agents' rules file at OSIRIS.md (for example `@OSIRIS.md` in CLAUDE.md),\n        \
-             set seats and the denylist in .osiris/config.toml and checks in .osiris/checks.toml,\n        \
-             then `ris phase open <goal>`",
-            json!({ "root": p.root }),
-        ));
+             set the denylist and seats in .osiris/config.toml and checks in .osiris/checks.toml,\n        \
+             then `ris phase open <goal>`"
+        };
+        return Ok(Output::new(text, json!({ "root": p.root, "local": local })));
     }
     if let Cmd::Rules = cli.command {
         return Ok(Output::new(
@@ -264,7 +289,58 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     let actor = p.actor()?;
 
     match &cli.command {
-        Cmd::Init | Cmd::Rules => unreachable!(),
+        Cmd::Init { .. } | Cmd::Rules => unreachable!(),
+
+        Cmd::Worktree { seat } => {
+            if !p.config.agents.contains_key(seat) {
+                return Err(CliError::UnknownAgent(seat.clone()));
+            }
+            let name = p
+                .root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "repo".into());
+            let path = p
+                .root
+                .parent()
+                .unwrap_or(&p.root)
+                .join(format!("{name}-{seat}"));
+            if path.exists() {
+                return Err(CliError::Other(format!(
+                    "{} already exists\n  next: start the agent there, or remove it with `git worktree remove`",
+                    path.display()
+                )));
+            }
+            let has_branch = git(
+                &p.root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{seat}"),
+                ],
+            )
+            .is_ok();
+            let target = path.to_string_lossy().into_owned();
+            let args: Vec<&str> = if has_branch {
+                vec!["worktree", "add", "--quiet", &target, seat]
+            } else {
+                vec!["worktree", "add", "--quiet", "-b", seat, &target]
+            };
+            git(&p.root, &args).map_err(|e| CliError::Other(format!("git worktree add: {e}")))?;
+            ris::project::exclude_locally(&p.root, &[ris::project::LOCAL_IMPORT_FILE])?;
+            let import = path.join(ris::project::LOCAL_IMPORT_FILE);
+            if !import.exists() {
+                std::fs::write(&import, format!("@{}\n", p.rules_path().display()))?;
+            }
+            Ok(Output::new(
+                format!(
+                    "worktree for {seat} at {}\n  next: cd there and start the agent with RIS_AGENT={seat}",
+                    path.display()
+                ),
+                json!({ "seat": seat, "path": path }),
+            ))
+        }
 
         Cmd::Phase { action } => match action {
             PhaseCmd::Open { goal } => {
@@ -273,6 +349,15 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 // Refusals first, so a refused open creates no branch.
                 let l = p.load()?;
                 ris_core::apply(&l.state, &command)?;
+                if p.config.denylist.is_empty() && !p.config.confirm_empty_denylist {
+                    return Err(CliError::Config(
+                        "the denylist in .osiris/config.toml is empty; text is scanned as it is \
+                         written and the log cannot be redacted, so fill it before work starts\n  \
+                         next: add your name, the client's and product names, your home directory; \
+                         or set confirm_empty_denylist = true if empty is deliberate"
+                            .into(),
+                    ));
+                }
                 let branch = open_phase_branch(&p, l.state.next_phase_id())?;
                 let (l, _) = p.run(&command)?;
                 let phase = l.state.open_phase().expect("just opened");
@@ -472,10 +557,17 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             if !text.is_empty() {
                 text.push('\n');
             }
+            let commit_hint = if p.config.trailers {
+                format!(
+                    "commit with `Item: {item}` and `Agent: {}` as trailers",
+                    p.actor()?.to_string().trim_start_matches("agent ")
+                )
+            } else {
+                "commit it as one commit".to_owned()
+            };
             text.push_str(&format!(
-                "{item} done with {} piece(s) of evidence\n  next: commit with `Item: {item}` and `Agent: {}` as trailers, then `ris merge {item}`",
-                ids.len(),
-                p.actor()?.to_string().trim_start_matches("agent ")
+                "{item} done with {} piece(s) of evidence\n  next: {commit_hint}, then `ris merge {item}`",
+                ids.len()
             ));
             Ok(Output::new(
                 text,
@@ -562,6 +654,20 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(lines.join("\n"), json!({ "checks": results })))
         }
 
+        Cmd::Audit { item: None } => Ok(render::audit_queue(&p.load()?, &actor)),
+
+        Cmd::Audit { item: Some(item) } => {
+            let by = agent_only(&actor)?;
+            p.run(&Command::Audit {
+                item: *item,
+                by: by.clone(),
+            })?;
+            Ok(Output::new(
+                format!("{item} reviewed by {by}"),
+                json!({ "item": item.to_string(), "by": by.to_string() }),
+            ))
+        }
+
         Cmd::Release { item } => {
             p.run(&Command::Release {
                 item: *item,
@@ -617,6 +723,54 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(
                 format!("clean: {} file(s) scanned", files.len()),
                 json!({ "files": files.len(), "hits": [] }),
+            ))
+        }
+
+        Cmd::Import { file, dry_run } => {
+            if actor != Actor::Person {
+                return Err(CliError::Other(
+                    "imported decisions are the person's; run ris import without RIS_AGENT".into(),
+                ));
+            }
+            let l = p.load()?;
+            if l.state.open_phase().is_none() {
+                return Err(CliError::Refused(ris_core::Refusal::NoOpenPhase));
+            }
+            let source = std::fs::read_to_string(file)?;
+            let plan =
+                ris::import::plan(&source, &l.state, &p.checks, &p.policy).map_err(|problems| {
+                    CliError::Other(format!(
+                        "refused: nothing was imported; {} problem(s):\n  {}",
+                        problems.len(),
+                        problems.join("\n  ")
+                    ))
+                })?;
+            if *dry_run {
+                return Ok(Output::new(
+                    format!(
+                        "valid: would import {} item(s) and {} decision(s); nothing written",
+                        plan.items, plan.decisions
+                    ),
+                    json!({ "items": plan.items, "decisions": plan.decisions, "written": false }),
+                ));
+            }
+            let first_item = l.state.next_item_id().0;
+            let first_decision = l.state.next_decision_id().0;
+            for c in &plan.commands {
+                p.run(c)?;
+            }
+            let range = |prefix: &str, first: u32, n: usize| match n {
+                0 => "none".to_owned(),
+                1 => format!("{prefix}-{first}"),
+                _ => format!("{prefix}-{first} to {prefix}-{}", first + n as u32 - 1),
+            };
+            Ok(Output::new(
+                format!(
+                    "imported items {} and decisions {}",
+                    range("I", first_item, plan.items),
+                    range("D", first_decision, plan.decisions)
+                ),
+                json!({ "items": plan.items, "decisions": plan.decisions, "written": true }),
             ))
         }
 
@@ -752,8 +906,10 @@ fn vet_and_check(
     commit: &str,
 ) -> Result<Vec<String>, CliError> {
     let message = checks::commit_message(&p.work, commit)?;
-    checks::require_trailer(&message, item, commit)?;
-    checks::require_agent_trailer(&message, author, commit)?;
+    if p.config.trailers {
+        checks::require_trailer(&message, item, commit)?;
+        checks::require_agent_trailer(&message, author, commit)?;
+    }
     let hits = ris::exits::scan_commit(&p.work, commit, &message, &p.policy)?;
     if !hits.is_empty() {
         return Err(CliError::Leak {
@@ -870,6 +1026,12 @@ fn closing_merge(
     if branch == "HEAD" {
         return Err(CliError::Other(
             "the main worktree is detached; check out the phase branch there".into(),
+        ));
+    }
+    if !p.config.merge_on_close {
+        return Ok(format!(
+            "closing merge: left to the git server (merge_on_close = false); \
+             push {branch} and merge it into {main} there"
         ));
     }
     let dirty = git(&p.root, &["status", "--porcelain", "--untracked-files=no"])
