@@ -53,6 +53,8 @@ enum Cmd {
     Ready,
     /// Take an item. Needs RIS_AGENT.
     Claim { item: ItemId },
+    /// Return a claimed item to ready: its holder, or the person.
+    Release { item: ItemId },
     /// Raise a decision: mechanical ones are taken at once and logged;
     /// substantive ones wait for the person and set the item aside.
     Decision {
@@ -503,6 +505,17 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(
                 text,
                 json!({ "item": item.to_string(), "commit": commit }),
+            ))
+        }
+
+        Cmd::Release { item } => {
+            p.run(&Command::Release {
+                item: *item,
+                by: actor.clone(),
+            })?;
+            Ok(Output::new(
+                format!("released {item}; it is ready again"),
+                json!({ "item": item.to_string() }),
             ))
         }
 

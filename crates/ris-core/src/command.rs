@@ -67,6 +67,12 @@ pub enum Command {
         item: ItemId,
         commit: CommitHash,
     },
+    /// Return a claimed item to ready. The holder may; so may the
+    /// person, for a claim whose agent has gone.
+    Release {
+        item: ItemId,
+        by: Actor,
+    },
     MessageSend {
         from: Actor,
         to: AgentName,
@@ -97,6 +103,7 @@ impl Command {
             Self::Done { .. } => CommandKind::Done,
             Self::Merge { .. } => CommandKind::Merge,
             Self::MessageSend { .. } => CommandKind::MessageSend,
+            Self::Release { .. } => CommandKind::Release,
         }
     }
 }
@@ -410,6 +417,14 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             })])
         }
 
+        Command::Release { item, by } => {
+            item_move(state, *item, kind)?;
+            if *by != Actor::Person {
+                require_claimant(state, *item, by)?;
+            }
+            Ok(vec![Effect::new(Structure::ItemReady { item: *item })])
+        }
+
         Command::MessageSend {
             from,
             to,
@@ -623,6 +638,10 @@ mod tests {
                 item,
                 commit: CommitHash("def".into()),
             },
+            CommandKind::Release => Command::Release {
+                item,
+                by: Actor::Agent(agent("heron")),
+            },
             // Decide acts on a decision, and reaches the item through
             // the blocker; covered by the decision table and a test
             // below.
@@ -788,7 +807,31 @@ mod tests {
     }
 
     #[test]
-    fn dependencies_must_land_before_a_claim() {
+    fn a_claim_is_released_by_its_holder_or_the_person_only() {
+        let mut h = item_in(ItemStateKind::Claimed);
+        assert_eq!(
+            h.run(Command::Release {
+                item: ItemId(1),
+                by: Actor::Agent(agent("wren")),
+            }),
+            Err(Refusal::NotTheClaimant {
+                item: ItemId(1),
+                holder: agent("heron")
+            })
+        );
+        h.must(Command::Release {
+            item: ItemId(1),
+            by: Actor::Person,
+        });
+        assert_eq!(h.state.items[&ItemId(1)].state, ItemState::Ready);
+        h.must(Command::Claim {
+            item: ItemId(1),
+            agent: agent("wren"),
+        });
+    }
+
+    #[test]
+    fn dependencies_must_merge_before_a_claim() {
         let mut h = with_phase_and_item();
         h.must(Command::ItemAdd {
             goal: t("second"),

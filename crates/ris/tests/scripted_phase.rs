@@ -468,6 +468,7 @@ fn every_help_fits_one_screen() {
         &["item", "add"],
         &["ready"],
         &["claim"],
+        &["release"],
         &["decision", "raise"],
         &["decide"],
         &["done"],

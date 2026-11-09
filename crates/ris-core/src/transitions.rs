@@ -26,6 +26,8 @@ pub enum CommandKind {
     Done,
     Merge,
     MessageSend,
+    /// Returning a claimed item to ready: by its holder, or the person.
+    Release,
 }
 
 impl CommandKind {
@@ -42,6 +44,7 @@ impl CommandKind {
         Self::Done,
         Self::Merge,
         Self::MessageSend,
+        Self::Release,
     ];
 }
 
@@ -108,6 +111,9 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         (S::Claimed, C::RaiseSubstantive, Move::To(S::Blocked)),
         (S::Claimed, C::CheckRan, Move::Stay),
         (S::Claimed, C::Done, Move::To(S::Done)),
+        // Until leases arrive with the daemon, a stuck claim is released
+        // by hand.
+        (S::Claimed, C::Release, Move::To(S::Ready)),
         // The last blocker clearing returns the item to Ready; while
         // blockers remain, the decision is logged and the item stays.
         (S::Blocked, C::Decide, Move::To(S::Ready)),
