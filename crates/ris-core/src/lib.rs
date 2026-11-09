@@ -11,6 +11,7 @@ pub mod ids;
 pub mod primitives;
 pub mod refusal;
 pub mod state;
+pub mod store;
 pub mod text;
 pub mod transitions;
 
@@ -22,4 +23,5 @@ pub use ids::{
 };
 pub use refusal::Refusal;
 pub use state::State;
+pub use store::{Store, StoreError};
 pub use text::{Category, Policy, Text};
