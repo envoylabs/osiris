@@ -10,3 +10,6 @@ rust-version.workspace = true
 ris-core.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true

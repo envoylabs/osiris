@@ -16,7 +16,7 @@ pub mod text;
 pub mod transitions;
 
 pub use command::{Choice, Command, Effect, apply, seal};
-pub use event::{Event, Salt, Structure, TextPart, verify};
+pub use event::{Event, Salt, Structure, TextPart, upgrade_from_v1, verify};
 pub use ids::{
     Actor, AgentName, CheckId, ClaimId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
     MessageId, PhaseId,

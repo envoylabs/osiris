@@ -452,15 +452,21 @@ fn require_claimant(state: &State, item: ItemId, actor: &Actor) -> Result<(), Re
     Ok(())
 }
 
-/// Seal effects into events that follow `state`'s head, one salt each.
-pub fn seal(state: &State, effects: Vec<Effect>, mut salt: impl FnMut() -> Salt) -> Vec<Event> {
+/// Seal effects into events that follow `state`'s head, one salt each,
+/// all stamped `at` (the shell's clock, milliseconds since the epoch).
+pub fn seal(
+    state: &State,
+    effects: Vec<Effect>,
+    at: u64,
+    mut salt: impl FnMut() -> Salt,
+) -> Vec<Event> {
     let mut prev = state.head;
     let mut seq = state.len;
     effects
         .into_iter()
         .map(|e| {
             seq += 1;
-            let event = Event::new(seq, prev, e.structure, e.text, salt());
+            let event = Event::new(seq, prev, at, e.structure, e.text, salt());
             prev = event.hash;
             event
         })
@@ -505,7 +511,7 @@ mod tests {
 
         fn run(&mut self, c: Command) -> Result<(), Refusal> {
             let effects = apply(&self.state, &c)?;
-            let events = seal(&self.state, effects, || {
+            let events = seal(&self.state, effects, 1_700_000_000_000, || {
                 self.n = self.n.wrapping_add(1);
                 Salt([self.n; 16])
             });

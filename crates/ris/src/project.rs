@@ -242,7 +242,7 @@ impl Project {
         for _ in 0..20 {
             let loaded = self.load()?;
             let effects = apply(&loaded.state, command)?;
-            let events = seal(&loaded.state, effects, fresh_salt);
+            let events = seal(&loaded.state, effects, now_millis(), fresh_salt);
             match self.store.append(&events) {
                 Ok(()) => {
                     let after = self.load()?;
@@ -259,6 +259,14 @@ impl Project {
     pub fn head(&self) -> Result<(u64, ris_core::ids::Hash), CliError> {
         Ok(self.store.head()?)
     }
+}
+
+/// The shell's clock: milliseconds since the Unix epoch.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Sixteen bytes from the operating system's random source.

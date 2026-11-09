@@ -8,13 +8,18 @@
 //!
 //! ```text
 //! text_hash(n) = H("ris-text-v1"  || salt(n) || text(n))
-//! hash(n)      = H("ris-event-v1" || hash(n-1) || structure(n) || text_hash(n))
+//! hash(n)      = H("ris-event-v2" || hash(n-1) || at(n) || structure(n) || text_hash(n))
 //! ```
 //!
-//! The core has no randomness: the shell supplies the salt. Hashing is
+//! The core has no randomness and no clock: the shell supplies the salt
+//! and the time (`at`, milliseconds since the Unix epoch; 0 means
+//! unknown, as on events upgraded from format version 1). Hashing is
 //! SHA-256 over length-prefixed parts, and the canonical form of a part
 //! is its compact JSON, so a chain can be checked outside the harness
 //! with standard tools.
+//!
+//! Format history: version 1 had no `at`; [`upgrade_from_v1`] rechains
+//! such a log under version 2.
 
 use std::collections::BTreeMap;
 
@@ -29,7 +34,7 @@ use crate::text::Text;
 
 /// The event format version. Events are versioned from the first
 /// release, with an upgrade step for old versions.
-pub const FORMAT_VERSION: u16 = 1;
+pub const FORMAT_VERSION: u16 = 2;
 
 /// Random bytes the shell supplies for each event's text hash. Deleted
 /// with the text, so a short text cannot be recovered by guessing.
@@ -120,6 +125,9 @@ pub struct Event {
     pub version: u16,
     /// The previous event's `hash`; all zeros for the first.
     pub prev: Hash,
+    /// When the shell appended it, in milliseconds since the Unix epoch;
+    /// 0 when unknown (an event upgraded from format version 1).
+    pub at: u64,
     pub structure: Structure,
     /// `H(salt, text)`, kept after the text is removed.
     pub text_hash: Hash,
@@ -134,13 +142,21 @@ pub struct Event {
 impl Event {
     /// Build the event that follows `prev` (the head's hash, or
     /// [`Hash::ZERO`] for an empty log).
-    pub fn new(seq: u64, prev: Hash, structure: Structure, text: TextPart, salt: Salt) -> Self {
+    pub fn new(
+        seq: u64,
+        prev: Hash,
+        at: u64,
+        structure: Structure,
+        text: TextPart,
+        salt: Salt,
+    ) -> Self {
         let text_hash = hash_text(&salt, &text);
-        let hash = hash_event(&prev, &structure, &text_hash);
+        let hash = hash_event(&prev, at, &structure, &text_hash);
         Self {
             seq,
             version: FORMAT_VERSION,
             prev,
+            at,
             structure,
             text_hash,
             salt: Some(salt),
@@ -186,12 +202,77 @@ pub fn hash_text(salt: &Salt, text: &TextPart) -> Hash {
     digest("ris-text-v1", &[&salt.0, &canonical(text)])
 }
 
-/// `H("ris-event-v1" || prev || canonical(structure) || text_hash)`.
-pub fn hash_event(prev: &Hash, structure: &Structure, text_hash: &Hash) -> Hash {
+/// `H("ris-event-v2" || prev || at || canonical(structure) || text_hash)`.
+pub fn hash_event(prev: &Hash, at: u64, structure: &Structure, text_hash: &Hash) -> Hash {
+    digest(
+        "ris-event-v2",
+        &[
+            &prev.0,
+            &at.to_be_bytes(),
+            &canonical(structure),
+            &text_hash.0,
+        ],
+    )
+}
+
+/// Format version 1's chain hash: no `at`.
+fn hash_event_v1(prev: &Hash, structure: &Structure, text_hash: &Hash) -> Hash {
     digest(
         "ris-event-v1",
         &[&prev.0, &canonical(structure), &text_hash.0],
     )
+}
+
+/// Rechain a format-version-1 log under the current version. The old
+/// chain is verified first, so a broken log is not laundered into a
+/// valid one; every event's `at` becomes 0 (unknown). The head hash
+/// changes: this is the one-off cost of adding a field to the format.
+pub fn upgrade_from_v1(old: &[Event]) -> Result<Vec<Event>, ChainError> {
+    let mut prev_old = Hash::ZERO;
+    let mut prev_new = Hash::ZERO;
+    let mut out = Vec::with_capacity(old.len());
+    for (at_index, e) in old.iter().enumerate() {
+        let expected = at_index as u64 + 1;
+        if e.seq != expected {
+            return Err(ChainError::Sequence {
+                at: at_index,
+                expected,
+                found: e.seq,
+            });
+        }
+        if e.version != 1 {
+            return Err(ChainError::Version {
+                seq: e.seq,
+                version: e.version,
+            });
+        }
+        if e.prev != prev_old {
+            return Err(ChainError::Link { seq: e.seq });
+        }
+        if hash_event_v1(&e.prev, &e.structure, &e.text_hash) != e.hash {
+            return Err(ChainError::Hash { seq: e.seq });
+        }
+        if let (Some(salt), Some(text)) = (&e.salt, &e.text)
+            && hash_text(salt, text) != e.text_hash
+        {
+            return Err(ChainError::TextHash { seq: e.seq });
+        }
+        prev_old = e.hash;
+        let hash = hash_event(&prev_new, 0, &e.structure, &e.text_hash);
+        out.push(Event {
+            seq: e.seq,
+            version: FORMAT_VERSION,
+            prev: prev_new,
+            at: 0,
+            structure: e.structure.clone(),
+            text_hash: e.text_hash,
+            salt: e.salt,
+            text: e.text.clone(),
+            hash,
+        });
+        prev_new = hash;
+    }
+    Ok(out)
 }
 
 /// What verification found in a log that holds together.
@@ -275,7 +356,7 @@ pub fn verify(events: &[Event]) -> Result<Verified, ChainError> {
         if e.prev != prev {
             return Err(ChainError::Link { seq: e.seq });
         }
-        if hash_event(&e.prev, &e.structure, &e.text_hash) != e.hash {
+        if hash_event(&e.prev, e.at, &e.structure, &e.text_hash) != e.hash {
             return Err(ChainError::Hash { seq: e.seq });
         }
         match (&e.salt, &e.text) {
@@ -358,7 +439,14 @@ mod tests {
             ),
         ];
         for (i, (structure, t)) in steps.into_iter().enumerate() {
-            let e = Event::new(i as u64 + 1, prev, structure, t, salt(i as u8));
+            let e = Event::new(
+                i as u64 + 1,
+                prev,
+                1_700_000_000_000 + i as u64,
+                structure,
+                t,
+                salt(i as u8),
+            );
             prev = e.hash;
             log.push(e);
         }
@@ -398,6 +486,7 @@ mod tests {
         let replaced = Event::new(
             1,
             Hash::ZERO,
+            1_700_000_000_000,
             Structure::PhaseOpened { phase: PhaseId(2) },
             text(&[("goal", "rewritten")]),
             salt(9),
@@ -448,6 +537,7 @@ mod tests {
         let e = Event::new(
             1,
             Hash::ZERO,
+            1_700_000_000_000,
             Structure::DecisionTaken {
                 decision: DecisionId(1),
                 by: Actor::Person,
@@ -487,13 +577,75 @@ mod tests {
         let e = Event::new(
             1,
             Hash::ZERO,
+            1_700_000_000_000,
             Structure::PhaseOpened { phase: PhaseId(1) },
             text(&[("goal", "first slice")]),
             Salt([7; 16]),
         );
         assert_eq!(
             e.hash.to_hex(),
-            "d53eda8c85e22202055f57e9b7fdd24c524b269437f0e506a51c839b68cb0304",
+            "aa0b6149af0580a8c704561a257068c597a7af5ec0292960916320e9a416cdbe"
+        );
+    }
+
+    /// A version-1 event, as the format was before `at`.
+    fn v1(seq: u64, prev: Hash, structure: Structure, t: TextPart, s: Salt) -> Event {
+        let text_hash = hash_text(&s, &t);
+        let hash = hash_event_v1(&prev, &structure, &text_hash);
+        Event {
+            seq,
+            version: 1,
+            prev,
+            at: 0,
+            structure,
+            text_hash,
+            salt: Some(s),
+            text: Some(t),
+            hash,
+        }
+    }
+
+    #[test]
+    fn a_v1_log_upgrades_to_v2_and_a_broken_one_is_refused() {
+        let a = v1(
+            1,
+            Hash::ZERO,
+            Structure::PhaseOpened { phase: PhaseId(1) },
+            text(&[("goal", "old")]),
+            salt(1),
+        );
+        let b = v1(
+            2,
+            a.hash,
+            Structure::ItemAdded {
+                item: ItemId(1),
+                phase: PhaseId(1),
+                checks: vec![],
+                depends_on: vec![],
+            },
+            text(&[("goal", "an old item")]),
+            salt(2),
+        );
+        // A v1 log does not verify under v2.
+        assert_eq!(
+            verify(&[a.clone(), b.clone()]),
+            Err(ChainError::Version { seq: 1, version: 1 })
+        );
+        let upgraded = upgrade_from_v1(&[a.clone(), b.clone()]).unwrap();
+        let v = verify(&upgraded).unwrap();
+        assert_eq!(v.len, 2);
+        assert!(upgraded.iter().all(|e| e.version == 2 && e.at == 0));
+        assert_eq!(
+            upgraded[1].text_field("goal").unwrap().as_str(),
+            "an old item"
+        );
+        assert_ne!(upgraded[1].hash, b.hash, "the head hash changes once");
+        // Tampered v1 history is not laundered.
+        let mut broken = b.clone();
+        broken.structure = Structure::PhaseOpened { phase: PhaseId(9) };
+        assert_eq!(
+            upgrade_from_v1(&[a, broken]),
+            Err(ChainError::Hash { seq: 2 })
         );
     }
 }
