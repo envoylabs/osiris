@@ -98,6 +98,8 @@ enum Cmd {
     },
     /// One record in full: an item, decision, phase or message by id.
     Show { id: String },
+    /// The check-in view: decisions, report and what is ready, in one screen.
+    Summary,
     /// The phase report.
     Report,
     /// Verify the chain and print the head.
@@ -508,6 +510,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         }
 
         Cmd::Show { id } => render::show(&p.load()?, id).map_err(CliError::Other),
+
+        Cmd::Summary => Ok(render::summary(&p.load()?, &actor)),
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 

@@ -594,3 +594,21 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
     );
     Output::new(s.trim_end(), json)
 }
+
+/// `ris summary`: the check-in view. The decision queue first, since
+/// it is what blocks agents; then the report; then what is ready to
+/// claim. Each section is the same as its own command, so drilling
+/// down is a matter of running that command or `ris show <id>`.
+pub fn summary(l: &Loaded, actor: &Actor) -> Output {
+    let queue = inbox(l, actor);
+    let rep = report(l);
+    let rdy = ready(l);
+    let text = format!(
+        "== decisions ==\n{}\n\n== report ==\n{}\n\n== ready ==\n{}",
+        queue.text, rep.text, rdy.text
+    );
+    Output::new(
+        text,
+        json!({ "inbox": queue.json, "report": rep.json, "ready": rdy.json }),
+    )
+}

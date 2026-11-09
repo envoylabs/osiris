@@ -390,6 +390,7 @@ fn scripted_phase_matches_the_golden_transcript() {
     assert_eq!(r.status, 1);
     assert!(r.stderr.contains("I-n (item)"));
     sb.ok(None, &["report"]);
+    sb.ok(None, &["summary"]);
     sb.ok(None, &["verify"]);
     sb.ok(None, &["phase", "close"]);
     sb.refused(None, &["phase", "close"]);
@@ -440,6 +441,7 @@ fn every_help_fits_one_screen() {
         &["inbox"],
         &["send"],
         &["show"],
+        &["summary"],
         &["report"],
         &["verify"],
         &["log"],
