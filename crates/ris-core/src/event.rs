@@ -73,7 +73,7 @@ pub enum Structure {
         item: ItemId,
         evidence: Vec<EvidenceId>,
     },
-    ItemLanded {
+    ItemMerged {
         item: ItemId,
         commit: CommitHash,
     },

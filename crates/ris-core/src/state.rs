@@ -68,21 +68,21 @@ impl State {
             .find(|p| matches!(p.state, PhaseState::Open))
     }
 
-    /// Items an agent may claim now: ready, with every dependency landed.
+    /// Items an agent may claim now: ready, with every dependency merged.
     pub fn ready(&self) -> impl Iterator<Item = &Item> {
         self.items.values().filter(|i| {
             matches!(i.state, ItemState::Ready) && self.unlanded_dependencies(i).is_empty()
         })
     }
 
-    /// Dependencies of `item` that have not landed.
+    /// Dependencies of `item` that have not merged.
     pub fn unlanded_dependencies(&self, item: &Item) -> Vec<ItemId> {
         item.depends_on
             .iter()
             .filter(|d| {
                 !matches!(
                     self.items.get(d).map(|i| &i.state),
-                    Some(ItemState::Landed { .. })
+                    Some(ItemState::Merged { .. })
                 )
             })
             .copied()
@@ -169,13 +169,13 @@ impl State {
                     evidence: evidence.clone(),
                 };
             }
-            Structure::ItemLanded { item, commit } => {
+            Structure::ItemMerged { item, commit } => {
                 let i = self.item_mut(seq, *item)?;
                 let evidence = match &i.state {
                     ItemState::Done { evidence } => evidence.clone(),
                     _ => Vec::new(),
                 };
-                i.state = ItemState::Landed {
+                i.state = ItemState::Merged {
                     evidence,
                     commit: commit.clone(),
                 };

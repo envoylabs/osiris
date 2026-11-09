@@ -39,7 +39,7 @@ pub enum PhaseState {
     Closed { report: Hash },
 }
 
-/// An item: one unit of work, and one commit when it lands.
+/// An item: one unit of work, and one commit when it merges.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub id: ItemId,
@@ -48,7 +48,7 @@ pub struct Item {
     pub at: u64,
     /// The checks that must pass for the item to be done, by name.
     pub checks: Vec<CheckId>,
-    /// Items this one cannot start before they have landed.
+    /// Items this one cannot start before they have merged.
     pub depends_on: Vec<ItemId>,
     /// Every check run against it, in order.
     pub check_runs: Vec<CheckRun>,
@@ -78,7 +78,7 @@ pub enum ItemState {
     Done { evidence: Vec<EvidenceId> },
     /// Its commit is on the phase's branch. Changed only by a further
     /// item.
-    Landed {
+    Merged {
         evidence: Vec<EvidenceId>,
         commit: CommitHash,
     },

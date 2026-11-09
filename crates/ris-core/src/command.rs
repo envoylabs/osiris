@@ -51,7 +51,7 @@ pub enum Command {
         chosen: usize,
         rationale: Text,
     },
-    /// Record a check's run against an item. Any state but Landed.
+    /// Record a check's run against an item. Any state but Merged.
     CheckRan {
         item: ItemId,
         check: CheckId,
@@ -63,7 +63,7 @@ pub enum Command {
         by: AgentName,
         evidence: Vec<EvidenceId>,
     },
-    Land {
+    Merge {
         item: ItemId,
         commit: CommitHash,
     },
@@ -95,7 +95,7 @@ impl Command {
             Self::Decide { .. } => CommandKind::Decide,
             Self::CheckRan { .. } => CommandKind::CheckRan,
             Self::Done { .. } => CommandKind::Done,
-            Self::Land { .. } => CommandKind::Land,
+            Self::Merge { .. } => CommandKind::Merge,
             Self::MessageSend { .. } => CommandKind::MessageSend,
         }
     }
@@ -128,7 +128,7 @@ fn item_state_kind(s: &ItemState) -> ItemStateKind {
         ItemState::Claimed { .. } => ItemStateKind::Claimed,
         ItemState::Blocked { .. } => ItemStateKind::Blocked,
         ItemState::Done { .. } => ItemStateKind::Done,
-        ItemState::Landed { .. } => ItemStateKind::Landed,
+        ItemState::Merged { .. } => ItemStateKind::Merged,
     }
 }
 
@@ -138,7 +138,7 @@ fn item_state_name(k: ItemStateKind) -> &'static str {
         ItemStateKind::Claimed => "claimed",
         ItemStateKind::Blocked => "blocked",
         ItemStateKind::Done => "done",
-        ItemStateKind::Landed => "landed",
+        ItemStateKind::Merged => "merged",
     }
 }
 
@@ -381,9 +381,9 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             })])
         }
 
-        Command::Land { item, commit } => {
+        Command::Merge { item, commit } => {
             item_move(state, *item, kind)?;
-            Ok(vec![Effect::new(Structure::ItemLanded {
+            Ok(vec![Effect::new(Structure::ItemMerged {
                 item: *item,
                 commit: commit.clone(),
             })])
@@ -535,14 +535,14 @@ mod tests {
                 recommended: 0,
                 rationale: t(""),
             }),
-            ItemStateKind::Done | ItemStateKind::Landed => {
+            ItemStateKind::Done | ItemStateKind::Merged => {
                 h.must(Command::Done {
                     item,
                     by: agent("heron"),
                     evidence: vec![evidence(1)],
                 });
-                if kind == ItemStateKind::Landed {
-                    h.must(Command::Land {
+                if kind == ItemStateKind::Merged {
+                    h.must(Command::Merge {
                         item,
                         commit: CommitHash("abc".into()),
                     });
@@ -592,7 +592,7 @@ mod tests {
                 by: agent("heron"),
                 evidence: vec![evidence(3)],
             },
-            CommandKind::Land => Command::Land {
+            CommandKind::Merge => Command::Merge {
                 item,
                 commit: CommitHash("def".into()),
             },
@@ -756,7 +756,7 @@ mod tests {
             by: agent("heron"),
             evidence: vec![evidence(1)],
         });
-        h.must(Command::Land {
+        h.must(Command::Merge {
             item: ItemId(1),
             commit: CommitHash("abc".into()),
         });
@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn fold_of_the_log_equals_the_live_state_and_ignores_text() {
-        let mut h = item_in(ItemStateKind::Landed);
+        let mut h = item_in(ItemStateKind::Merged);
         h.must(Command::PhaseClose);
         let replayed = State::fold(&h.log).unwrap();
         assert_eq!(replayed, h.state);

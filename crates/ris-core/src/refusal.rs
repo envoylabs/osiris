@@ -44,7 +44,7 @@ pub enum Refusal {
         state: &'static str,
         command: CommandKind,
     },
-    /// The item depends on items that have not landed.
+    /// The item depends on items that have not merged.
     DependenciesOpen {
         item: ItemId,
         waiting_on: Vec<ItemId>,
@@ -96,14 +96,14 @@ impl Refusal {
                     | CommandKind::RaiseMechanical
                     | CommandKind::RaiseSubstantive,
                 ) => "claim it first: `ris claim <item>`".into(),
-                ("landed", _) => "it has landed; further work is a new item".into(),
+                ("merged", _) => "it has merged; further work is a new item".into(),
                 _ => "see its state in `ris report`".into(),
             },
             Self::IllegalDecisionTransition { state, .. } => {
                 format!("a decision in state {state} is settled; raise a new one to supersede it")
             }
             Self::DependenciesOpen { waiting_on, .. } => format!(
-                "wait for {} to land, or take another item from `ris ready`",
+                "wait for {} to merge, or take another item from `ris ready`",
                 join(waiting_on)
             ),
             Self::NotTheClaimant { holder, .. } => {

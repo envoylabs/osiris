@@ -32,7 +32,7 @@ fn state_name(s: &ItemState) -> &'static str {
         ItemState::Claimed { .. } => "claimed",
         ItemState::Blocked { .. } => "blocked",
         ItemState::Done { .. } => "done",
-        ItemState::Landed { .. } => "landed",
+        ItemState::Merged { .. } => "merged",
     }
 }
 
@@ -53,7 +53,7 @@ fn item_json(l: &Loaded, i: &Item) -> Value {
         ItemState::Done { evidence } => {
             v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>())
         }
-        ItemState::Landed { evidence, commit } => {
+        ItemState::Merged { evidence, commit } => {
             v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>());
             v["commit"] = json!(commit.to_string());
         }
@@ -65,7 +65,7 @@ fn item_json(l: &Loaded, i: &Item) -> Value {
 fn item_line(l: &Loaded, i: &Item) -> String {
     let who = match &i.state {
         ItemState::Claimed { agent } => format!(" ({agent})"),
-        ItemState::Landed { commit, .. } => format!(" ({})", short(&commit.0)),
+        ItemState::Merged { commit, .. } => format!(" ({})", short(&commit.0)),
         _ => String::new(),
     };
     format!(
@@ -258,7 +258,7 @@ pub fn report(l: &Loaded) -> Output {
         .state
         .items
         .values()
-        .filter(|i| i.phase == phase.id || !matches!(i.state, ItemState::Landed { .. }))
+        .filter(|i| i.phase == phase.id || !matches!(i.state, ItemState::Merged { .. }))
         .collect();
     let (substantive, mechanical): (Vec<&Decision>, Vec<&Decision>) = l
         .state

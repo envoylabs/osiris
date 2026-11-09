@@ -1,6 +1,6 @@
 //! Drives the built `ris` binary through a scripted phase: two agents,
 //! three items, one mechanical and one substantive decision, a message,
-//! a landing and a close. Output is compared to a golden file with
+//! a merging and a close. Output is compared to a golden file with
 //! hashes normalised. Set `UPDATE_GOLDEN=1` to rewrite the golden file.
 
 use std::fs;
@@ -257,7 +257,7 @@ fn scripted_phase_matches_the_golden_transcript() {
         &["decide", "D-2", "--choose", "0", "--rationale", "again"],
     );
 
-    // Done needs evidence, then land.
+    // Done needs evidence, then merge.
     sb.refused(heron, &["done", "I-1"]);
     fs::write(sb.dir.join("test-output.txt"), "running 3 tests\nok\n").unwrap();
     sb.refused(wren, &["done", "I-1", "--evidence", "test-output.txt"]);
@@ -265,7 +265,7 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.ok(
         None,
         &[
-            "land",
+            "merge",
             "I-1",
             "--commit",
             "0123456789abcdef0123456789abcdef01234567",
@@ -274,14 +274,14 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.refused(
         None,
         &[
-            "land",
+            "merge",
             "I-1",
             "--commit",
             "0123456789abcdef0123456789abcdef01234567",
         ],
     );
 
-    // I-2's dependency has landed.
+    // I-2's dependency has merged.
     sb.ok(wren, &["claim", "I-2"]);
     sb.ok(
         wren,
@@ -345,7 +345,7 @@ fn every_help_fits_one_screen() {
         &["decision", "raise"],
         &["decide"],
         &["done"],
-        &["land"],
+        &["merge"],
         &["inbox"],
         &["send"],
         &["report"],

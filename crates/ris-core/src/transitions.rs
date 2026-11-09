@@ -24,7 +24,7 @@ pub enum CommandKind {
     /// Recording a check's run against an item.
     CheckRan,
     Done,
-    Land,
+    Merge,
     MessageSend,
 }
 
@@ -40,7 +40,7 @@ impl CommandKind {
         Self::Decide,
         Self::CheckRan,
         Self::Done,
-        Self::Land,
+        Self::Merge,
         Self::MessageSend,
     ];
 }
@@ -52,7 +52,7 @@ pub enum ItemStateKind {
     Claimed,
     Blocked,
     Done,
-    Landed,
+    Merged,
 }
 
 impl ItemStateKind {
@@ -61,7 +61,7 @@ impl ItemStateKind {
         Self::Claimed,
         Self::Blocked,
         Self::Done,
-        Self::Landed,
+        Self::Merged,
     ];
 }
 
@@ -111,11 +111,11 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         // The last blocker clearing returns the item to Ready; while
         // blockers remain, the decision is logged and the item stays.
         (S::Blocked, C::Decide, Move::To(S::Ready)),
-        // Checks may run again on a done item (the landing runs them
+        // Checks may run again on a done item (the merge runs them
         // all); its state does not change.
         (S::Done, C::CheckRan, Move::Stay),
-        (S::Done, C::Land, Move::To(S::Landed)),
-        // Landed: nothing. Changed only by a further item.
+        (S::Done, C::Merge, Move::To(S::Merged)),
+        // Merged: nothing. Changed only by a further item.
     ]
 };
 
@@ -213,9 +213,9 @@ mod tests {
     }
 
     #[test]
-    fn landed_and_taken_are_terminal() {
+    fn merged_and_taken_are_terminal() {
         for command in CommandKind::ALL {
-            assert_eq!(lookup(ITEM, ItemStateKind::Landed, *command), None);
+            assert_eq!(lookup(ITEM, ItemStateKind::Merged, *command), None);
             assert_eq!(lookup(DECISION, DecisionStateKind::Taken, *command), None);
         }
     }

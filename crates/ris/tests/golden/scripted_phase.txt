@@ -68,7 +68,7 @@ $ RIS_AGENT=wren ris claim I-1
 
 $ RIS_AGENT=wren ris claim I-2
 [stderr] refused: I-2 waits on I-1
-  next: wait for I-1 to land, or take another item from `ris ready`
+  next: wait for I-1 to merge, or take another item from `ris ready`
 [exit 2]
 
 $ RIS_AGENT=heron ris claim I-3
@@ -118,16 +118,16 @@ $ RIS_AGENT=wren ris done I-1 --evidence test-output.txt
 
 $ RIS_AGENT=heron ris done I-1 --evidence test-output.txt
 I-1 done with 1 piece(s) of evidence
-  next: commit with `Item: I-1` as a trailer, then `ris land I-1`
+  next: commit with `Item: I-1` as a trailer, then `ris merge I-1`
 [exit 0]
 
-$ ris land I-1 --commit 0123456789abcdef0123456789abcdef01234567
-I-1 landed at 0123456789ab
+$ ris merge I-1 --commit 0123456789abcdef0123456789abcdef01234567
+I-1 merged at 0123456789ab
 [exit 0]
 
-$ ris land I-1 --commit 0123456789abcdef0123456789abcdef01234567
-[stderr] refused: I-1 is landed, which does not accept Land
-  next: it has landed; further work is a new item
+$ ris merge I-1 --commit 0123456789abcdef0123456789abcdef01234567
+[stderr] refused: I-1 is merged, which does not accept Merge
+  next: it has merged; further work is a new item
 [exit 2]
 
 $ RIS_AGENT=wren ris claim I-2
@@ -156,8 +156,8 @@ no messages
 
 $ ris report
 P-1 open: first slice
-items: 1 claimed, 1 landed, 1 ready
-  I-1   landed   the event envelope (01234567)
+items: 1 claimed, 1 merged, 1 ready
+  I-1   merged   the event envelope (01234567)
   I-2   claimed  the fold (wren)
   I-3   ready    the cli
 substantive decisions:
@@ -177,8 +177,8 @@ ok: 16 events, head <hash>
 
 $ ris phase close
 P-1 closed: first slice
-items: 1 claimed, 1 landed, 1 ready
-  I-1   landed   the event envelope (01234567)
+items: 1 claimed, 1 merged, 1 ready
+  I-1   merged   the event envelope (01234567)
   I-2   claimed  the fold (wren)
   I-3   ready    the cli
 substantive decisions:
@@ -213,7 +213,7 @@ $ ris --json report
       "goal": "the event envelope",
       "id": "I-1",
       "phase": "P-1",
-      "state": "landed"
+      "state": "merged"
     },
     {
       "agent": "wren",

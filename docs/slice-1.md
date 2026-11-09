@@ -7,7 +7,7 @@ source of truth.
 
 The slice ends when a lead and an auditor can run a phase of work on
 this repository through `ris` alone: open a phase, add items, claim,
-raise and take decisions, mark items done with evidence, land, and
+raise and take decisions, mark items done with evidence, merge, and
 read one report at the close.
 
 ## Standing checks
@@ -105,7 +105,7 @@ Depends on: I-2, I-3.
 Goal: `apply(&State, Command) -> Result<Vec<Event>, Refusal>` and
 `fold(&[Event]) -> State` for the slice's commands: open and close a
 phase, add an item, claim, raise a decision, take a decision, done,
-land, send a message. The fold reads only structural parts.
+merge, send a message. The fold reads only structural parts.
 
 Checks: the table test from I-2 drives `apply` over every (state,
 command) pair and asserts each result, refusals included; a second
@@ -144,29 +144,29 @@ Depends on: I-1.
 ### I-8 The `ris` CLI
 
 Goal: `ris init`, `phase open`, `phase close`, `item add`, `ready`,
-`claim`, `decision raise`, `decide`, `done`, `land`, `inbox`,
+`claim`, `decision raise`, `decide`, `done`, `merge`, `inbox`,
 `report`, each a thin shell over `apply` and the store. Plain text by
 default, `--json` on request; every refusal says what to do next.
 Configuration read from `.osiris/config.toml`: agents, denylist.
 
 Checks: an integration test drives the binary through a scripted
 phase (two agents, three items, one substantive and one mechanical
-decision, one landing) and compares output to a golden file; every
+decision, one merge) and compares output to a golden file; every
 subcommand's `--help` fits one screen; a refused command exits
 non-zero with the refusal on stderr.
 
 Depends on: I-5, I-6, I-7.
 
-### I-9 Checks and landing
+### I-9 Checks and merge
 
 Goal: project checks declared in `.osiris/checks.toml` as command and
 pass condition (exit status by default); `ris done` runs the item's
-checks and attaches their output as evidence; `ris land` at width one
+checks and attaches their output as evidence; `ris merge` at width one
 records the commit at HEAD against the item, requires the item id as
 a trailer in that commit's message, and runs the full checks.
 
 Checks: a scripted check that fails leaves the item not done, with the
-failure as evidence; a passing one marks it done; `land` refuses a
+failure as evidence; a passing one marks it done; `merge` refuses a
 HEAD whose message lacks the trailer.
 
 Depends on: I-7, I-8.

@@ -72,7 +72,7 @@ enum Cmd {
         evidence: Vec<PathBuf>,
     },
     /// Record that a done item's commit is on the phase's branch.
-    Land {
+    Merge {
         item: ItemId,
         /// The commit; defaults to git HEAD in the project root.
         #[arg(long)]
@@ -381,24 +381,24 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             })?;
             Ok(Output::new(
                 format!(
-                    "{item} done with {} piece(s) of evidence\n  next: commit with `Item: {item}` as a trailer, then `ris land {item}`",
+                    "{item} done with {} piece(s) of evidence\n  next: commit with `Item: {item}` as a trailer, then `ris merge {item}`",
                     ids.len()
                 ),
                 json!({ "item": item.to_string(), "evidence": ids.iter().map(ToString::to_string).collect::<Vec<_>>() }),
             ))
         }
 
-        Cmd::Land { item, commit } => {
+        Cmd::Merge { item, commit } => {
             let commit = match commit {
                 Some(c) => c.clone(),
                 None => git_head(&p.root)?,
             };
-            let (_, _) = p.run(&Command::Land {
+            let (_, _) = p.run(&Command::Merge {
                 item: *item,
                 commit: CommitHash(commit.clone()),
             })?;
             Ok(Output::new(
-                format!("{item} landed at {}", &commit[..commit.len().min(12)]),
+                format!("{item} merged at {}", &commit[..commit.len().min(12)]),
                 json!({ "item": item.to_string(), "commit": commit }),
             ))
         }
