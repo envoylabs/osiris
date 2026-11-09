@@ -133,7 +133,7 @@ agents never wait for the person.
    worktree and environment.
 3. **Done means evidence.** An item is done when its checks pass and the
    evidence (test output, benchmark files, logs) is attached.
-4. **Land.** A finished item lands on the phase's one branch as soon as
+4. **Merge.** A finished item merges onto the phase's one branch as soon as
    it is done, not at the end of the window: it is rebased onto the
    head, and the full checks run again on the result (Commits).
 5. **Review.** At phase end the person reads one generated report:
@@ -217,18 +217,18 @@ nothing needs running at that point, only the decision queue draining.
 ### Commits
 
 The item is the unit of change in git, as it is in the harness. Each
-phase has one branch, and every item of the phase lands on it.
+phase has one branch, and every item of the phase merges onto it.
 
 - **One branch per phase.** It starts from the main line when the phase
   opens. Nothing is reconciled at the end of the window: reconciling
-  happens at each landing. Provided nothing else writes to the main
+  happens at each merge. Provided nothing else writes to the main
   line during the phase, the closing merge has no conflicts.
-- **Landing is a command, and the daemon takes one at a time.**
-  Landings therefore have a total order, the order of the log. To land,
+- **Merging is a command, and the daemon takes one at a time.**
+  Merges therefore have a total order, the order of the log. To merge,
   an item is rebased onto the branch's head and the full checks run on
-  the result. Those include the checks of every item landed before it,
-  so the later lander builds on the earlier: undoing an earlier change
-  fails that change's falsifier. A landing that conflicts or fails the
+  the result. Those include the checks of every item merged before it,
+  so the later one builds on the earlier: undoing an earlier change
+  fails that change's falsifier. A merge that conflicts or fails the
   checks is refused and the item returns to its author, who has
   meanwhile taken another.
 - **A change is protected by its falsifier, not by its branch.** At
@@ -237,7 +237,7 @@ phase has one branch, and every item of the phase lands on it.
   change with weak checks can be undone unnoticed by a later rebase.
   Whether its lines are still present is no test, since later items
   rightly rewrite them.
-- **Only finished items land.** Half-done work on the shared branch
+- **Only finished items merge.** Half-done work on the shared branch
   would leave other agents building on a tree whose failures are not
   theirs.
 - **At width one there are no item branches.** The one writer commits
@@ -246,15 +246,15 @@ phase has one branch, and every item of the phase lands on it.
   two; so each has a working ref that lives for one item, on which it
   commits, amends and rebases as it likes. The claim keeps other
   writers off.
-- **One commit per item.** A finished item lands as a single commit
+- **One commit per item.** A finished item merges as a single commit
   with the item's id in its message, so `why <file>` can go from a line
   to its commit, its item, the decisions that touched it and its
   evidence. A commit is as large as its item, so small commits come
   from decomposition at planning time. Inside an item, the logged
   mechanical decisions are the breakdown.
-- **Fix forward once landed.** Other agents may have built on the
+- **Fix forward once merged.** Other agents may have built on the
   phase's branch, so it is not rewritten: an accepted finding, or a
-  decision overturned at review, lands as a further commit against the
+  decision overturned at review, merges as a further commit against the
   same item or a new one.
 - **Nothing is pushed before the phase boundary.** The phase's branch
   is pushed at phase close, after the review, when state is exported
@@ -269,7 +269,17 @@ phase has one branch, and every item of the phase lands on it.
   commits. Which agent wrote an item is in the log, under the agent's
   name.
 - **Commit messages are agent-written free text,** and pass the
-  confidentiality scan with the diff.
+  confidentiality scan with the diff. They follow the conventional
+  style, `type(scope): summary`, so a log scans at a glance, with the
+  item's id as a trailer.
+- **Co-authorship is recorded by alias.** Each commit carries an
+  `Agent: <name>` trailer naming the seat that did the item, and merge
+  refuses one that does not match the item's claimant. The alias is
+  what a reader needs; the model behind a seat is in the seat's logged
+  binding. Trailers that carry an email address are not used, so the
+  message scan needs no exceptions: a commit message is free text, and
+  any rule that skips lines by their prefix would let anything through
+  under that prefix.
 
 ### Arrangements: width and audit
 
@@ -741,12 +751,12 @@ What follows for the design:
   shows which items depend on which decisions, so overturning one shows
   its blast radius.
 - **Merge conflicts between parallel agents.** Decomposition quality
-  matters: items carry file-ownership hints, and a landing that
+  matters: items carry file-ownership hints, and a merge that
   conflicts is refused and returns to its author.
-- **Landings queue behind slow checks.** Landing is serialised and runs
+- **Merges queue behind slow checks.** Merging is serialised and runs
   the full checks, so its rate is bounded by the suite's run time. The
-  time items spend waiting to land is recorded per window; if it grows,
-  landings are batched.
+  time items spend waiting to merge is recorded per window; if it grows,
+  merges are batched.
 - **Event format changes over time.** Versioned events with an upgrade
   step, from the first release.
 - **The daemon is a single point of failure** for coordination. Fine on
@@ -766,7 +776,7 @@ dogfood it from there.
    the start (Confidentiality); the `redact` command waits.
 2. The CLI, native, hosting the core with no daemon yet: `phase open`
    and `phase close`, `item add`, `claim`, `decision raise` and
-   `decide`, `done`, `land`, `inbox`, `report`. The confidentiality
+   `decide`, `done`, `merge`, `inbox`, `report`. The confidentiality
    scan is in from the first version. Check-ins are on demand; no
    timer yet.
 3. Use it at once to build the rest of the harness, as a pair: a lead
@@ -786,7 +796,7 @@ coordinates the agents inside it. Anyone else writing to the same
 repository (a harness on another machine, an agent outside the harness,
 a person) works on a branch of their own and meets the others at the
 main line, as with any shared repository. When the main line has moved
-during a phase, the closing merge is treated as a landing: the full
+during a phase, the closing merge runs as an item's merge does: the full
 checks run on the merged result before it goes in. Passing messages
 between harnesses, so that their agents coordinate, is not designed.
 
@@ -868,9 +878,9 @@ Each claim above, and the test that would show it false:
   as missing its text.
 - **Commits map to items:** every commit on a phase's branch names
   exactly one item, and every done item has at least one commit there.
-- **Later landings cannot undo earlier ones:** a seeded item that
-  reverts an earlier item's behaviour is refused at landing, by the
-  earlier item's check. Two landings submitted at once land in one
+- **Later merges cannot undo earlier ones:** a seeded item that
+  reverts an earlier item's behaviour is refused at merge, by the
+  earlier item's check. Two merges submitted at once merge in one
   order, and the second is checked against a tree that contains the
   first.
 - **The closing merge is clean:** a phase's branch merges into the main

@@ -1,0 +1,739 @@
+$ ris ready
+[stderr] no .osiris/ in /private<dir> or above
+  next: `ris init` in the project root
+[exit 1]
+
+$ ris init
+initialised .osiris and wrote OSIRIS.md (the agents' rules)
+  next: point your agents' rules file at OSIRIS.md (for example `@OSIRIS.md` in CLAUDE.md),
+        set seats and the denylist in .osiris/config.toml and checks in .osiris/checks.toml,
+        then `ris phase open <goal>`
+[exit 0]
+
+$ ris rules
+# Working with osiris
+
+This project's work goes through `ris`, the osiris command, not through
+status documents. The person decides at check-ins; agents build and
+test in between, and never wait for the person.
+
+## Your seat
+
+Your seat is a durable name in `.osiris/config.toml`, set in your
+environment:
+
+```
+export RIS_AGENT=<your seat>
+```
+
+With it unset, `ris` acts as the person. Use only your own seat.
+
+## The loop
+
+```
+ris ready                       # what you may claim
+ris claim I-7                   # take one; the output is your brief
+ris show I-7                    # the item in full, whenever you need it
+...work...
+ris done I-7                    # runs the item's checks; output becomes evidence
+git commit -m "feat(scope): summary" -m "Item: I-7
+Agent: <your seat>"
+ris merge I-7                   # runs every project check and merges
+ris inbox                       # messages to you; read between items
+```
+
+- An item lands as one commit, carrying exactly one `Item:` trailer and
+  exactly one `Agent:` trailer naming your seat. `ris merge` refuses
+  anything else.
+- `ris done` and `ris merge` exit 3 when a check fails. The output is
+  evidence under `.osiris/evidence/`, named in the message. Fix and run
+  again.
+- If you cannot finish an item, `ris release I-7` returns it to ready.
+
+## Working beside other builders
+
+When more than one builder works at once, each has its own git worktree
+on its own branch; the store is shared. Commit your item on your branch
+and run `ris merge` from your worktree: it rebases your one commit onto
+the phase branch, runs every check on the result, and moves the phase
+branch forward, one merge at a time. If your change conflicts with work
+merged before it, or the combined tree fails a check, the merge is
+refused and nothing moves: rebase onto the phase branch yourself, fix,
+and run `ris merge` again. That is how a later item is kept from undoing
+an earlier one.
+
+## Decisions
+
+The test is the cost of reversing, not whether reversal is possible.
+
+- **Mechanical** (cheap to reverse: a blocker found, something adjacent
+  discovered, the shape an implementation takes): decide and log it.
+  ```
+  ris decision raise --about I-7 --question "..." --option a --option b --recommend 0 --rationale "..."
+  ```
+- **Substantive** (expensive to reverse: a contract, a data or wire
+  format, a dependency, the scope, a design direction others build on):
+  queue it, and take another item.
+  ```
+  ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
+  ```
+  Adding a dependency is substantive. Prefer an existing library to
+  writing the thing yourself; raise the dependency rather than working
+  around it. Never take a substantive decision yourself; `ris` refuses.
+
+## Confidentiality: the ground rule
+
+Nothing secret, and nothing that identifies a person or a machine, goes
+into harness state or into a commit: no credentials, no names or
+addresses of real people, no hostnames or usernames, no absolute paths
+(paths are relative to the repository root). `ris` scans every text
+field, and `ris merge` scans every line a commit adds and its message,
+and refuses on a hit without echoing it. There are no exceptions. `ris
+scan` runs the same scan over the tree before you commit. A test that
+needs a planted secret or path assembles it at runtime from pieces,
+with a comment saying why.
+
+## Messages
+
+Typed and targeted; no broadcasts.
+
+```
+ris send <seat> --kind question --about I-7 "is the interface settled?"
+```
+
+Kinds: `handoff`, `interface-changed`, `question`, `finding`.
+
+## An auditor's seat
+
+An auditor never writes to the tree. For each done item it reads the
+diff and the evidence against the goal, the decisions that touch it and
+these rules, and checks the item's mechanical decisions for any that
+should have been substantive. Findings go to the author as messages; a
+finding the author disputes is raised as a substantive decision.
+[exit 0]
+
+$ ris init
+[stderr] /private<dir>/.osiris already exists
+[exit 1]
+
+$ ris item add too early
+[stderr] refused: no phase is open
+  next: open a phase first: `ris phase open`
+[exit 2]
+
+$ ris phase open first slice
+opened P-1
+[exit 0]
+
+$ ris phase open second at once
+[stderr] refused: a phase is already open
+  next: close the open phase first: `ris phase close`, after review
+[exit 2]
+
+$ ris item add the event envelope --check test
+added I-1
+[exit 0]
+
+$ ris item add the fold --depends I-1
+added I-2
+[exit 0]
+
+$ ris item add the cli
+added I-3
+[exit 0]
+
+$ ris item add a lint fix --check lint
+added I-4
+[exit 0]
+
+$ ris item add bad check --check nope
+[stderr] check `nope` is not in .osiris/checks.toml
+[exit 1]
+
+$ ris item add see <canary>
+[stderr] refused: `goal` contains an absolute path that identifies a user or machine
+  next: remove the absolute path from `goal` and try again; harness state and commits never carry one
+[exit 2]
+
+$ ris ready
+I-1   ready    the event envelope
+I-3   ready    the cli
+I-4   ready    a lint fix
+[exit 0]
+
+$ ris claim I-1
+[stderr] this command is an agent's: set RIS_AGENT=<name>
+[exit 1]
+
+$ RIS_AGENT=heron ris claim I-1
+claimed I-1: the event envelope
+  checks: test
+[exit 0]
+
+$ RIS_AGENT=wren ris claim I-1
+[stderr] refused: I-1 is claimed, which does not accept Claim
+  next: another agent holds it; take another item from `ris ready`
+[exit 2]
+
+$ RIS_AGENT=wren ris claim I-2
+[stderr] refused: I-2 waits on I-1
+  next: wait for I-1 to merge, or take another item from `ris ready`
+[exit 2]
+
+$ RIS_AGENT=heron ris claim I-3
+claimed I-3: the cli
+  checks: none
+[exit 0]
+
+$ RIS_AGENT=heron ris decision raise --about I-1 --question sha2 or blake3? --option sha2 --option blake3 --recommend 0 --rationale checkable with standard tools
+D-1 taken: option 0
+[exit 0]
+
+$ RIS_AGENT=heron ris decision raise --substantive --about I-3 --question daemon now or CLI-direct? --option daemon --option cli-direct --recommend 1
+D-2 queued for the person; I-3 is set aside, take another
+[exit 0]
+
+$ ris inbox
+1 decision(s) waiting
+D-2 [substantive] daemon now or CLI-direct?  (about I-3)
+     0: daemon
+   * 1: cli-direct
+     open; * marks the recommendation
+--
+answer:  ris decide D-n --choose <option number> --rationale "..."
+     or  ris decide D-n --other "your own answer" --rationale "..."
+look:    ris show <id>    ris ready    ris report
+ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
+[exit 0]
+
+$ RIS_AGENT=heron ris decide D-2 --choose 1 --rationale agents do not take these
+[stderr] refused: D-2 is substantive and is the person's to take
+  next: leave it in the queue; the person takes it at the next check-in
+[exit 2]
+
+$ ris decide D-2 --choose 1 --rationale fewer failure modes for agents
+D-2 taken: option 1; ready again: I-3
+[exit 0]
+
+$ ris decide D-2 --choose 0 --rationale again
+[stderr] refused: D-2 is taken, which does not accept Decide
+  next: a decision in state taken is settled; raise a new one to supersede it
+[exit 2]
+
+$ RIS_AGENT=wren ris claim I-4
+claimed I-4: a lint fix
+  checks: lint
+[exit 0]
+
+$ RIS_AGENT=wren ris done I-4
+[stderr] I-4: check lint FAILED (E-<hash>)
+I-4 not done: 1 check(s) failed
+  next: read the evidence (E-<hash>), fix, and run again
+[exit 3]
+
+$ ris --json report
+{
+  "answered_outside_options": 0,
+  "items": [
+    {
+      "agent": "heron",
+      "checks": [
+        "test"
+      ],
+      "depends_on": [],
+      "goal": "the event envelope",
+      "id": "I-1",
+      "phase": "P-1",
+      "state": "claimed"
+    },
+    {
+      "checks": [],
+      "depends_on": [
+        "I-1"
+      ],
+      "goal": "the fold",
+      "id": "I-2",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "checks": [],
+      "depends_on": [],
+      "goal": "the cli",
+      "id": "I-3",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "agent": "wren",
+      "checks": [
+        "lint"
+      ],
+      "depends_on": [],
+      "goal": "a lint fix",
+      "id": "I-4",
+      "phase": "P-1",
+      "state": "claimed"
+    }
+  ],
+  "log": {
+    "head": "<hash>",
+    "len": 15
+  },
+  "mechanical": [
+    {
+      "about": "I-1",
+      "by": "agent heron",
+      "chosen": 0,
+      "class": "mechanical",
+      "id": "D-1",
+      "options": [
+        "sha2",
+        "blake3"
+      ],
+      "question": "sha2 or blake3?",
+      "rationale": "checkable with standard tools",
+      "recommended": 0,
+      "state": "taken",
+      "taken_by": "agent heron"
+    }
+  ],
+  "messages": 0,
+  "phase": {
+    "goal": "first slice",
+    "id": "P-1",
+    "state": "open"
+  },
+  "previous_report": "<hash>",
+  "report": "<hash>",
+  "substantive": [
+    {
+      "about": "I-3",
+      "by": "agent heron",
+      "chosen": 1,
+      "class": "substantive",
+      "id": "D-2",
+      "options": [
+        "daemon",
+        "cli-direct"
+      ],
+      "question": "daemon now or CLI-direct?",
+      "rationale": "fewer failure modes for agents",
+      "recommended": 1,
+      "state": "taken",
+      "taken_by": "the person"
+    }
+  ]
+}
+[exit 0]
+
+$ RIS_AGENT=wren ris done I-1
+[stderr] refused: I-1 is held by heron
+  next: the item is held by heron; message them or take another item
+[exit 2]
+
+$ RIS_AGENT=heron ris done I-1
+I-1: check test passed (E-<hash>)
+I-1 done with 1 piece(s) of evidence
+  next: commit with `Item: I-1` and `Agent: heron` as trailers, then `ris merge I-1`
+[exit 0]
+
+$ ris merge I-2
+[stderr] refused: I-2 is ready, which does not accept Merge
+  next: see its state in `ris report`
+[exit 2]
+
+$ ris merge I-1
+[stderr] git rev-parse HEAD failed; pass --commit <hash>
+[exit 1]
+
+$ ris merge I-1
+[stderr] commit <hash> names I-3, not I-1
+  next: merge I-3, or recommit with `Item: I-1`
+[exit 1]
+
+$ ris merge I-1
+[stderr] commit <hash> has no `Agent:` trailer
+  next: amend with `Agent: heron` beside the `Item:` trailer
+[exit 1]
+
+$ ris merge I-1
+[stderr] commit <hash> names agent wren, but the item was done by heron
+  next: amend with `Agent: heron`
+[exit 1]
+
+$ ris merge I-1
+[stderr] I-1: check lint FAILED (E-<hash>)
+I-1: check test passed (E-<hash>)
+I-1 not merged: 1 check(s) failed
+  next: read the evidence (E-<hash>), fix, and run again
+[exit 3]
+
+$ ris merge I-1
+I-1: check lint passed (E-<hash>)
+I-1: check test passed (E-<hash>)
+I-1 merged at <hash>
+[exit 0]
+
+$ ris merge I-1
+[stderr] refused: I-1 is merged, which does not accept Merge
+  next: it has merged; further work is a new item
+[exit 2]
+
+$ RIS_AGENT=heron ris claim I-3
+claimed I-3: the cli
+  checks: none
+[exit 0]
+
+$ RIS_AGENT=heron ris done I-3
+[stderr] refused: I-3 has no evidence attached
+  next: run the item's checks, or attach evidence with `--evidence <file>`
+[exit 2]
+
+$ RIS_AGENT=heron ris done I-3 --evidence bench.txt
+I-3 done with 1 piece(s) of evidence
+  next: commit with `Item: I-3` and `Agent: heron` as trailers, then `ris merge I-3`
+[exit 0]
+
+$ ris merge I-3
+[stderr] refused: commit <hash> contains what the ground rule keeps out:
+  notes.txt:2: an absolute path that identifies a user or machine
+  next: remove it (a test fixture assembles its canary at runtime), rotate anything that was a real secret, and run again
+[exit 2]
+
+$ ris scan
+[stderr] refused: the working tree contains what the ground rule keeps out:
+  notes.txt:2: an absolute path that identifies a user or machine
+  next: remove it (a test fixture assembles its canary at runtime), rotate anything that was a real secret, and run again
+[exit 2]
+
+$ ris scan
+clean: 3 file(s) scanned
+[exit 0]
+
+$ ris merge I-3
+I-3: check lint passed (E-<hash>)
+I-3: check test passed (E-<hash>)
+I-3 merged at <hash>
+[exit 0]
+
+$ RIS_AGENT=wren ris claim I-2
+claimed I-2: the fold
+  checks: none
+[exit 0]
+
+$ RIS_AGENT=wren ris send heron --kind question --about I-2 is the fold's interface settled?
+sent M-1 to heron
+[exit 0]
+
+$ RIS_AGENT=wren ris send wren --kind question to myself
+[stderr] refused: a message cannot be addressed to its sender
+  next: address the message to another agent
+[exit 2]
+
+$ RIS_AGENT=heron ris inbox
+holding nothing; see `ris ready`
+M-1 Question from agent wren about I-2: is the fold's interface settled?
+[exit 0]
+
+$ RIS_AGENT=wren ris inbox
+holding I-2   claimed  the fold (wren)
+holding I-4   claimed  a lint fix (wren)
+no messages
+[exit 0]
+
+$ RIS_AGENT=wren ris decision raise --substantive --about I-2 --question rocksdb or sqlite? --option rocksdb --option sqlite
+D-3 queued for the person; I-2 is set aside, take another
+[exit 0]
+
+$ ris decide D-3 --other sqlite now, bench rocksdb later --rationale the plan's own answer
+D-3 taken: your own answer, recorded as a new option; ready again: I-2
+[exit 0]
+
+$ ris show D-3
+D-3 [substantive] rocksdb or sqlite?  (about I-2)
+   * 0: rocksdb
+     1: sqlite
+   + 2: sqlite now, bench rocksdb later
+     taken by the person: 2, outside the offered options. the plan's own answer
+[exit 0]
+
+$ ris show I-1
+I-1 merged  (phase P-1)
+  the event envelope
+  checks: test
+  evidence: E-<hash>
+  commit: <hash>
+  decisions:
+    D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
+  check runs:
+    test passed (E-<hash>)
+    test passed (E-<hash>)
+    lint FAILED (E-<hash>)
+    test passed (E-<hash>)
+    lint passed (E-<hash>)
+    test passed (E-<hash>)
+[exit 0]
+
+$ ris show I-2
+I-2 ready  (phase P-1)
+  the fold
+  checks: none
+  depends on: I-1 (all merged)
+  decisions:
+    D-3   rocksdb or sqlite?  → sqlite now, bench rocksdb later  (agent wren, I-2)
+[exit 0]
+
+$ ris show D-2
+D-2 [substantive] daemon now or CLI-direct?  (about I-3)
+     0: daemon
+   * 1: cli-direct
+     taken by the person: 1. fewer failure modes for agents
+[exit 0]
+
+$ ris show P-1
+P-1 open: first slice
+  I-1   merged   the event envelope (<hash>)
+  I-2   ready    the fold
+  I-3   merged   the cli (<hash>)
+  I-4   claimed  a lint fix (wren)
+[exit 0]
+
+$ ris show M-1
+M-1 Question from agent wren to heron about I-2
+  is the fold's interface settled?
+[exit 0]
+
+$ ris show I-99
+[stderr] no item I-99
+[exit 1]
+
+$ ris show banana
+[stderr] `banana` is not an id; use I-n (item), D-n (decision), P-n (phase) or M-n (message)
+[exit 1]
+
+$ ris report
+P-1 open: first slice
+items: 1 claimed, 2 merged, 1 ready
+  I-1   merged   the event envelope (<hash>)
+  I-2   ready    the fold
+  I-3   merged   the cli (<hash>)
+  I-4   claimed  a lint fix (wren)
+substantive decisions (1 answered outside the offered options):
+  D-2 [substantive] daemon now or CLI-direct?  (about I-3)
+       0: daemon
+     * 1: cli-direct
+       taken by the person: 1. fewer failure modes for agents
+  D-3 [substantive] rocksdb or sqlite?  (about I-2)
+     * 0: rocksdb
+       1: sqlite
+     + 2: sqlite now, bench rocksdb later
+       taken by the person: 2, outside the offered options. the plan's own answer
+mechanical decisions (check the class):
+  D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
+failed checks:
+  I-1 lint failed (E-<hash>)
+  I-4 lint failed (E-<hash>)
+messages: 1
+log: 34 events, head <hash>
+report: <hash> (if closed now)
+previous report: <hash>
+[exit 0]
+
+$ ris summary
+== decisions ==
+no decisions waiting
+--
+answer:  ris decide D-n --choose <option number> --rationale "..."
+     or  ris decide D-n --other "your own answer" --rationale "..."
+look:    ris show <id>    ris ready    ris report
+ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
+
+== report ==
+P-1 open: first slice
+items: 1 claimed, 2 merged, 1 ready
+  I-1   merged   the event envelope (<hash>)
+  I-2   ready    the fold
+  I-3   merged   the cli (<hash>)
+  I-4   claimed  a lint fix (wren)
+substantive decisions (1 answered outside the offered options):
+  D-2 [substantive] daemon now or CLI-direct?  (about I-3)
+       0: daemon
+     * 1: cli-direct
+       taken by the person: 1. fewer failure modes for agents
+  D-3 [substantive] rocksdb or sqlite?  (about I-2)
+     * 0: rocksdb
+       1: sqlite
+     + 2: sqlite now, bench rocksdb later
+       taken by the person: 2, outside the offered options. the plan's own answer
+mechanical decisions (check the class):
+  D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
+failed checks:
+  I-1 lint failed (E-<hash>)
+  I-4 lint failed (E-<hash>)
+messages: 1
+log: 34 events, head <hash>
+report: <hash> (if closed now)
+previous report: <hash>
+
+== ready ==
+I-2   ready    the fold
+[exit 0]
+
+$ ris verify
+ok: 34 events, head <hash>
+[exit 0]
+
+$ ris phase close
+P-1 closed: first slice
+items: 1 claimed, 2 merged, 1 ready
+  I-1   merged   the event envelope (<hash>)
+  I-2   ready    the fold
+  I-3   merged   the cli (<hash>)
+  I-4   claimed  a lint fix (wren)
+substantive decisions (1 answered outside the offered options):
+  D-2 [substantive] daemon now or CLI-direct?  (about I-3)
+       0: daemon
+     * 1: cli-direct
+       taken by the person: 1. fewer failure modes for agents
+  D-3 [substantive] rocksdb or sqlite?  (about I-2)
+     * 0: rocksdb
+       1: sqlite
+     + 2: sqlite now, bench rocksdb later
+       taken by the person: 2, outside the offered options. the plan's own answer
+mechanical decisions (check the class):
+  D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
+failed checks:
+  I-1 lint failed (E-<hash>)
+  I-4 lint failed (E-<hash>)
+messages: 1
+log: 35 events, head <hash>
+report: <hash>
+previous report: <hash>
+[exit 0]
+
+$ ris phase close
+[stderr] refused: no phase is open
+  next: open a phase first: `ris phase open`
+[exit 2]
+
+$ ris --json report
+{
+  "answered_outside_options": 1,
+  "items": [
+    {
+      "checks": [
+        "test"
+      ],
+      "commit": "<hash>",
+      "depends_on": [],
+      "evidence": [
+        "E-<hash>"
+      ],
+      "goal": "the event envelope",
+      "id": "I-1",
+      "phase": "P-1",
+      "state": "merged"
+    },
+    {
+      "checks": [],
+      "depends_on": [
+        "I-1"
+      ],
+      "goal": "the fold",
+      "id": "I-2",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "checks": [],
+      "commit": "<hash>",
+      "depends_on": [],
+      "evidence": [
+        "E-<hash>"
+      ],
+      "goal": "the cli",
+      "id": "I-3",
+      "phase": "P-1",
+      "state": "merged"
+    },
+    {
+      "agent": "wren",
+      "checks": [
+        "lint"
+      ],
+      "depends_on": [],
+      "goal": "a lint fix",
+      "id": "I-4",
+      "phase": "P-1",
+      "state": "claimed"
+    }
+  ],
+  "log": {
+    "head": "<hash>",
+    "len": 35
+  },
+  "mechanical": [
+    {
+      "about": "I-1",
+      "by": "agent heron",
+      "chosen": 0,
+      "class": "mechanical",
+      "id": "D-1",
+      "options": [
+        "sha2",
+        "blake3"
+      ],
+      "question": "sha2 or blake3?",
+      "rationale": "checkable with standard tools",
+      "recommended": 0,
+      "state": "taken",
+      "taken_by": "agent heron"
+    }
+  ],
+  "messages": 1,
+  "phase": {
+    "goal": "first slice",
+    "id": "P-1",
+    "state": "closed"
+  },
+  "previous_report": "<hash>",
+  "report": "<hash>",
+  "substantive": [
+    {
+      "about": "I-3",
+      "by": "agent heron",
+      "chosen": 1,
+      "class": "substantive",
+      "id": "D-2",
+      "options": [
+        "daemon",
+        "cli-direct"
+      ],
+      "question": "daemon now or CLI-direct?",
+      "rationale": "fewer failure modes for agents",
+      "recommended": 1,
+      "state": "taken",
+      "taken_by": "the person"
+    },
+    {
+      "about": "I-2",
+      "by": "agent wren",
+      "chosen": 2,
+      "class": "substantive",
+      "id": "D-3",
+      "options": [
+        "rocksdb",
+        "sqlite"
+      ],
+      "other": "sqlite now, bench rocksdb later",
+      "question": "rocksdb or sqlite?",
+      "rationale": "the plan's own answer",
+      "recommended": 0,
+      "state": "taken",
+      "taken_by": "the person"
+    }
+  ]
+}
+[exit 0]
+

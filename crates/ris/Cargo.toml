@@ -1,0 +1,25 @@
+[package]
+name = "ris"
+description = "osiris: the command-line interface. Hosts the core; the daemon comes later."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ris"
+path = "src/main.rs"
+
+[dependencies]
+ris-core.workspace = true
+ris-store-sqlite.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+serde.workspace = true
+toml.workspace = true
+getrandom.workspace = true
+anstyle.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
