@@ -272,6 +272,14 @@ phase has one branch, and every item of the phase merges onto it.
   confidentiality scan with the diff. They follow the conventional
   style, `type(scope): summary`, so a log scans at a glance, with the
   item's id as a trailer.
+- **Co-authorship is recorded by alias.** Each commit carries an
+  `Agent: <name>` trailer naming the seat that did the item, and merge
+  refuses one that does not match the item's claimant. The alias is
+  what a reader needs; the model behind a seat is in the seat's logged
+  binding. Trailers that carry an email address are not used, so the
+  message scan needs no exceptions: a commit message is free text, and
+  any rule that skips lines by their prefix would let anything through
+  under that prefix.
 
 ### Arrangements: width and audit
 

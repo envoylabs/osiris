@@ -439,8 +439,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 text.push('\n');
             }
             text.push_str(&format!(
-                "{item} done with {} piece(s) of evidence\n  next: commit with `Item: {item}` as a trailer, then `ris merge {item}`",
-                ids.len()
+                "{item} done with {} piece(s) of evidence\n  next: commit with `Item: {item}` and `Agent: {}` as trailers, then `ris merge {item}`",
+                ids.len(),
+                p.actor()?.to_string().trim_start_matches("agent ")
             ));
             Ok(Output::new(
                 text,
@@ -468,6 +469,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             };
             let message = checks::commit_message(&p.root, &commit)?;
             checks::require_trailer(&message, *item, &commit)?;
+            let author = last_claimant(&l, *item)
+                .ok_or_else(|| CliError::Other(format!("{item} has no claim in the log")))?;
+            checks::require_agent_trailer(&message, &author, &commit)?;
             // The exit scan: the message and every line the diff adds.
             let hits = ris::exits::scan_commit(&p.root, &commit, &message, &p.policy)?;
             if !hits.is_empty() {
@@ -629,5 +633,15 @@ fn run_checks(p: &mut Project, item: ItemId, names: &[String]) -> Result<CheckRu
         lines,
         evidence: ids,
         failed,
+    })
+}
+
+/// The agent that last claimed `item`, from the log: the item's author.
+fn last_claimant(l: &ris::project::Loaded, item: ItemId) -> Option<String> {
+    l.log.iter().rev().find_map(|e| match &e.structure {
+        ris_core::event::Structure::ItemClaimed { item: i, agent } if *i == item => {
+            Some(agent.to_string())
+        }
+        _ => None,
     })
 }

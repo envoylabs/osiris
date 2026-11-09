@@ -315,11 +315,20 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.refused(None, &["merge", "I-2"]); // not done
     let r = sb.ris(None, &["merge", "I-1"]);
     assert_eq!(r.status, 1, "no commits yet: {}", r.stderr);
-    sb.commit("feat: the envelope", "Item: I-3");
+    sb.commit("feat: the envelope", "Item: I-3\nAgent: heron");
     let r = sb.ris(None, &["merge", "I-1"]);
     assert_eq!(r.status, 1);
     assert!(r.stderr.contains("names I-3, not I-1"), "{}", r.stderr);
+    // Co-authorship is the agent's alias, and it must be the item's author.
     sb.commit("feat: the envelope", "Item: I-1");
+    let r = sb.ris(None, &["merge", "I-1"]);
+    assert_eq!(r.status, 1);
+    assert!(r.stderr.contains("no `Agent:` trailer"), "{}", r.stderr);
+    sb.commit("feat: the envelope", "Item: I-1\nAgent: wren");
+    let r = sb.ris(None, &["merge", "I-1"]);
+    assert_eq!(r.status, 1);
+    assert!(r.stderr.contains("done by heron"), "{}", r.stderr);
+    sb.commit("feat: the envelope", "Item: I-1\nAgent: heron");
     // The full checks run at merge, and the project's lint check fails.
     let r = sb.ris(None, &["merge", "I-1"]);
     assert_eq!(r.status, 3);
@@ -346,14 +355,14 @@ fn scripted_phase_matches_the_golden_transcript() {
         format!("fine line\nsee {canary}\n"),
     )
     .unwrap();
-    sb.commit("docs: notes", "Item: I-3");
+    sb.commit("docs: notes", "Item: I-3\nAgent: heron");
     let r = sb.refused(None, &["merge", "I-3"]);
     assert!(r.stderr.contains("notes.txt:2"), "{}", r.stderr);
     assert!(!r.stderr.contains(&canary[..12]));
     let r = sb.ris(None, &["scan"]);
     assert_eq!(r.status, 2);
     fs::remove_file(sb.dir.join("notes.txt")).unwrap();
-    sb.commit("docs: notes, without the path", "Item: I-3");
+    sb.commit("docs: notes, without the path", "Item: I-3\nAgent: heron");
     sb.ok(None, &["scan"]);
     sb.ok(None, &["merge", "I-3"]);
 

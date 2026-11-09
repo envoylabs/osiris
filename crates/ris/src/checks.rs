@@ -120,9 +120,43 @@ pub fn require_trailer(message: &str, item: ItemId, commit: &str) -> Result<(), 
     }
 }
 
+/// Check that `message` carries exactly one `Agent:` trailer and that
+/// it names `agent`, the seat that did the item. This is how a commit
+/// records co-authorship: by the agent's alias, with no address and no
+/// model, so the message scan needs no exceptions.
+pub fn require_agent_trailer(message: &str, agent: &str, commit: &str) -> Result<(), CliError> {
+    let short = &commit[..commit.len().min(12)];
+    let found: Vec<&str> = message
+        .lines()
+        .filter_map(|l| l.strip_prefix("Agent:"))
+        .map(str::trim)
+        .collect();
+    match found.as_slice() {
+        [one] if *one == agent => Ok(()),
+        [] => Err(CliError::Other(format!(
+            "commit {short} has no `Agent:` trailer\n  next: amend with `Agent: {agent}` beside the `Item:` trailer"
+        ))),
+        [one] => Err(CliError::Other(format!(
+            "commit {short} names agent {one}, but the item was done by {agent}\n  next: amend with `Agent: {agent}`"
+        ))),
+        _ => Err(CliError::Other(format!(
+            "commit {short} names more than one agent; one item has one author\n  next: amend with only `Agent: {agent}`"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_agent_trailer_names_the_author() {
+        let msg = "feat: x\n\nItem: I-1\nAgent: heron\n";
+        assert!(require_agent_trailer(msg, "heron", "abc").is_ok());
+        assert!(require_agent_trailer(msg, "wren", "abc").is_err());
+        assert!(require_agent_trailer("feat: x\n\nItem: I-1\n", "heron", "abc").is_err());
+        assert!(require_agent_trailer("Agent: heron\nAgent: wren\n", "heron", "abc").is_err());
+    }
 
     #[test]
     fn trailers_are_read_from_message_lines() {

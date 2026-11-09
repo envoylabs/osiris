@@ -231,7 +231,7 @@ $ RIS_AGENT=wren ris done I-1
 $ RIS_AGENT=heron ris done I-1
 I-1: check test passed (E-<hash>)
 I-1 done with 1 piece(s) of evidence
-  next: commit with `Item: I-1` as a trailer, then `ris merge I-1`
+  next: commit with `Item: I-1` and `Agent: heron` as trailers, then `ris merge I-1`
 [exit 0]
 
 $ ris merge I-2
@@ -246,6 +246,16 @@ $ ris merge I-1
 $ ris merge I-1
 [stderr] commit <hash> names I-3, not I-1
   next: merge I-3, or recommit with `Item: I-1`
+[exit 1]
+
+$ ris merge I-1
+[stderr] commit <hash> has no `Agent:` trailer
+  next: amend with `Agent: heron` beside the `Item:` trailer
+[exit 1]
+
+$ ris merge I-1
+[stderr] commit <hash> names agent wren, but the item was done by heron
+  next: amend with `Agent: heron`
 [exit 1]
 
 $ ris merge I-1
@@ -278,7 +288,7 @@ $ RIS_AGENT=heron ris done I-3
 
 $ RIS_AGENT=heron ris done I-3 --evidence bench.txt
 I-3 done with 1 piece(s) of evidence
-  next: commit with `Item: I-3` as a trailer, then `ris merge I-3`
+  next: commit with `Item: I-3` and `Agent: heron` as trailers, then `ris merge I-3`
 [exit 0]
 
 $ ris merge I-3

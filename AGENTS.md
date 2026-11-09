@@ -23,14 +23,20 @@ ris ready                       # what you may claim
 ris claim I-7                   # take one; the output is your brief
 ...work on your own ref...
 ris done I-7                    # runs the item's checks, attaches the output as evidence
-git commit -m "feat(core): ..." -m "Item: I-7"
+git commit -m "feat(core): ..." -m "Item: I-7
+Agent: heron"
 ris merge I-7                   # runs every project check, records the commit
 ris inbox                       # messages to you; read it between items
 ```
 
 - `done` fails with exit 3 if a check fails. The output is evidence
   under `.osiris/evidence/`, named in the message. Fix and run again.
-- `merge` needs exactly one `Item: <id>` trailer in the commit message.
+- `merge` needs exactly one `Item: <id>` trailer and exactly one
+  `Agent: <your seat>` trailer, naming the agent that claimed the item.
+  That trailer is how a commit records co-authorship: by alias, with no
+  email address and no model name (the model behind a seat is in its
+  binding). Add no other trailer that carries an address; the exit scan
+  refuses them and has no exceptions.
 - Build `ris` with `cargo build -p ris`; the binary is
   `target/debug/ris`.
 
@@ -79,7 +85,7 @@ alternatives, reasons and evidence as facts about the system; no
 session narrative, no references to chat or memory.
 
 Commit messages are conventional: `type(scope): summary`, imperative,
-with the `Item:` trailer. Types in use: `feat`, `fix`, `refactor`,
+with the `Item:` and `Agent:` trailers. Types in use: `feat`, `fix`, `refactor`,
 `docs`, `test`, `chore`.
 
 ## Checks
