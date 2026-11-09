@@ -39,6 +39,16 @@ pub struct Config {
     /// this to say that an empty denylist is deliberate.
     #[serde(default)]
     pub confirm_empty_denylist: bool,
+    /// Whether `ris merge` requires `Item:` and `Agent:` trailers. When
+    /// off, the item-to-commit mapping and authorship live only in the
+    /// log, and commit messages follow the project's own convention.
+    #[serde(default = "default_true")]
+    pub trailers: bool,
+    /// Whether `ris phase close` merges the phase branch into the main
+    /// line. When off, close records the review and leaves the branch
+    /// to be pushed and merged on the git server.
+    #[serde(default = "default_true")]
+    pub merge_on_close: bool,
 }
 
 fn default_true() -> bool {
@@ -57,6 +67,8 @@ impl Default for Config {
             main_line: default_main_line(),
             phase_branches: true,
             confirm_empty_denylist: false,
+            trailers: true,
+            merge_on_close: true,
         }
     }
 }
@@ -123,6 +135,15 @@ main_line = \"main\"
 # switches the main worktree to it; `ris phase close` merges it back and
 # deletes it. Set to false to manage branches yourself.
 phase_branches = true
+
+# Whether ris merge requires Item: and Agent: trailers in commit
+# messages. Off, the log alone maps commits to items and authors.
+trailers = true
+
+# Whether ris phase close merges the phase branch into main_line. Off,
+# close records the review and leaves the branch for a merge on the
+# git server (a pull or merge request).
+merge_on_close = true
 
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment.

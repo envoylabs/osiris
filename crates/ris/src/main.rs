@@ -546,10 +546,17 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             if !text.is_empty() {
                 text.push('\n');
             }
+            let commit_hint = if p.config.trailers {
+                format!(
+                    "commit with `Item: {item}` and `Agent: {}` as trailers",
+                    p.actor()?.to_string().trim_start_matches("agent ")
+                )
+            } else {
+                "commit it as one commit".to_owned()
+            };
             text.push_str(&format!(
-                "{item} done with {} piece(s) of evidence\n  next: commit with `Item: {item}` and `Agent: {}` as trailers, then `ris merge {item}`",
-                ids.len(),
-                p.actor()?.to_string().trim_start_matches("agent ")
+                "{item} done with {} piece(s) of evidence\n  next: {commit_hint}, then `ris merge {item}`",
+                ids.len()
             ));
             Ok(Output::new(
                 text,
@@ -826,8 +833,10 @@ fn vet_and_check(
     commit: &str,
 ) -> Result<Vec<String>, CliError> {
     let message = checks::commit_message(&p.work, commit)?;
-    checks::require_trailer(&message, item, commit)?;
-    checks::require_agent_trailer(&message, author, commit)?;
+    if p.config.trailers {
+        checks::require_trailer(&message, item, commit)?;
+        checks::require_agent_trailer(&message, author, commit)?;
+    }
     let hits = ris::exits::scan_commit(&p.work, commit, &message, &p.policy)?;
     if !hits.is_empty() {
         return Err(CliError::Leak {
@@ -944,6 +953,12 @@ fn closing_merge(
     if branch == "HEAD" {
         return Err(CliError::Other(
             "the main worktree is detached; check out the phase branch there".into(),
+        ));
+    }
+    if !p.config.merge_on_close {
+        return Ok(format!(
+            "closing merge: left to the git server (merge_on_close = false); \
+             push {branch} and merge it into {main} there"
         ));
     }
     let dirty = git(&p.root, &["status", "--porcelain", "--untracked-files=no"])

@@ -30,7 +30,8 @@ ris inbox                       # messages to you; read between items
 ```
 
 - An item lands as one commit, carrying exactly one `Item:` trailer and
-  exactly one `Agent:` trailer naming your seat. `ris merge` refuses
+  exactly one `Agent:` trailer naming your seat, unless the project has
+  turned trailers off (`ris done` says which). `ris merge` refuses
   anything else.
 - `ris done` and `ris merge` exit 3 when a check fails. The output is
   evidence under `.osiris/evidence/`, named in the message. Fix and run

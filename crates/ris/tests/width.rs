@@ -446,3 +446,40 @@ fn a_local_setup_leaves_nothing_for_git_to_see() {
     // The worktree finds the shared store.
     ok(&wt, Some("heron"), &["ready"]);
 }
+
+/// The remote-merge settings: without trailers, a plain commit merges;
+/// without merge_on_close, closing leaves the main line and the phase
+/// branch untouched for a merge on the git server.
+#[test]
+fn trailers_and_the_closing_merge_can_be_left_to_the_git_server() {
+    let (main, trees) = setup("remote", "[checks.ok]\ncommand = \"true\"\n", &["heron"]);
+    let config = main.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(
+        &config,
+        format!("trailers = false\nmerge_on_close = false\n{c}"),
+    )
+    .unwrap();
+    let h = &trees[0];
+    ok(&main, None, &["item", "add", "a file", "--check", "ok"]);
+    ok(h, Some("heron"), &["claim", "I-1"]);
+    fs::write(h.join("a"), "a\n").unwrap();
+    let out = ok(h, Some("heron"), &["done", "I-1"]);
+    assert!(!out.contains("trailer"), "{out}");
+    git(h, &["add", "-A"]);
+    git(
+        h,
+        &["commit", "-q", "-m", "Add a, in the project's own words"],
+    );
+    ok(h, Some("heron"), &["merge", "I-1"]);
+    let main_before = rev(&main, "main");
+    let out = ok(&main, None, &["phase", "close"]);
+    assert!(out.contains("left to the git server"), "{out}");
+    assert_eq!(rev(&main, "main"), main_before, "main did not move");
+    assert_eq!(
+        branch(&main),
+        "phase/P-1",
+        "the phase branch is still checked out"
+    );
+    assert!(ok(&main, None, &["report"]).starts_with("P-1 closed"));
+}
