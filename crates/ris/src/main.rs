@@ -2,7 +2,8 @@
 //!
 //! Every subcommand is a thin shell over the core's `apply` and the
 //! store. Output is plain text by default and JSON with `--json`. A
-//! refusal exits 2 with the refusal and what to do next on stderr; any
+//! refusal exits 2 with the refusal and what to do next on stderr; a
+//! failed check exits 3 with the failures and their evidence ids; any
 //! other error exits 1.
 
 use std::path::PathBuf;
@@ -10,10 +11,11 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use ris_core::command::Command;
-use ris_core::ids::{Actor, AgentName, CheckId, CommitHash, DecisionId, ItemId};
+use ris_core::ids::{Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, ItemId};
 use ris_core::primitives::{DecisionClass, MessageKind};
 use serde_json::json;
 
+use ris::checks;
 use ris::project::{CliError, Project};
 use ris::render::{self, Output};
 
@@ -192,6 +194,7 @@ fn main() -> ExitCode {
             }
             ExitCode::from(match e {
                 CliError::Refused(_) => 2,
+                CliError::ChecksFailed { .. } => 3,
                 _ => 1,
             })
         }
@@ -370,35 +373,93 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Done { item, evidence } => {
             let agent = agent_only(&actor)?;
-            let mut ids = Vec::new();
+            let l = p.load()?;
+            let names: Vec<String> = l
+                .state
+                .items
+                .get(item)
+                .ok_or(CliError::Refused(ris_core::Refusal::UnknownItem(*item)))?
+                .checks
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            let CheckRuns {
+                lines,
+                evidence: mut ids,
+                failed,
+            } = run_checks(&mut p, *item, &names)?;
             for file in evidence {
                 ids.push(p.evidence.put_file(file)?);
+            }
+            if !failed.is_empty() {
+                return Err(CliError::ChecksFailed {
+                    item: *item,
+                    stage: "done",
+                    failed,
+                    lines,
+                });
             }
             let (_, _) = p.run(&Command::Done {
                 item: *item,
                 by: agent,
                 evidence: ids.clone(),
             })?;
+            let mut text = lines.join("\n");
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&format!(
+                "{item} done with {} piece(s) of evidence\n  next: commit with `Item: {item}` as a trailer, then `ris merge {item}`",
+                ids.len()
+            ));
             Ok(Output::new(
-                format!(
-                    "{item} done with {} piece(s) of evidence\n  next: commit with `Item: {item}` as a trailer, then `ris merge {item}`",
-                    ids.len()
-                ),
+                text,
                 json!({ "item": item.to_string(), "evidence": ids.iter().map(ToString::to_string).collect::<Vec<_>>() }),
             ))
         }
 
         Cmd::Merge { item, commit } => {
+            // The item must be done before anything runs or resolves;
+            // the core produces the refusal.
+            let l = p.load()?;
+            if !matches!(
+                l.state.items.get(item).map(|i| &i.state),
+                Some(ris_core::primitives::ItemState::Done { .. })
+            ) {
+                p.run(&Command::Merge {
+                    item: *item,
+                    commit: CommitHash(commit.clone().unwrap_or_default()),
+                })?;
+                unreachable!("the core refuses a merge of an item that is not done");
+            }
             let commit = match commit {
                 Some(c) => c.clone(),
-                None => git_head(&p.root)?,
+                None => checks::git_head(&p.root)?,
             };
+            let message = checks::commit_message(&p.root, &commit)?;
+            checks::require_trailer(&message, *item, &commit)?;
+            // The full checks: every check the project declares.
+            let names: Vec<String> = p.checks.checks.keys().cloned().collect();
+            let CheckRuns { lines, failed, .. } = run_checks(&mut p, *item, &names)?;
+            if !failed.is_empty() {
+                return Err(CliError::ChecksFailed {
+                    item: *item,
+                    stage: "merged",
+                    failed,
+                    lines,
+                });
+            }
             let (_, _) = p.run(&Command::Merge {
                 item: *item,
                 commit: CommitHash(commit.clone()),
             })?;
+            let mut text = lines.join("\n");
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&format!("{item} merged at {commit}"));
             Ok(Output::new(
-                format!("{item} merged at {}", &commit[..commit.len().min(12)]),
+                text,
                 json!({ "item": item.to_string(), "commit": commit }),
             ))
         }
@@ -462,16 +523,50 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     }
 }
 
-/// `git rev-parse HEAD` in `root`.
-fn git_head(root: &std::path::Path) -> Result<String, CliError> {
-    let out = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(root)
-        .output()?;
-    if !out.status.success() {
-        return Err(CliError::Other(
-            "git rev-parse HEAD failed; pass --commit <hash>".into(),
+/// Run the named checks against `item`, recording each run in the log
+/// and returning the lines to print, the evidence ids, and the names
+/// and evidence of any that failed.
+/// What running an item's checks produced.
+struct CheckRuns {
+    /// One line per check, for printing.
+    lines: Vec<String>,
+    /// Every run's evidence, passed or not.
+    evidence: Vec<EvidenceId>,
+    /// The checks that failed, with their evidence.
+    failed: Vec<(String, EvidenceId)>,
+}
+
+fn run_checks(p: &mut Project, item: ItemId, names: &[String]) -> Result<CheckRuns, CliError> {
+    let mut lines = Vec::new();
+    let mut ids = Vec::new();
+    let mut failed = Vec::new();
+    for name in names {
+        let Some(check) = p.checks.checks.get(name) else {
+            return Err(CliError::Config(format!(
+                "check `{name}` is not in .osiris/checks.toml"
+            )));
+        };
+        let check = check.clone();
+        let outcome = checks::run_check(&p.root, name, &check, &p.evidence)?;
+        p.run(&Command::CheckRan {
+            item,
+            check: CheckId(name.clone()),
+            passed: outcome.passed,
+            evidence: outcome.evidence,
+        })?;
+        lines.push(format!(
+            "{item}: check {name} {} ({})",
+            if outcome.passed { "passed" } else { "FAILED" },
+            outcome.evidence
         ));
+        ids.push(outcome.evidence);
+        if !outcome.passed {
+            failed.push((outcome.name, outcome.evidence));
+        }
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+    Ok(CheckRuns {
+        lines,
+        evidence: ids,
+        failed,
+    })
 }

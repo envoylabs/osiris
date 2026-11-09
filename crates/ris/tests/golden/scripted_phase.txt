@@ -38,6 +38,10 @@ $ ris item add the cli
 added I-3
 [exit 0]
 
+$ ris item add a lint fix --check lint
+added I-4
+[exit 0]
+
 $ ris item add bad check --check nope
 [stderr] check `nope` is not in .osiris/checks.toml
 [exit 1]
@@ -50,6 +54,7 @@ $ ris item add see <canary>
 $ ris ready
 I-1   ready    the event envelope
 I-3   ready    the cli
+I-4   ready    a lint fix
 [exit 0]
 
 $ ris claim I-1
@@ -106,29 +111,167 @@ $ ris decide D-2 --choose 0 --rationale again
   next: a decision in state taken is settled; raise a new one to supersede it
 [exit 2]
 
-$ RIS_AGENT=heron ris done I-1
-[stderr] refused: I-1 has no evidence attached
-  next: run the item's checks, or attach evidence with `--evidence <file>`
-[exit 2]
+$ RIS_AGENT=wren ris claim I-4
+claimed I-4: a lint fix
+  checks: lint
+[exit 0]
 
-$ RIS_AGENT=wren ris done I-1 --evidence test-output.txt
+$ RIS_AGENT=wren ris done I-4
+[stderr] I-4: check lint FAILED (E-<hash>)
+I-4 not done: 1 check(s) failed
+  next: read the evidence (E-<hash>), fix, and run again
+[exit 3]
+
+$ ris --json report
+{
+  "items": [
+    {
+      "agent": "heron",
+      "checks": [
+        "test"
+      ],
+      "depends_on": [],
+      "goal": "the event envelope",
+      "id": "I-1",
+      "phase": "P-1",
+      "state": "claimed"
+    },
+    {
+      "checks": [],
+      "depends_on": [
+        "I-1"
+      ],
+      "goal": "the fold",
+      "id": "I-2",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "checks": [],
+      "depends_on": [],
+      "goal": "the cli",
+      "id": "I-3",
+      "phase": "P-1",
+      "state": "ready"
+    },
+    {
+      "agent": "wren",
+      "checks": [
+        "lint"
+      ],
+      "depends_on": [],
+      "goal": "a lint fix",
+      "id": "I-4",
+      "phase": "P-1",
+      "state": "claimed"
+    }
+  ],
+  "log": {
+    "head": "<hash>",
+    "len": 15
+  },
+  "mechanical": [
+    {
+      "about": "I-1",
+      "by": "agent heron",
+      "chosen": 0,
+      "class": "mechanical",
+      "id": "D-1",
+      "options": [
+        "sha2",
+        "blake3"
+      ],
+      "question": "sha2 or blake3?",
+      "rationale": "checkable with standard tools",
+      "recommended": 0,
+      "state": "taken",
+      "taken_by": "agent heron"
+    }
+  ],
+  "messages": 0,
+  "phase": {
+    "goal": "first slice",
+    "id": "P-1",
+    "state": "open"
+  },
+  "substantive": [
+    {
+      "about": "I-3",
+      "by": "agent heron",
+      "chosen": 1,
+      "class": "substantive",
+      "id": "D-2",
+      "options": [
+        "daemon",
+        "cli-direct"
+      ],
+      "question": "daemon now or CLI-direct?",
+      "rationale": "fewer failure modes for agents",
+      "recommended": 1,
+      "state": "taken",
+      "taken_by": "the person"
+    }
+  ]
+}
+[exit 0]
+
+$ RIS_AGENT=wren ris done I-1
 [stderr] refused: I-1 is held by heron
   next: the item is held by heron; message them or take another item
 [exit 2]
 
-$ RIS_AGENT=heron ris done I-1 --evidence test-output.txt
+$ RIS_AGENT=heron ris done I-1
+I-1: check test passed (E-<hash>)
 I-1 done with 1 piece(s) of evidence
   next: commit with `Item: I-1` as a trailer, then `ris merge I-1`
 [exit 0]
 
-$ ris merge I-1 --commit 0123456789abcdef0123456789abcdef01234567
-I-1 merged at 0123456789ab
+$ ris merge I-2
+[stderr] refused: I-2 is ready, which does not accept Merge
+  next: see its state in `ris report`
+[exit 2]
+
+$ ris merge I-1
+[stderr] git rev-parse HEAD failed; pass --commit <hash>
+[exit 1]
+
+$ ris merge I-1
+[stderr] commit <hash> names I-3, not I-1
+  next: merge I-3, or recommit with `Item: I-1`
+[exit 1]
+
+$ ris merge I-1
+[stderr] I-1: check lint FAILED (E-<hash>)
+I-1: check test passed (E-<hash>)
+I-1 not merged: 1 check(s) failed
+  next: read the evidence (E-<hash>), fix, and run again
+[exit 3]
+
+$ ris merge I-1
+I-1: check lint passed (E-<hash>)
+I-1: check test passed (E-<hash>)
+I-1 merged at <hash>
 [exit 0]
 
-$ ris merge I-1 --commit 0123456789abcdef0123456789abcdef01234567
+$ ris merge I-1
 [stderr] refused: I-1 is merged, which does not accept Merge
   next: it has merged; further work is a new item
 [exit 2]
+
+$ RIS_AGENT=heron ris claim I-3
+claimed I-3: the cli
+  checks: none
+[exit 0]
+
+$ RIS_AGENT=heron ris done I-3
+[stderr] refused: I-3 has no evidence attached
+  next: run the item's checks, or attach evidence with `--evidence <file>`
+[exit 2]
+
+$ RIS_AGENT=heron ris done I-3 --evidence bench.txt
+I-3 done with 1 piece(s) of evidence
+  next: commit with `Item: I-3` as a trailer, then `ris merge I-3`
+[exit 0]
 
 $ RIS_AGENT=wren ris claim I-2
 claimed I-2: the fold
@@ -151,15 +294,17 @@ M-1 Question from agent wren about I-2: is the fold's interface settled?
 
 $ RIS_AGENT=wren ris inbox
 holding I-2   claimed  the fold (wren)
+holding I-4   claimed  a lint fix (wren)
 no messages
 [exit 0]
 
 $ ris report
 P-1 open: first slice
-items: 1 claimed, 1 merged, 1 ready
-  I-1   merged   the event envelope (01234567)
+items: 2 claimed, 1 done, 1 merged
+  I-1   merged   the event envelope (<hash>)
   I-2   claimed  the fold (wren)
-  I-3   ready    the cli
+  I-3   done     the cli
+  I-4   claimed  a lint fix (wren)
 substantive decisions:
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -167,20 +312,24 @@ substantive decisions:
        taken by the person: 1. fewer failure modes for agents
 mechanical decisions (check the class):
   D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
+failed checks:
+  I-1 lint failed (E-<hash>)
+  I-4 lint failed (E-<hash>)
 messages: 1
-log: 16 events, head <hash>
+log: 27 events, head <hash>
 [exit 0]
 
 $ ris verify
-ok: 16 events, head <hash>
+ok: 27 events, head <hash>
 [exit 0]
 
 $ ris phase close
 P-1 closed: first slice
-items: 1 claimed, 1 merged, 1 ready
-  I-1   merged   the event envelope (01234567)
+items: 2 claimed, 1 done, 1 merged
+  I-1   merged   the event envelope (<hash>)
   I-2   claimed  the fold (wren)
-  I-3   ready    the cli
+  I-3   done     the cli
+  I-4   claimed  a lint fix (wren)
 substantive decisions:
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -188,8 +337,11 @@ substantive decisions:
        taken by the person: 1. fewer failure modes for agents
 mechanical decisions (check the class):
   D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
+failed checks:
+  I-1 lint failed (E-<hash>)
+  I-4 lint failed (E-<hash>)
 messages: 1
-log: 17 events, head <hash>
+log: 28 events, head <hash>
 report <hash>
 [exit 0]
 
@@ -205,7 +357,7 @@ $ ris --json report
       "checks": [
         "test"
       ],
-      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "commit": "<hash>",
       "depends_on": [],
       "evidence": [
         "E-<hash>"
@@ -229,15 +381,29 @@ $ ris --json report
     {
       "checks": [],
       "depends_on": [],
+      "evidence": [
+        "E-<hash>"
+      ],
       "goal": "the cli",
       "id": "I-3",
       "phase": "P-1",
-      "state": "ready"
+      "state": "done"
+    },
+    {
+      "agent": "wren",
+      "checks": [
+        "lint"
+      ],
+      "depends_on": [],
+      "goal": "a lint fix",
+      "id": "I-4",
+      "phase": "P-1",
+      "state": "claimed"
     }
   ],
   "log": {
     "head": "<hash>",
-    "len": 17
+    "len": 28
   },
   "mechanical": [
     {

@@ -36,6 +36,16 @@ pub enum CliError {
     UnknownAgent(String),
     /// Two writers kept colliding; the caller may retry.
     Contended,
+    /// One or more checks failed. Exit status 3. The runs are in the
+    /// log and their output is evidence.
+    ChecksFailed {
+        item: ris_core::ids::ItemId,
+        /// What the item did not become: "done" or "merged".
+        stage: &'static str,
+        failed: Vec<(String, ris_core::ids::EvidenceId)>,
+        /// The per-check lines already composed for printing.
+        lines: Vec<String>,
+    },
     Io(std::io::Error),
     /// Anything else, in one line.
     Other(String),
@@ -58,6 +68,26 @@ impl std::fmt::Display for CliError {
                 "RIS_AGENT={a} is not a seat in {DIR}/config.toml\n  next: add [agents.{a}] there, or unset RIS_AGENT to act as the person"
             ),
             Self::Contended => write!(f, "the log kept moving under this command; try again"),
+            Self::ChecksFailed {
+                item,
+                stage,
+                failed,
+                lines,
+            } => {
+                for l in lines {
+                    writeln!(f, "{l}")?;
+                }
+                write!(
+                    f,
+                    "{item} not {stage}: {} check(s) failed\n  next: read the evidence ({}), fix, and run again",
+                    failed.len(),
+                    failed
+                        .iter()
+                        .map(|(_, e)| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
             Self::Io(e) => write!(f, "{e}"),
             Self::Other(e) => write!(f, "{e}"),
         }

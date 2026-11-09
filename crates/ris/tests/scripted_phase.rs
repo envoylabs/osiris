@@ -70,6 +70,28 @@ impl Sandbox {
         run
     }
 
+    /// An empty commit with `trailer` as its last message line.
+    fn commit(&self, subject: &str, trailer: &str) {
+        let status = Command::new("git")
+            .args([
+                "-c",
+                "user.name=ris",
+                "-c",
+                "user.email=ris@localhost",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                subject,
+                "-m",
+                trailer,
+            ])
+            .current_dir(&self.dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
     fn ok(&mut self, agent: Option<&str>, args: &[&str]) -> Run {
         let r = self.ris(agent, args);
         assert_eq!(r.status, 0, "ris {} failed: {}", args.join(" "), r.stderr);
@@ -119,7 +141,7 @@ fn hashes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut run = String::new();
     let flush = |run: &mut String, out: &mut String| {
-        if run.len() == 64 {
+        if matches!(run.len(), 8 | 12 | 40 | 64) {
             out.push_str("<hash>");
         } else {
             out.push_str(run);
@@ -161,6 +183,12 @@ fn scripted_phase_matches_the_golden_transcript() {
     );
     let r = sb.ris(None, &["init"]);
     assert_eq!(r.status, 1, "a second init is an error");
+    // Checks the sandbox can run: one that passes, one that fails.
+    fs::write(
+        sb.dir.join(".osiris/checks.toml"),
+        "[checks.test]\ncommand = \"echo 3 tests ok\"\n\n[checks.lint]\ncommand = \"echo lint error >&2; exit 1\"\n",
+    )
+    .unwrap();
 
     // Nothing without a phase.
     sb.refused(None, &["item", "add", "too early"]);
@@ -173,6 +201,7 @@ fn scripted_phase_matches_the_golden_transcript() {
     );
     sb.ok(None, &["item", "add", "the fold", "--depends", "I-1"]);
     sb.ok(None, &["item", "add", "the cli"]);
+    sb.ok(None, &["item", "add", "a lint fix", "--check", "lint"]);
     let r = sb.ris(None, &["item", "add", "bad check", "--check", "nope"]);
     assert_eq!(r.status, 1);
 
@@ -257,29 +286,51 @@ fn scripted_phase_matches_the_golden_transcript() {
         &["decide", "D-2", "--choose", "0", "--rationale", "again"],
     );
 
-    // Done needs evidence, then merge.
-    sb.refused(heron, &["done", "I-1"]);
-    fs::write(sb.dir.join("test-output.txt"), "running 3 tests\nok\n").unwrap();
-    sb.refused(wren, &["done", "I-1", "--evidence", "test-output.txt"]);
-    sb.ok(heron, &["done", "I-1", "--evidence", "test-output.txt"]);
-    sb.ok(
-        None,
-        &[
-            "merge",
-            "I-1",
-            "--commit",
-            "0123456789abcdef0123456789abcdef01234567",
-        ],
-    );
-    sb.refused(
-        None,
-        &[
-            "merge",
-            "I-1",
-            "--commit",
-            "0123456789abcdef0123456789abcdef01234567",
-        ],
-    );
+    // Done runs the item's checks; a failing check leaves it claimed,
+    // with the failure as evidence.
+    sb.ok(wren, &["claim", "I-4"]);
+    let r = sb.ris(wren, &["done", "I-4"]);
+    assert_eq!(r.status, 3, "a failed check exits 3: {}", r.stderr);
+    assert!(r.stderr.contains("check lint FAILED"));
+    let r = sb.ok(None, &["--json", "report"]);
+    let v: serde_json::Value = serde_json::from_str(&r.stdout).unwrap();
+    let i4 = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == "I-4")
+        .unwrap();
+    assert_eq!(i4["state"], "claimed");
+
+    // Only the holder finishes; then merge needs a commit naming the item.
+    sb.refused(wren, &["done", "I-1"]);
+    sb.ok(heron, &["done", "I-1"]);
+    sb.refused(None, &["merge", "I-2"]); // not done
+    let r = sb.ris(None, &["merge", "I-1"]);
+    assert_eq!(r.status, 1, "no commits yet: {}", r.stderr);
+    sb.commit("feat: the envelope", "Item: I-3");
+    let r = sb.ris(None, &["merge", "I-1"]);
+    assert_eq!(r.status, 1);
+    assert!(r.stderr.contains("names I-3, not I-1"), "{}", r.stderr);
+    sb.commit("feat: the envelope", "Item: I-1");
+    // The full checks run at merge, and the project's lint check fails.
+    let r = sb.ris(None, &["merge", "I-1"]);
+    assert_eq!(r.status, 3);
+    assert!(r.stderr.contains("check lint FAILED"));
+    // Fix the lint and merge.
+    fs::write(
+        sb.dir.join(".osiris/checks.toml"),
+        "[checks.test]\ncommand = \"echo 3 tests ok\"\n\n[checks.lint]\ncommand = \"echo lint clean\"\n",
+    )
+    .unwrap();
+    sb.ok(None, &["merge", "I-1"]);
+    sb.refused(None, &["merge", "I-1"]);
+    // I-3 went back to ready when its decision was taken, so it is
+    // claimed afresh; with no checks it needs attached evidence.
+    sb.ok(heron, &["claim", "I-3"]);
+    sb.refused(heron, &["done", "I-3"]);
+    fs::write(sb.dir.join("bench.txt"), "1200 events/s\n").unwrap();
+    sb.ok(heron, &["done", "I-3", "--evidence", "bench.txt"]);
 
     // I-2's dependency has merged.
     sb.ok(wren, &["claim", "I-2"]);
@@ -306,7 +357,7 @@ fn scripted_phase_matches_the_golden_transcript() {
     let r = sb.ok(None, &["--json", "report"]);
     let v: serde_json::Value = serde_json::from_str(&r.stdout).unwrap();
     assert_eq!(v["phase"]["state"], "closed");
-    assert_eq!(v["items"].as_array().unwrap().len(), 3);
+    assert_eq!(v["items"].as_array().unwrap().len(), 4);
     assert_eq!(v["substantive"].as_array().unwrap().len(), 1);
     assert_eq!(v["mechanical"].as_array().unwrap().len(), 1);
 
