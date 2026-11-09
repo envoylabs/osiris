@@ -803,6 +803,23 @@ mod tests {
     }
 
     #[test]
+    fn the_report_hash_follows_the_log_not_the_rendering() {
+        let mut h = item_in(ItemStateKind::Claimed);
+        let before = report_hash(&Hash::ZERO, &h.state.head);
+        // The same log head gives the same hash however it is rendered.
+        assert_eq!(before, report_hash(&Hash::ZERO, &h.state.head));
+        // One more event changes it.
+        h.must(item_command(CommandKind::RaiseMechanical).unwrap());
+        let after = report_hash(&Hash::ZERO, &h.state.head);
+        assert_ne!(before, after);
+        // Removing text from the log does not: the head is unchanged.
+        let stripped: Vec<Event> = h.log.iter().cloned().map(Event::redacted).collect();
+        assert_eq!(State::fold(&stripped).unwrap().head, h.state.head);
+        // Chained: the previous report feeds the next.
+        assert_ne!(report_hash(&before, &h.state.head), after);
+    }
+
+    #[test]
     fn messages_go_to_another_agent() {
         let mut h = with_phase_and_item();
         let send = |from: Actor, to: &str| Command::MessageSend {

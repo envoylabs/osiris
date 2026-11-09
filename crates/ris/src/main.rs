@@ -247,7 +247,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 };
                 let out = render::report(&l);
                 Ok(Output::new(
-                    format!("{}\nreport {}", out.text, report),
+                    out.text,
                     json!({ "report": report, "phase": out.json }),
                 ))
             }

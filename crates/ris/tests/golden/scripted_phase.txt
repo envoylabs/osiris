@@ -194,6 +194,8 @@ $ ris --json report
     "id": "P-1",
     "state": "open"
   },
+  "previous_report": "<hash>",
+  "report": "<hash>",
   "substantive": [
     {
       "about": "I-3",
@@ -317,6 +319,8 @@ failed checks:
   I-4 lint failed (E-<hash>)
 messages: 1
 log: 27 events, head <hash>
+report: <hash> (if closed now)
+previous report: <hash>
 [exit 0]
 
 $ ris verify
@@ -342,7 +346,8 @@ failed checks:
   I-4 lint failed (E-<hash>)
 messages: 1
 log: 28 events, head <hash>
-report <hash>
+report: <hash>
+previous report: <hash>
 [exit 0]
 
 $ ris phase close
@@ -429,6 +434,8 @@ $ ris --json report
     "id": "P-1",
     "state": "closed"
   },
+  "previous_report": "<hash>",
+  "report": "<hash>",
   "substantive": [
     {
       "about": "I-3",

@@ -3,7 +3,8 @@
 //! Agents read this output, so the text is short and stable, and the
 //! JSON carries the same facts with their ids.
 
-use ris_core::ids::{Actor, AgentName};
+use ris_core::command::report_hash;
+use ris_core::ids::{Actor, AgentName, Hash, PhaseId};
 use ris_core::primitives::{
     Decision, DecisionClass, DecisionState, Item, ItemState, Message, PhaseState,
 };
@@ -317,11 +318,25 @@ pub fn report(l: &Loaded) -> Output {
         s.push_str(&failed.join("\n"));
         s.push('\n');
     }
+    // The report's hash is taken over the previous report and the log
+    // head, never over this rendering, so removing text later does not
+    // break the chain of reports.
+    let report_hash = match phase.state {
+        PhaseState::Closed { report } => report,
+        PhaseState::Open => report_hash(&l.state.last_report, &l.state.head),
+    };
     s.push_str(&format!(
-        "messages: {}\nlog: {} events, head {}",
+        "messages: {}\nlog: {} events, head {}\nreport: {}{}\nprevious report: {}",
         l.state.messages.len(),
         l.state.len,
-        l.state.head
+        l.state.head,
+        report_hash,
+        if matches!(phase.state, PhaseState::Open) {
+            " (if closed now)"
+        } else {
+            ""
+        },
+        previous_report(l, phase.id)
     ));
     Output::new(
         s,
@@ -336,6 +351,22 @@ pub fn report(l: &Loaded) -> Output {
             "mechanical": mechanical.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
             "messages": l.state.messages.len(),
             "log": { "len": l.state.len, "head": l.state.head.to_string() },
+            "report": report_hash.to_string(),
+            "previous_report": previous_report(l, phase.id).to_string(),
         }),
     )
+}
+
+/// The report hash of the phase closed before `phase`, or zero.
+fn previous_report(l: &Loaded, phase: PhaseId) -> Hash {
+    l.state
+        .phases
+        .values()
+        .filter(|p| p.id < phase)
+        .filter_map(|p| match p.state {
+            PhaseState::Closed { report } => Some(report),
+            PhaseState::Open => None,
+        })
+        .next_back()
+        .unwrap_or(Hash::ZERO)
 }
