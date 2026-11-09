@@ -196,6 +196,7 @@ pub fn ready(l: &Loaded) -> Output {
 const PERSON_FOOTER: &str = "\
 --
 answer:  ris decide D-n --choose <option number> --rationale \"...\"
+     or  ris decide D-n --other \"your own answer\" --rationale \"...\"
 look:    ris show <id>    ris ready    ris report
 ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 ";

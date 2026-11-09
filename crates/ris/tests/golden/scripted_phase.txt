@@ -97,6 +97,7 @@ D-2 [substantive] daemon now or CLI-direct?  (about I-3)
      open; * marks the recommendation
 --
 answer:  ris decide D-n --choose <option number> --rationale "..."
+     or  ris decide D-n --other "your own answer" --rationale "..."
 look:    ris show <id>    ris ready    ris report
 ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 [exit 0]
