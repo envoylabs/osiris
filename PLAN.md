@@ -438,14 +438,26 @@ Functional core, imperative shell; hexagonal between components.
 - **Daemon (shell):** the only process that opens the store. It
   serialises commands, which is where atomicity comes from, appends
   events, updates materialised views (items by state, open decisions) in
-  the same write, runs lease timers and routes messages.
+  the same write, runs lease timers and routes messages. In the first
+  slice there is no daemon: the CLI hosts the core and opens the store
+  itself, one transaction per command, which SQLite serialises across
+  processes. The daemon arrives with leases, timers and the MCP
+  adapter. Either way every command passes through the core, which is
+  where refusals, the confidentiality scan and atomicity live, so the
+  agent sees the same commands and the same answers in both.
 - **`Store` trait:** the port that hides the engine. Swapping engines
   changes an adapter, not the core.
 - **CLI first.** Every agent tool can run a shell command, and so can
-  the person: `osiris decide`, `claim`, `done --evidence …`, `inbox`,
-  `report`, plus `why <claim | file | decision>` (provenance and
-  dependants) and `verify [claim | all]` (re-run falsifiers against the
-  current tree). The CLI is the contract.
+  the person. The project is osiris and its store and configuration
+  live in `.osiris/`; only the binary (the CLI, and later the daemon)
+  is `ris`, three letters that fall under the fingers on a plain
+  keyboard: `ris decide`, `ris claim`,
+  `ris done --evidence …`, `ris inbox`, `ris report`, plus
+  `why <claim | file | decision>` (provenance and dependants) and
+  `verify [claim | all]` (re-run falsifiers against the current tree).
+  The CLI is the contract. Agents read its output, so it is short and
+  stable: plain text by default, `--json` on request, and a refusal
+  says what to do next.
 - **Tamper-evident log (cheap option):** each event carries the hash of
   the one before, so a final fact cannot be rewritten silently. Settled
   facts are then checkable against the log's head hash, as entries are
@@ -469,7 +481,7 @@ Functional core, imperative shell; hexagonal between components.
 Guaranteed on every machine: git and Docker. Laptops may be locked down;
 the CLI on a dev machine is usually unrestricted.
 
-- **Native first.** The first slice runs the daemon and CLI as one
+- **Native first.** The first slice runs the core inside the CLI as one
   native Rust binary on the dev machine, with agents in their usual
   tools. Containers come in when isolation or cross-machine portability
   is needed, not before.
@@ -537,12 +549,14 @@ the CLI on a dev machine is usually unrestricted.
 
 ### Decision
 
-The event log is the source of truth, behind the `Store` trait, owned by
-the daemon. Speed does not choose the engine: five agents at their
-busiest produce a few events per second, and either engine has orders
-of magnitude to spare. **Open:** RocksDB or SQLite, settled by the first
-slice's bench of the append path and by whether full-text search is
-needed in the first slice.
+The event log is the source of truth, behind the `Store` trait, opened
+only by whichever shell hosts the core. Speed does not choose the
+engine: five agents at their busiest produce a few events per second,
+and either engine has orders of magnitude to spare. The first slice
+uses SQLite: it needs no install, the `sqlite3` tool on a dev machine
+can inspect the store, and FTS5 is there when search arrives. RocksDB
+remains a possible second adapter, judged by the bench of the append
+path if SQLite ever falls short.
 
 ### Sync across machines
 
@@ -591,7 +605,7 @@ spends its effort on loading less, and only what is relevant.
   owner. No broadcasts and no free chat. Agents read their inbox at
   natural points (before starting an item, after a check runs), not
   mid-task.
-- **Answers instead of raw material.** `osiris ready` returns a few lines;
+- **Answers instead of raw material.** `ris ready` returns a few lines;
   the agent never loads a status document to work out what is next.
 - **Decisions are memoized reasoning.** A recorded decision with its
   rationale is not re-derived or re-argued. When an item is claimed, the
@@ -660,20 +674,22 @@ What follows for the design:
   are the likeliest carrier: environment dumps, absolute paths, a token
   echoed by a failing command. They stay on the local disk, and an
   export carries their hashes only.
-- **Enforced at the daemon, not left to the agent.** The rule is
+- **Enforced in the command path, not left to the agent.** The rule is
   rendered first into every agent's rules, but an instruction lowers
   the rate of leaks and cannot guarantee none; a convention agents are
   trusted to follow is the weakness the bare-filesystem store was
-  rejected for. The daemon is the only writer, so every free-text field
-  (a rationale, a question, a claim's statement, a message) passes one
-  point. There it is scanned for secret patterns and against a local
+  rejected for. Every command goes through the core, whichever shell
+  hosts it, so every free-text field (a rationale, a question, a
+  claim's statement, a message) passes one point. There it is scanned for secret patterns and against a local
   denylist: the person's name and addresses, client names, the home
   directory. A hit is a typed refusal that names the field and does not
   echo the match. The denylist is itself sensitive: it is local
   configuration and is never exported.
 - **Scanned again at the two exits:** the export of state, and each
   item's diff and commit message, by a check that is on by default in
-  every project.
+  every project. The first version scans with patterns built into the
+  harness and the denylist; an off-the-shelf secret scanner can be
+  added to the diff check later.
 - **The auditor reads for what patterns miss,** where an audit is
   running.
 - **Free text is removable without breaking the log.** Scanning is
@@ -715,7 +731,7 @@ What follows for the design:
 - **Unattended agents with full environments.** Disposable environments,
   scoped credentials, no production secrets.
 - **A secret or a personal detail written into state or a commit.** The
-  ground rule, enforced at the daemon and at both exits; evidence kept
+  ground rule, enforced in the command path and at both exits; evidence kept
   local; free text removable from the log without breaking its chain
   (see Confidentiality).
 - **Errors accumulate between reviews.** Checks on every item, phases no
@@ -748,9 +764,11 @@ dogfood it from there.
 1. The primitives as types, the pure core, and the event log behind the
    `Store` trait with one engine. Events have the two-part format from
    the start (Confidentiality); the `redact` command waits.
-2. The daemon and CLI, native: `claim`, `decide`, `done`, `inbox`,
-   `report`. The daemon's confidentiality scan is in from the first
-   version. Check-ins are on demand; no timer yet.
+2. The CLI, native, hosting the core with no daemon yet: `phase open`
+   and `phase close`, `item add`, `claim`, `decision raise` and
+   `decide`, `done`, `land`, `inbox`, `report`. The confidentiality
+   scan is in from the first version. Check-ins are on demand; no
+   timer yet.
 3. Use it at once to build the rest of the harness, as a pair: a lead
    and an auditor.
 4. Then drive the next phases of an existing project with it: import
@@ -867,13 +885,10 @@ Each claim above, and the test that would show it false:
 
 ## Open questions
 
-- RocksDB or SQLite (see Storage).
 - Exported state: whether it lives in the project's repository or in
   one of its own, and how a fork between two machines is resolved.
 - The default window schedule: two a day is the prior, settled by the
   per-window record.
-- What the confidentiality scan uses: an existing secret scanner, or
-  patterns built into the daemon.
 - Which agent runner comes first, and which second, for the portability
   test.
 - Client constraints: whether any client forbids running agents on its
