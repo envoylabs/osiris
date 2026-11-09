@@ -848,6 +848,9 @@ fn closing_merge(
         &p.root.join(ris::project::DIR).join("merge.lock"),
         std::time::Duration::from_secs(30 * 60),
     )?;
+    if git(&p.root, &["rev-parse", "--git-dir"]).is_err() {
+        return Ok("closing merge: none; the project is not a git repository".to_owned());
+    }
     let main = p.config.main_line.clone();
     let branch = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
     if branch == main {
