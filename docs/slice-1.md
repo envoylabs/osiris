@@ -1,9 +1,10 @@
 # First slice: items
 
-**Status:** draft, 2026-11-09. The backlog for the first slice of
-`PLAN.md`, kept as a file until `ris` can hold it; the last item
-imports this list into the harness and this file stops being the
-source of truth.
+**Status:** superseded, 2026-11-09. This was the backlog for the first
+slice of `PLAN.md`, kept as a file until `ris` could hold it. Items I-1
+to I-10 below were built and are in the git history; from I-11 on, the
+store in `.osiris/` is the source of truth and `ris report` is the
+status. The decisions and checks recorded here still hold.
 
 The slice ends when a lead and an auditor can run a phase of work on
 this repository through `ris` alone: open a phase, add items, claim,
