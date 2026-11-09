@@ -269,11 +269,20 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Phase { action } => match action {
             PhaseCmd::Open { goal } => {
                 let goal = p.text("goal", goal)?;
-                let (l, _) = p.run(&Command::PhaseOpen { goal })?;
+                let command = Command::PhaseOpen { goal };
+                // Refusals first, so a refused open creates no branch.
+                let l = p.load()?;
+                ris_core::apply(&l.state, &command)?;
+                let branch = open_phase_branch(&p, l.state.next_phase_id())?;
+                let (l, _) = p.run(&command)?;
                 let phase = l.state.open_phase().expect("just opened");
+                let text = match &branch {
+                    Some(b) => format!("opened {} on branch {b}", phase.id),
+                    None => format!("opened {}", phase.id),
+                };
                 Ok(Output::new(
-                    format!("opened {}", phase.id),
-                    json!({ "phase": phase.id.to_string() }),
+                    text,
+                    json!({ "phase": phase.id.to_string(), "branch": branch }),
                 ))
             }
             PhaseCmd::Close => {
@@ -910,7 +919,65 @@ fn closing_merge(
         )));
     }
     let head = git(&p.root, &["rev-parse", "HEAD"]).map_err(CliError::Other)?;
+    // A phase branch the harness made is deleted once merged; `-d`
+    // refuses if it were somehow not merged.
+    let deleted = if p.config.phase_branches && branch == phase_branch_name(phase) {
+        git(&p.root, &["branch", "--quiet", "-d", &branch]).is_ok()
+    } else {
+        false
+    };
     Ok(format!(
-        "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}"
+        "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}{}",
+        if deleted {
+            format!("; {branch} deleted")
+        } else {
+            String::new()
+        }
     ))
+}
+
+fn phase_branch_name(phase: ris_core::ids::PhaseId) -> String {
+    format!("phase/{phase}")
+}
+
+/// With phase branches on, create `phase/P-n` from the main line and
+/// switch the main worktree to it. Returns the branch, or `None` when
+/// branches are off or the project is not a git repository.
+fn open_phase_branch(
+    p: &Project,
+    phase: ris_core::ids::PhaseId,
+) -> Result<Option<String>, CliError> {
+    if !p.config.phase_branches || git(&p.root, &["rev-parse", "--git-dir"]).is_err() {
+        return Ok(None);
+    }
+    let main = &p.config.main_line;
+    let name = phase_branch_name(phase);
+    if git(
+        &p.root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{main}"),
+        ],
+    )
+    .is_err()
+    {
+        return Err(CliError::Other(format!(
+            "the main line `{main}` has no commits yet, so there is nothing to branch from\n  \
+             next: commit on {main} first, set main_line in .osiris/config.toml, \
+             or set phase_branches = false"
+        )));
+    }
+    let dirty = git(&p.root, &["status", "--porcelain", "--untracked-files=no"])
+        .map_err(CliError::Other)?;
+    if !dirty.is_empty() {
+        return Err(CliError::Other(format!(
+            "the main worktree has uncommitted changes; commit or stash them before opening a phase\n  \
+             next: {name} would be created from {main} and checked out there"
+        )));
+    }
+    git(&p.root, &["switch", "--quiet", "-c", &name, main])
+        .map_err(|e| CliError::Other(format!("could not create {name} from {main}: {e}")))?;
+    Ok(Some(name))
 }

@@ -28,6 +28,16 @@ pub struct Config {
     /// is nothing to merge.
     #[serde(default = "default_main_line")]
     pub main_line: String,
+    /// Whether `ris phase open` creates `phase/P-n` from the main line
+    /// and `ris phase close` merges it back and deletes it. When off,
+    /// phases leave branches alone and close merges whatever branch the
+    /// main worktree has checked out, if it is not the main line.
+    #[serde(default = "default_true")]
+    pub phase_branches: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_main_line() -> String {
@@ -40,6 +50,7 @@ impl Default for Config {
             agents: BTreeMap::new(),
             denylist: Vec::new(),
             main_line: default_main_line(),
+            phase_branches: true,
         }
     }
 }
@@ -100,6 +111,11 @@ denylist = []
 
 # The branch each phase's branch merges into when the phase closes.
 main_line = \"main\"
+
+# Phase branches: `ris phase open` creates phase/P-n from main_line and
+# switches the main worktree to it; `ris phase close` merges it back and
+# deletes it. Set to false to manage branches yourself.
+phase_branches = true
 
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment.

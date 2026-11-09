@@ -193,6 +193,15 @@ fn scripted_phase_matches_the_golden_transcript() {
     );
     let r = sb.ris(None, &["init"]);
     assert_eq!(r.status, 1, "a second init is an error");
+    // The sandbox has no commits, so there is no main line to branch
+    // from: it opts out of phase branches.
+    let config = sb.dir.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(
+        &config,
+        c.replace("phase_branches = true", "phase_branches = false"),
+    )
+    .unwrap();
     // Checks the sandbox can run: one that passes, one that fails.
     fs::write(
         sb.dir.join(".osiris/checks.toml"),

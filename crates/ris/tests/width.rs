@@ -51,7 +51,7 @@ fn setup(name: &str, checks: &str, agents: &[&str]) -> (PathBuf, Vec<PathBuf>) {
     let _ = fs::remove_dir_all(&base);
     let main = base.join("main");
     fs::create_dir_all(&main).unwrap();
-    git(&main, &["init", "-q", "-b", "phase"]);
+    git(&main, &["init", "-q", "-b", "main"]);
     fs::write(main.join("README"), "base\n").unwrap();
     git(&main, &["add", "-A"]);
     git(&main, &["commit", "-q", "-m", "base"]);
@@ -292,7 +292,6 @@ fn branch(dir: &Path) -> String {
 #[test]
 fn closing_a_phase_merges_its_branch_into_the_main_line() {
     let (main, trees) = setup("close", "[checks.ok]\ncommand = \"true\"\n", &["heron"]);
-    git(&main, &["branch", "main"]);
     let h = &trees[0];
     ok(&main, None, &["item", "add", "a file", "--check", "ok"]);
     ok(h, Some("heron"), &["claim", "I-1"]);
@@ -303,7 +302,8 @@ fn closing_a_phase_merges_its_branch_into_the_main_line() {
     let phase_tip = head(&main);
 
     let out = ok(&main, None, &["phase", "close"]);
-    assert!(out.contains("closing merge: phase into main"), "{out}");
+    assert!(out.contains("closing merge: phase/P-1 into main"), "{out}");
+    assert!(out.contains("phase/P-1 deleted"), "{out}");
     assert_eq!(branch(&main), "main");
     assert_eq!(
         rev(&main, "HEAD^2"),
@@ -324,7 +324,6 @@ fn a_closing_merge_that_fails_the_checks_changes_nothing() {
         "[checks.flags]\ncommand = \"n=$(ls *.flag 2>/dev/null | wc -l); [ $n -le 1 ]\"\n",
         &["heron"],
     );
-    git(&main, &["branch", "main"]);
     let h = &trees[0];
     ok(&main, None, &["item", "add", "a flag", "--check", "flags"]);
     ok(h, Some("heron"), &["claim", "I-1"]);
@@ -359,9 +358,37 @@ fn a_closing_merge_that_fails_the_checks_changes_nothing() {
     );
     assert_eq!(
         branch(&main),
-        "phase",
+        "phase/P-1",
         "the main worktree is back on the phase branch"
     );
     let report = ok(&main, None, &["report"]);
     assert!(report.starts_with("P-1 open"), "{report}");
+}
+
+/// Phase branches are on by default: open branches from the main line,
+/// close merges back and deletes the branch. Off, both leave branches
+/// alone.
+#[test]
+fn phase_branches_follow_the_phase_and_can_be_turned_off() {
+    let (main, _) = setup("branches", "[checks.ok]\ncommand = \"true\"\n", &[]);
+    assert_eq!(
+        branch(&main),
+        "phase/P-1",
+        "setup's phase open created the branch"
+    );
+    ok(&main, None, &["phase", "close"]);
+    assert_eq!(branch(&main), "main");
+    let out = ok(&main, None, &["phase", "open", "second"]);
+    assert!(out.contains("on branch phase/P-2"), "{out}");
+    assert_eq!(branch(&main), "phase/P-2");
+    ok(&main, None, &["phase", "close"]);
+
+    let config = main.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(&config, format!("phase_branches = false\n{c}")).unwrap();
+    let out = ok(&main, None, &["phase", "open", "third"]);
+    assert!(!out.contains("branch"), "{out}");
+    assert_eq!(branch(&main), "main");
+    let out = ok(&main, None, &["phase", "close"]);
+    assert!(out.contains("already on main"), "{out}");
 }
