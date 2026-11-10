@@ -162,7 +162,7 @@ $ ris item add the fold --depends I-1
 added I-2
 [exit 0]
 
-$ ris item add the cli
+$ ris item add the cli --no-checks
 added I-3
 [exit 0]
 
@@ -275,7 +275,10 @@ $ ris --json report
       },
       {
         "audited_by": [],
-        "checks": [],
+        "checks": [
+          "lint",
+          "test"
+        ],
         "depends_on": [
           "I-1"
         ],
@@ -397,7 +400,10 @@ $ ris --json report
       },
       {
         "audited_by": [],
-        "checks": [],
+        "checks": [
+          "lint",
+          "test"
+        ],
         "depends_on": [
           "I-1"
         ],
@@ -528,7 +534,10 @@ $ ris --json report
       },
       {
         "audited_by": [],
-        "checks": [],
+        "checks": [
+          "lint",
+          "test"
+        ],
         "depends_on": [
           "I-1"
         ],
@@ -733,7 +742,7 @@ rules:   OSIRIS.md (<hash>), loaded by your rules file
 project: P-1 first slice
          you are builder
 item:    I-2 the fold
-  checks: none
+  checks: lint, test
   depends on I-1 (merged): the event envelope
   decisions:
   D-1 sha2 or blake3? → sha2 (checkable with standard tools)
@@ -844,7 +853,7 @@ I-1 merged  (phase P-1)
 $ ris show I-2
 I-2 ready  (phase P-1)
   the fold
-  checks: none
+  checks: lint, test
   depends on: I-1 (all merged)
   decisions:
     D-3   rocksdb or sqlite?  → sqlite now, bench rocksdb later  (agent wren, I-2)
@@ -1011,7 +1020,10 @@ $ ris --json report
       },
       {
         "audited_by": [],
-        "checks": [],
+        "checks": [
+          "lint",
+          "test"
+        ],
         "depends_on": [
           "I-1"
         ],

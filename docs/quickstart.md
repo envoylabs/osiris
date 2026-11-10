@@ -68,7 +68,8 @@ command = "cargo clippy --workspace --all-targets -- -D warnings"
 
 ```sh
 ris phase open "the goal"              # creates phase/P-1 and switches to it
-ris item add "a task" --check test     # one at a time, or
+ris item add "a task"                  # held to every check; --check names some
+ris item add "a review" --no-checks    # done on attached evidence instead
 ris import backlog.toml --dry-run      # a backlog file: validate,
 ris import backlog.toml                # then import
 ```

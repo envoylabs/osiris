@@ -197,9 +197,14 @@ enum SeatCmd {
 #[derive(Args)]
 struct ItemAdd {
     goal: String,
-    /// A check from .osiris/checks.toml the item must pass. Repeatable.
+    /// A check from .osiris/checks.toml the item must pass. Repeatable;
+    /// with none named, every declared check.
     #[arg(long = "check")]
     checks: Vec<String>,
+    /// No checks: the item is done on attached evidence
+    /// (`ris done --evidence`), for work a check cannot judge.
+    #[arg(long, conflicts_with = "checks")]
+    no_checks: bool,
     /// An item this one cannot start before. Repeatable.
     #[arg(long = "depends")]
     depends_on: Vec<ItemId>,
@@ -576,7 +581,13 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 }
                 let (l, _) = p.run(&Command::ItemAdd {
                     goal,
-                    checks: a.checks.iter().cloned().map(CheckId).collect(),
+                    checks: p.checks.for_item(if a.no_checks {
+                        Some(&[])
+                    } else if a.checks.is_empty() {
+                        None
+                    } else {
+                        Some(&a.checks)
+                    }),
                     depends_on: a.depends_on.clone(),
                 })?;
                 let id = l.state.items.keys().last().expect("just added");

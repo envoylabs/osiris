@@ -212,6 +212,23 @@ pub struct ChecksConfig {
     pub checks: BTreeMap<String, CheckConfig>,
 }
 
+impl ChecksConfig {
+    /// The checks an item is held to: the ones it names, or every
+    /// declared check when it names none (`None`). `Some(&[])` is an
+    /// item with no checks, which needs attached evidence to be done.
+    pub fn for_item(&self, named: Option<&[String]>) -> Vec<ris_core::ids::CheckId> {
+        match named {
+            Some(names) => names.iter().cloned().map(ris_core::ids::CheckId).collect(),
+            None => self
+                .checks
+                .keys()
+                .cloned()
+                .map(ris_core::ids::CheckId)
+                .collect(),
+        }
+    }
+}
+
 /// One check: a shell command, passing on exit status zero.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckConfig {

@@ -237,7 +237,7 @@ fn scripted_phase_matches_the_golden_transcript() {
         &["item", "add", "the event envelope", "--check", "test"],
     );
     sb.ok(None, &["item", "add", "the fold", "--depends", "I-1"]);
-    sb.ok(None, &["item", "add", "the cli"]);
+    sb.ok(None, &["item", "add", "the cli", "--no-checks"]);
     sb.ok(None, &["item", "add", "a lint fix", "--check", "lint"]);
     let r = sb.ris(None, &["item", "add", "bad check", "--check", "nope"]);
     assert_eq!(r.status, 1);
