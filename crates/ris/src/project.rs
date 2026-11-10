@@ -366,6 +366,12 @@ impl Project {
         Ok(Text::new(field, raw, &self.policy)?)
     }
 
+    /// The events from `from` on, unverified: the caller verifies them
+    /// against the head it holds.
+    pub fn read_from(&self, from: u64) -> Result<Vec<Event>, CliError> {
+        Ok(self.store.read_from(from)?)
+    }
+
     /// Verify, fold and index the log.
     pub fn load(&self) -> Result<Loaded, CliError> {
         let log = self.store.read_all()?;

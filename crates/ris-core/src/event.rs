@@ -342,10 +342,18 @@ impl std::error::Error for ChainError {}
 /// Check a log from its first event. Every link and every hash is
 /// recomputed; removed text is reported, not failed.
 pub fn verify(events: &[Event]) -> Result<Verified, ChainError> {
-    let mut prev = Hash::ZERO;
+    verify_after(0, Hash::ZERO, events)
+}
+
+/// Verify `events` as the continuation of a verified log of `len`
+/// events ending in `head`: what a follower checks as the log grows,
+/// without re-reading what it has already verified. The result's `len`
+/// and `head` are the whole log's.
+pub fn verify_after(len: u64, head: Hash, events: &[Event]) -> Result<Verified, ChainError> {
+    let mut prev = head;
     let mut missing_text = Vec::new();
     for (at, e) in events.iter().enumerate() {
-        let expected = at as u64 + 1;
+        let expected = len + at as u64 + 1;
         if e.seq != expected {
             return Err(ChainError::Sequence {
                 at,
@@ -378,7 +386,7 @@ pub fn verify(events: &[Event]) -> Result<Verified, ChainError> {
     }
     Ok(Verified {
         head: prev,
-        len: events.len() as u64,
+        len: len + events.len() as u64,
         missing_text,
     })
 }
@@ -467,6 +475,24 @@ mod tests {
         assert_eq!(v.head, log[3].hash);
         assert!(v.missing_text.is_empty());
         assert_eq!(verify(&[]).unwrap().head, Hash::ZERO);
+    }
+
+    #[test]
+    fn a_continuation_verifies_against_the_head_it_follows() {
+        let log = sample_log();
+        let first = verify(&log[..2]).unwrap();
+        let rest = verify_after(first.len, first.head, &log[2..]).unwrap();
+        assert_eq!((rest.len, rest.head), (4, log[3].hash));
+        // Wrong head: the first new event does not link.
+        assert_eq!(
+            verify_after(first.len, log[0].hash, &log[2..]),
+            Err(ChainError::Link { seq: 3 })
+        );
+        // Wrong length: the sequence does not continue.
+        assert!(matches!(
+            verify_after(1, first.head, &log[2..]),
+            Err(ChainError::Sequence { .. })
+        ));
     }
 
     #[test]

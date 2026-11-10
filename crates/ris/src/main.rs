@@ -153,6 +153,20 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         from: u64,
     },
+    /// Follow the log: wait for new events and print each as a JSON
+    /// line as it is appended, verified against the chain. For a GUI or
+    /// daemon; runs until stopped.
+    Watch {
+        /// Start from this sequence number instead of the next event.
+        #[arg(long)]
+        from: Option<u64>,
+        /// Exit after the first batch of events.
+        #[arg(long)]
+        once: bool,
+        /// How often to look at the log's head, in milliseconds.
+        #[arg(long, default_value_t = 200)]
+        interval_ms: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -885,6 +899,58 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 ),
                 json!({ "len": v.len, "head": v.head.to_string(), "missing_text": v.missing_text }),
             ))
+        }
+
+        Cmd::Watch {
+            from,
+            once,
+            interval_ms,
+        } => {
+            use std::io::Write;
+            // Verify what is there once; after that only what is new.
+            let l = p.load()?;
+            let start = from.unwrap_or(l.state.len + 1).max(1);
+            let (mut len, mut head) = match start - 1 {
+                0 => (0, ris_core::ids::Hash::ZERO),
+                n => (
+                    n,
+                    l.log.get(n as usize - 1).map(|e| e.hash).ok_or_else(|| {
+                        CliError::Other(format!(
+                            "--from {start} is beyond the log's {} events",
+                            l.state.len
+                        ))
+                    })?,
+                ),
+            };
+            drop(l);
+            let interval = std::time::Duration::from_millis((*interval_ms).max(10));
+            loop {
+                let (stored, _) = p.head()?;
+                if stored < len {
+                    return Err(CliError::Other(format!(
+                        "the log shrank from {len} to {stored} events; it was replaced, not appended to"
+                    )));
+                }
+                if stored > len {
+                    let new = p.read_from(len + 1)?;
+                    let v = ris_core::event::verify_after(len, head, &new)
+                        .map_err(ris_core::store::StoreError::Corrupt)?;
+                    let lines: Vec<String> = new
+                        .iter()
+                        .map(|e| serde_json::to_string(e).unwrap())
+                        .collect();
+                    (len, head) = (v.len, v.head);
+                    if *once {
+                        return Ok(Output::new(lines.join("\n"), json!(new)));
+                    }
+                    let mut out = std::io::stdout().lock();
+                    for line in &lines {
+                        writeln!(out, "{line}")?;
+                    }
+                    out.flush()?;
+                }
+                std::thread::sleep(interval);
+            }
         }
 
         Cmd::Log { from } => {
