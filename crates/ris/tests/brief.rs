@@ -140,3 +140,37 @@ fn the_brief_has_a_fixed_size_and_says_what_it_left_out() {
     assert_eq!(data["rules"]["path"], "OSIRIS.md");
     assert_eq!(data["project"]["role"], "lead");
 }
+
+#[test]
+fn a_decision_about_a_superseded_item_is_in_its_replacements_brief() {
+    let dir = project("supersede");
+    ok(&dir, None, &["item", "add", "the old pause"]);
+    ok(&dir, None, &["item", "add", "the old base"]);
+    let heron = Some("heron");
+    ok(&dir, heron, &["claim", "I-1"]);
+    mechanical(&dir, "I-1", "what does pause act on");
+    ok(&dir, heron, &["release", "I-1"]);
+    ok(&dir, heron, &["claim", "I-2"]);
+    mechanical(&dir, "I-2", "how is the base shaped");
+    ok(&dir, heron, &["release", "I-2"]);
+    ok(&dir, None, &["item", "add", "the new pause"]);
+    ok(&dir, None, &["item", "add", "the new base"]);
+    ok(
+        &dir,
+        None,
+        &["item", "add", "on the old base", "--depends", "I-2"],
+    );
+    ok(&dir, None, &["item", "supersede", "I-1", "--by", "I-3"]);
+    ok(&dir, None, &["item", "supersede", "I-2", "--by", "I-4"]);
+
+    let brief = ok(&dir, heron, &["claim", "I-3"]);
+    assert!(brief.contains("D-1 what does pause act on"), "{brief}");
+    assert!(!brief.contains("how is the base shaped"), "{brief}");
+    ok(&dir, heron, &["release", "I-3"]);
+
+    // I-5 depends on I-2, which I-4 replaced: it waits on I-4, and the
+    // brief for I-4 carries I-2's decision.
+    let brief = ok(&dir, heron, &["claim", "I-4"]);
+    assert!(brief.contains("D-2 how is the base shaped"), "{brief}");
+    assert!(!brief.contains("what does pause act on"), "{brief}");
+}

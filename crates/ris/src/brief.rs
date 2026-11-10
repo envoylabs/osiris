@@ -10,7 +10,8 @@
 //!    text in context twice.
 //! 2. **project:** the open phase and its goal, and the seat's role.
 //! 3. **item:** its goal, checks, dependencies, and the decisions that
-//!    touch it (raised about it or about an item it depends on).
+//!    touch it (raised about it or about an item it depends on, or
+//!    about an item either of those replaced).
 //!
 //! The text form is capped at [`BRIEF_MAX`] bytes. Decisions are cut
 //! first, oldest first, with a line saying how many were left out and
@@ -82,14 +83,21 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
 
     // Decisions raised about this item or what it depends on, newest
     // first, so a cut drops the oldest.
+    // An item stands for every item it replaced, so a decision about a
+    // superseded item touches its replacement: compare through
+    // `current`, which follows the chain of replacements.
     let touching: BTreeSet<ItemId> = std::iter::once(item)
         .chain(i.depends_on.iter().copied())
+        .map(|t| l.state.current(t))
         .collect();
     let mut decisions: Vec<&Decision> = l
         .state
         .decisions
         .values()
-        .filter(|d| d.about.is_some_and(|a| touching.contains(&a)))
+        .filter(|d| {
+            d.about
+                .is_some_and(|a| touching.contains(&l.state.current(a)))
+        })
         .collect();
     decisions.reverse();
 
