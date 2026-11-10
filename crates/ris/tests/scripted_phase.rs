@@ -43,7 +43,7 @@ impl Sandbox {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_ris"));
         cmd.args(args)
             .current_dir(&self.dir)
-            .env_remove("RIS_AGENT");
+            .env("RIS_AGENT", "person");
         if let Some(a) = agent {
             cmd.env("RIS_AGENT", a);
         }

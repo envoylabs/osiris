@@ -117,7 +117,7 @@ rationale = "Why it is open and why you recommend that option, citing the docume
 2. Show the person a summary: the items with their checks and
    dependencies, and each decision with its source. Wait for approval;
    change what they ask.
-3. Run `ris import .osiris/import.toml` with `RIS_AGENT` unset: the
+3. Run `ris import .osiris/import.toml` with `RIS_AGENT=person`: the
    decisions are recorded as the person's, which their approval makes
    true.
 4. `ris summary` to show the result.

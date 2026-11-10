@@ -26,7 +26,7 @@ Every outcome is one JSON document on stdout, success or failure:
 - Nothing is written to stderr in JSON mode.
 - `error.kind` is one of `refused`, `leak`, `role_forbids`,
   `check_failed`, `checks_failed`, `not_a_project`,
-  `already_a_project`, `config`, `unknown_agent`, `contended`, `store`,
+  `already_a_project`, `config`, `unknown_agent`, `no_actor`, `contended`, `store`,
   `io`, `other`. `next` is the suggested next step, or null.
 - Some kinds carry details: `refused` has `refusal` (the core's reason,
   as `{"<reason>": ...}`); `leak` has `hits`, each with `file`, `line`

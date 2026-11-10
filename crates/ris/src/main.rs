@@ -334,6 +334,7 @@ fn error_envelope(e: &CliError) -> serde_json::Value {
             CliError::AlreadyAProject(_) => "already_a_project",
             CliError::Config(_) => "config",
             CliError::UnknownAgent(_) => "unknown_agent",
+            CliError::NoActor(_) => "no_actor",
             CliError::Contended => "contended",
             CliError::Store(_) => "store",
             CliError::Io(_) => "io",
@@ -411,7 +412,10 @@ fn main() -> ExitCode {
                 }
             }
             ExitCode::from(match e {
-                CliError::Refused(_) | CliError::Leak { .. } | CliError::RoleForbids { .. } => 2,
+                CliError::Refused(_)
+                | CliError::Leak { .. }
+                | CliError::RoleForbids { .. }
+                | CliError::NoActor(_) => 2,
                 CliError::ChecksFailed { .. } | CliError::CheckFailed { .. } => 3,
                 _ => 1,
             })
@@ -515,7 +519,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         } => {
             if actor != Actor::Person {
                 return Err(CliError::Other(
-                    "seats are the person's to add; run ris seat add without RIS_AGENT".into(),
+                    "seats are the person's to add; run ris seat add with RIS_AGENT=person".into(),
                 ));
             }
             let role = match role.as_str() {
@@ -1082,7 +1086,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Import { file, dry_run } => {
             if actor != Actor::Person {
                 return Err(CliError::Other(
-                    "imported decisions are the person's; run ris import without RIS_AGENT".into(),
+                    "imported decisions are the person's; run ris import with RIS_AGENT=person"
+                        .into(),
                 ));
             }
             let l = p.load()?;

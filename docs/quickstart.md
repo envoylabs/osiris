@@ -8,7 +8,14 @@ This sets up three agent seats on an existing git repository:
 | rook  | `builder` | its own worktree            |
 | wren  | `auditor` | the main checkout, read-only |
 
-The person works in the main checkout with `RIS_AGENT` unset.
+The person works in the main checkout with `RIS_AGENT=person`. `ris`
+refuses every command when `RIS_AGENT` is unset, so an agent that loses
+its seat's name is stopped rather than taken for the person. Set it once
+in your shell profile:
+
+```sh
+export RIS_AGENT=person
+```
 
 ## 1. Install and initialise
 

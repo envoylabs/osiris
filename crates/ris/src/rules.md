@@ -13,7 +13,8 @@ environment:
 export RIS_AGENT=<your seat>
 ```
 
-With it unset, `ris` acts as the person. Use only your own seat.
+With it unset, `ris` refuses every command. Use only your own seat;
+`RIS_AGENT=person` is the person's, never yours.
 
 ## The loop
 

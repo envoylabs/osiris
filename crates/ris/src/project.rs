@@ -24,6 +24,10 @@ pub const DIR: &str = ".osiris";
 /// The rules file `ris init` writes at the project root.
 pub const RULES_FILE: &str = "OSIRIS.md";
 
+/// The value of `RIS_AGENT` that means the person. Reserved: no seat
+/// may take it.
+pub const PERSON: &str = "person";
+
 /// The agents' rules, generic to any project.
 pub const RULES: &str = include_str!("rules.md");
 
@@ -74,6 +78,10 @@ pub enum CliError {
     Config(String),
     /// `RIS_AGENT` names a seat `config.toml` does not.
     UnknownAgent(String),
+    /// `RIS_AGENT` is unset: nobody said who is acting. Never taken to
+    /// mean the person, so an agent that loses its seat is refused
+    /// rather than given the person's powers. Holds the seat names.
+    NoActor(Vec<String>),
     /// The seat's role does not do this: an auditor reads and never
     /// writes to the tree. Exit status 2, like any refusal.
     RoleForbids {
@@ -125,7 +133,16 @@ impl std::fmt::Display for CliError {
             Self::Config(e) => write!(f, "{e}"),
             Self::UnknownAgent(a) => write!(
                 f,
-                "RIS_AGENT={a} is not a seat in {DIR}/config.toml\n  next: add [agents.{a}] there, or unset RIS_AGENT to act as the person"
+                "RIS_AGENT={a} is not a seat in {DIR}/config.toml\n  next: add the seat with `ris seat add`, or set RIS_AGENT={PERSON} to act as the person"
+            ),
+            Self::NoActor(seats) => write!(
+                f,
+                "refused: RIS_AGENT is not set, so ris does not know who is acting\n  next: set RIS_AGENT={PERSON} if you are the person (once, in your shell profile), or RIS_AGENT=<seat> for an agent{}",
+                if seats.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", seats.join(", "))
+                }
             ),
             Self::RoleForbids { seat, role, what } => write!(
                 f,
@@ -347,9 +364,11 @@ impl Project {
         })
     }
 
-    /// Who is acting: the agent named by `RIS_AGENT`, or the person.
+    /// Who is acting, as `RIS_AGENT` says: `person`, or a configured
+    /// seat. Unset is refused, never taken to mean the person.
     pub fn actor(&self) -> Result<Actor, CliError> {
         match env::var("RIS_AGENT") {
+            Ok(name) if name.trim() == PERSON => Ok(Actor::Person),
             Ok(name) if !name.trim().is_empty() => {
                 let name = name.trim().to_owned();
                 if !self.config.agents.contains_key(&name) {
@@ -357,7 +376,9 @@ impl Project {
                 }
                 Ok(Actor::Agent(AgentName(name)))
             }
-            _ => Ok(Actor::Person),
+            _ => Err(CliError::NoActor(
+                self.config.agents.keys().cloned().collect(),
+            )),
         }
     }
 

@@ -12,7 +12,7 @@ fn ris(dir: &Path, agent: Option<&str>, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ris"));
     cmd.args(args)
         .current_dir(dir)
-        .env_remove("RIS_AGENT")
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1");
     if let Some(a) = agent {

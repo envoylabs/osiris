@@ -26,6 +26,7 @@ agents build and test in between. Design: `PLAN.md`.
 
 ```
 cargo install --path crates/ris
+export RIS_AGENT=person                  # you; agents get their seat's name
 cd your-repo && ris init --local         # nothing tracked changes
 # .osiris/config.toml: denylist first, then seats; .osiris/checks.toml
 ris phase open "the goal"               # branches phase/P-1 from main

@@ -13,8 +13,10 @@ Your seat is named in `.osiris/config.toml` and set in your environment:
 export RIS_AGENT=heron    # or wren
 ```
 
-With it unset, `ris` acts as the person. Never set it to a name that is
-not a seat.
+With it unset, `ris` refuses every command. Never set it to a name
+that is not your seat; `RIS_AGENT=person` is the person's alone. In a
+tool that starts a fresh shell per command, set it on each command
+(`RIS_AGENT=heron ris ...`) or launch the tool with it set.
 
 ## The loop
 

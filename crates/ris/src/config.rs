@@ -104,7 +104,14 @@ impl std::fmt::Display for Role {
 
 impl Config {
     pub fn parse(text: &str) -> Result<Self, String> {
-        toml::from_str(text).map_err(|e| format!("config.toml: {e}"))
+        let c: Self = toml::from_str(text).map_err(|e| format!("config.toml: {e}"))?;
+        if c.agents.contains_key(crate::project::PERSON) {
+            return Err(format!(
+                "config.toml: `{}` names the person in RIS_AGENT and cannot be a seat",
+                crate::project::PERSON
+            ));
+        }
+        Ok(c)
     }
 
     /// The scan policy this configuration defines.
@@ -149,6 +156,11 @@ impl Config {
                 "a seat name is a lowercase word of letters, digits and hyphens, at most 32 long"
                     .into(),
             );
+        }
+        if name == crate::project::PERSON {
+            return Err(format!(
+                "`{name}` names the person in RIS_AGENT and cannot be a seat"
+            ));
         }
         let current = Self::parse(text)?;
         if current.agents.contains_key(name) {
@@ -195,7 +207,8 @@ trailers = true
 merge_on_close = true
 
 # Agent seats. A name is a durable pseudonym for a seat, never a real
-# person's name. Set RIS_AGENT=<name> in an agent's environment.
+# person's name. Set RIS_AGENT=<name> in an agent's environment,
+# and RIS_AGENT=person in the person's; unset is refused.
 [agents.heron]
 role = \"lead\"
 

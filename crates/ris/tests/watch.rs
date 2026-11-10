@@ -12,7 +12,7 @@ use std::time::Duration;
 fn cmd(dir: &Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_ris"));
     c.current_dir(dir)
-        .env_remove("RIS_AGENT")
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1");
     c
