@@ -1,5 +1,24 @@
 # osiris
 
+```
+                                      osirisosirisosir
+                              risosiris              isosi
+                         risosi                          ris
+                    risosi                                 o
+                 sosi                                      s
+              siri                                        ri
+           riso                                          si
+         osi                                           iso
+       ris                                           sir
+      si                                          riso
+     so                                        sosi
+     i                                      siri
+     r                                 siriso
+     iso                          siriso
+       siris              isosiriso
+           osirisosirisosir
+```
+
 A harness for directing several coding agents: you decide at check-ins,
 agents build and test in between. Design: `PLAN.md`.
 
