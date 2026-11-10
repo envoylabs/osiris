@@ -90,6 +90,7 @@ pub enum ItemState {
 
 /// What an item can be blocked on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum Blocker {
     Decision(DecisionId),
     Item(ItemId),
@@ -128,6 +129,7 @@ pub struct Explanation {
 
 /// The decision rule: the test is the cost of reversing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DecisionClass {
     /// The agent goes ahead and logs it.
     Mechanical,
@@ -233,6 +235,7 @@ pub struct Message {
 
 /// What a message is for. No broadcasts and no free chat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MessageKind {
     /// Work passed from one agent to another.
     Handoff,

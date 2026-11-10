@@ -11,10 +11,22 @@ use serde::{Deserialize, Serialize};
 macro_rules! sequential_id {
     ($name:ident, $prefix:literal, $doc:literal) => {
         #[doc = $doc]
-        #[derive(
-            Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-        )]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $name(pub u32);
+
+        /// Stored and shown in its display form, `I-1`.
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                s.collect_str(self)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                let s = String::deserialize(d)?;
+                s.parse().map_err(serde::de::Error::custom)
+            }
+        }
 
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -98,15 +110,45 @@ impl fmt::Display for CheckId {
     }
 }
 
-/// A 32-byte hash, hex-encoded when displayed. The default is all
-/// zeros: the `prev` of a log's first event.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+/// A 32-byte hash, hex-encoded when displayed and when stored. The
+/// default is all zeros: the `prev` of a log's first event.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {
     /// The hex encoding, 64 characters.
     pub fn to_hex(self) -> String {
         self.0.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// From 64 hex characters, either case.
+    pub fn from_hex(s: &str) -> Option<Self> {
+        let bytes = decode_hex(s)?;
+        Some(Self(bytes.try_into().ok()?))
+    }
+}
+
+/// Bytes from hex, either case; `None` on anything else.
+pub fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+impl Serialize for Hash {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for Hash {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Self::from_hex(&s).ok_or_else(|| serde::de::Error::custom("expected 64 hex characters"))
     }
 }
 
@@ -122,9 +164,38 @@ impl fmt::Debug for Hash {
     }
 }
 
-/// Evidence is addressed by the hash of its content.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+/// Evidence is addressed by the hash of its content. Stored and shown
+/// as `E-<hex>`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EvidenceId(pub Hash);
+
+impl std::str::FromStr for EvidenceId {
+    type Err = IdParseError;
+
+    /// `E-<hex>` or `E<hex>`, either case, the full 64 characters.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let rest = s
+            .strip_prefix(['E', 'e'])
+            .map(|r| r.strip_prefix('-').unwrap_or(r))
+            .ok_or(IdParseError::WrongPrefix { expected: "E" })?;
+        Hash::from_hex(rest)
+            .map(Self)
+            .ok_or(IdParseError::NotANumber)
+    }
+}
+
+impl Serialize for EvidenceId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for EvidenceId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
 
 impl fmt::Display for EvidenceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -154,13 +225,40 @@ impl fmt::Display for AgentName {
     }
 }
 
-/// Who did something: the person, or an agent under its name.
+/// Who did something: the person, or an agent under its name. Stored
+/// as `{"kind": "person"}` or `{"kind": "agent", "seat": "heron"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(into = "ActorRepr", from = "ActorRepr")]
 pub enum Actor {
     /// The one person directing the work.
     Person,
     /// An agent, by its configured name.
     Agent(AgentName),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ActorRepr {
+    Person,
+    Agent { seat: AgentName },
+}
+
+impl From<Actor> for ActorRepr {
+    fn from(a: Actor) -> Self {
+        match a {
+            Actor::Person => Self::Person,
+            Actor::Agent(seat) => Self::Agent { seat },
+        }
+    }
+}
+
+impl From<ActorRepr> for Actor {
+    fn from(a: ActorRepr) -> Self {
+        match a {
+            ActorRepr::Person => Self::Person,
+            ActorRepr::Agent { seat } => Self::Agent(seat),
+        }
+    }
 }
 
 impl fmt::Display for Actor {

@@ -51,7 +51,7 @@ fn a_watcher_sees_what_another_process_appends() {
     let first: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).lines().next().unwrap()).unwrap();
     assert_eq!(first["seq"], 1);
-    assert_eq!(first["structure"]["event"], "PhaseOpened", "{first}");
+    assert_eq!(first["structure"]["event"], "phase_opened", "{first}");
 
     // A running watcher sees only what comes after it started.
     let mut child = cmd(&dir)
@@ -83,7 +83,7 @@ fn a_watcher_sees_what_another_process_appends() {
     let _ = child.wait();
     assert_eq!(
         seen,
-        vec![(2, "ItemAdded".into()), (3, "ItemAdded".into())],
+        vec![(2, "item_added".into()), (3, "item_added".into())],
         "only the new events, in order"
     );
 
