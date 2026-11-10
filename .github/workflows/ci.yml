@@ -1,0 +1,47 @@
+# The standing checks from .osiris/checks.toml, plus the exit scan over
+# the tree. The toolchain comes from rust-toolchain.toml, which rustup
+# (preinstalled on GitHub's runners) reads, so CI and a local run use the
+# same compiler, clippy and rustfmt.
+#
+# The scan here applies the built-in patterns only: the denylist lives in
+# each machine's .osiris/config.toml, which is never committed.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: toolchain
+        # Installs what rust-toolchain.toml names, then prints it.
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - name: build
+        run: cargo build --workspace
+
+      - name: test
+        run: cargo test --workspace
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      - name: scan
+        run: |
+          ./target/debug/ris init --local
+          ./target/debug/ris scan

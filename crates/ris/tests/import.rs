@@ -227,3 +227,49 @@ rationale = "open"
         "{err}"
     );
 }
+
+#[test]
+fn an_item_with_no_checks_named_gets_every_declared_check_and_an_empty_list_gets_none() {
+    let repo = std::env::temp_dir().join(format!("ris-import-checks-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&repo);
+    fs::create_dir_all(&repo).unwrap();
+    ok(&repo, &["init"]);
+    let config = repo.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(
+        &config,
+        c.replace("denylist = []", "denylist = [\"example client\"]"),
+    )
+    .unwrap();
+    fs::write(
+        repo.join(".osiris/checks.toml"),
+        "[checks.build]\ncommand = \"true\"\n\n[checks.test]\ncommand = \"true\"\n",
+    )
+    .unwrap();
+    ok(&repo, &["phase", "open", "defaults"]);
+    fs::write(
+        repo.join("b.toml"),
+        "[[item]]\ngoal = \"all of them\"\n\n[[item]]\ngoal = \"one\"\nchecks = [\"test\"]\n\n[[item]]\ngoal = \"none, done on evidence\"\nchecks = []\n",
+    )
+    .unwrap();
+    ok(&repo, &["import", "b.toml"]);
+    ok(&repo, &["item", "add", "by hand"]);
+    ok(&repo, &["item", "add", "by hand, none", "--no-checks"]);
+    let checks = |i: &str| {
+        ok(&repo, &["show", i])
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("checks: ").map(str::to_owned))
+            .unwrap()
+    };
+    assert_eq!(checks("I-1"), "build, test");
+    assert_eq!(checks("I-2"), "test");
+    assert_eq!(checks("I-3"), "none");
+    assert_eq!(checks("I-4"), "build, test");
+    assert_eq!(checks("I-5"), "none");
+    let r = ris(
+        &repo,
+        None,
+        &["item", "add", "both", "--no-checks", "--check", "test"],
+    );
+    assert!(!r.status.success(), "--no-checks and --check conflict");
+}

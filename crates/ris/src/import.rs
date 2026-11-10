@@ -4,7 +4,8 @@
 //! [[item]]
 //! key = "auth"                  # optional; names it for `depends`
 //! goal = "Add login"
-//! checks = ["test"]
+//! checks = ["test"]            # optional; absent means every declared check,
+//!                               # [] means none (done on attached evidence)
 //! depends = ["I-3"]             # earlier keys in this file, or existing ids
 //!
 //! [[decision]]
@@ -34,7 +35,7 @@
 use serde::Deserialize;
 
 use ris_core::command::{Choice, Command};
-use ris_core::ids::{Actor, CheckId, DecisionId, ItemId};
+use ris_core::ids::{Actor, DecisionId, ItemId};
 use ris_core::primitives::DecisionClass;
 use ris_core::state::State;
 use ris_core::text::{Policy, Text};
@@ -95,8 +96,8 @@ struct File {
 struct RawItem {
     key: Option<String>,
     goal: String,
-    #[serde(default)]
-    checks: Vec<String>,
+    /// Absent: every declared check. `[]`: none, done on evidence.
+    checks: Option<Vec<String>>,
     #[serde(default)]
     depends: Vec<String>,
 }
@@ -164,7 +165,7 @@ pub fn plan(
             ));
         }
         seen_goals.push(norm);
-        for c in &it.checks {
+        for c in it.checks.iter().flatten() {
             if !checks.checks.contains_key(c) {
                 problems.push(format!(
                     "{label}: check `{c}` is not in .osiris/checks.toml"
@@ -194,7 +195,7 @@ pub fn plan(
         if let Some(goal) = goal {
             commands.push(Command::ItemAdd {
                 goal,
-                checks: it.checks.iter().cloned().map(CheckId).collect(),
+                checks: checks.for_item(it.checks.as_deref()),
                 depends_on: depends,
             });
         }

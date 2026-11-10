@@ -86,6 +86,10 @@ pub enum ItemState {
         evidence: Vec<EvidenceId>,
         commit: CommitHash,
     },
+    /// Replaced by another item before work on it began; final, as a
+    /// superseded decision is. A dependency on it is a dependency on
+    /// its replacement.
+    Superseded { by: ItemId },
 }
 
 /// What an item can be blocked on.

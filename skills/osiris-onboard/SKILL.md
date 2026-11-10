@@ -77,7 +77,9 @@ Write `.osiris/import.toml`:
 [[item]]
 key = "short-name"            # optional; for depends
 goal = "One sentence, the outcome, in the project's own terms"
-checks = ["test"]             # names from .osiris/checks.toml
+checks = ["test"]             # optional: absent means every check in
+                              # .osiris/checks.toml; [] means none
+                              # (done on attached evidence)
 depends = ["other-key"]       # earlier keys in this file
 
 [[decision]]

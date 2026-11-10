@@ -60,7 +60,7 @@ enum Cmd {
         #[command(subcommand)]
         action: PhaseCmd,
     },
-    /// Add an item to the open phase.
+    /// Add an item to the open phase, or supersede one.
     Item {
         #[command(subcommand)]
         action: ItemCmd,
@@ -182,6 +182,13 @@ enum PhaseCmd {
 #[derive(Subcommand)]
 enum ItemCmd {
     Add(ItemAdd),
+    /// Replace an item nobody has started with another (the person's
+    /// only). Final; what depended on it waits on the replacement.
+    Supersede {
+        item: ItemId,
+        #[arg(long)]
+        by: ItemId,
+    },
 }
 
 #[derive(Subcommand)]
@@ -197,9 +204,14 @@ enum SeatCmd {
 #[derive(Args)]
 struct ItemAdd {
     goal: String,
-    /// A check from .osiris/checks.toml the item must pass. Repeatable.
+    /// A check from .osiris/checks.toml the item must pass. Repeatable;
+    /// with none named, every declared check.
     #[arg(long = "check")]
     checks: Vec<String>,
+    /// No checks: the item is done on attached evidence
+    /// (`ris done --evidence`), for work a check cannot judge.
+    #[arg(long, conflicts_with = "checks")]
+    no_checks: bool,
     /// An item this one cannot start before. Repeatable.
     #[arg(long = "depends")]
     depends_on: Vec<ItemId>,
@@ -549,6 +561,11 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     .open_phase()
                     .ok_or(CliError::Refused(ris_core::Refusal::NoOpenPhase))?;
                 let (phase_id, goal) = (phase.id, l.text(phase.at, "goal").to_owned());
+                // Facts become final here: check the derived index
+                // against a scan before anything is written.
+                l.state
+                    .check_index()
+                    .map_err(|e| CliError::Other(e.to_string()))?;
                 let closing = closing_merge(&mut p, phase_id, &goal)?;
                 let (l, events) = p.run(&Command::PhaseClose)?;
                 let closed = events.last().expect("close emits one event");
@@ -576,7 +593,13 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 }
                 let (l, _) = p.run(&Command::ItemAdd {
                     goal,
-                    checks: a.checks.iter().cloned().map(CheckId).collect(),
+                    checks: p.checks.for_item(if a.no_checks {
+                        Some(&[])
+                    } else if a.checks.is_empty() {
+                        None
+                    } else {
+                        Some(&a.checks)
+                    }),
                     depends_on: a.depends_on.clone(),
                 })?;
                 let id = l.state.items.keys().last().expect("just added");
@@ -585,26 +608,56 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     json!({ "item": id.to_string() }),
                 ))
             }
+            ItemCmd::Supersede { item, by } => {
+                p.run(&Command::Supersede {
+                    item: *item,
+                    by: *by,
+                    actor: actor.clone(),
+                })?;
+                Ok(Output::new(
+                    format!("{item} superseded by {by}"),
+                    json!({ "item": item.to_string(), "superseded_by": by.to_string() }),
+                ))
+            }
         },
 
         Cmd::Ready => Ok(render::ready(&p.load()?)),
 
         Cmd::Claim { item } => {
             let agent = agent_only(&actor)?;
-            let (l, _) = p.run(&Command::Claim { item: *item, agent })?;
-            let i = &l.state.items[item];
-            let checks: Vec<String> = i.checks.iter().map(ToString::to_string).collect();
+            let (l, _) = p.run(&Command::Claim {
+                item: *item,
+                agent: agent.clone(),
+            })?;
+            let role = p
+                .config
+                .agents
+                .get(&agent.0)
+                .map(|a| a.role.to_string())
+                .unwrap_or_default();
+            let rules_path = p.rules_path();
+            let found = std::fs::read_to_string(&rules_path).ok();
+            let shown = rules_path
+                .strip_prefix(&p.root)
+                .unwrap_or(&rules_path)
+                .display()
+                .to_string();
+            let content = found.as_deref().unwrap_or(ris::project::RULES);
+            let (text, data) = ris::brief::brief(
+                &l,
+                *item,
+                &role,
+                &ris::brief::Rules {
+                    path: found.as_ref().map(|_| shown.as_str()),
+                    content,
+                },
+            );
             Ok(Output::new(
                 format!(
-                    "claimed {item}: {}\n  checks: {}",
-                    l.text(i.at, "goal"),
-                    if checks.is_empty() {
-                        "none".to_owned()
-                    } else {
-                        checks.join(", ")
-                    }
+                    "claimed {item}
+{text}"
                 ),
-                json!({ "item": item.to_string(), "goal": l.text(i.at, "goal"), "checks": checks }),
+                data,
             ))
         }
 
@@ -1050,6 +1103,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             let l = p.load()?;
             let v =
                 ris_core::event::verify(&l.log).map_err(ris_core::store::StoreError::Corrupt)?;
+            l.state
+                .check_index()
+                .map_err(|e| CliError::Other(e.to_string()))?;
             Ok(Output::new(
                 format!(
                     "ok: {} events, head {}{}",

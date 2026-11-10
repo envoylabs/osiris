@@ -162,7 +162,7 @@ $ ris item add the fold --depends I-1
 added I-2
 [exit 0]
 
-$ ris item add the cli
+$ ris item add the cli --no-checks
 added I-3
 [exit 0]
 
@@ -190,7 +190,11 @@ $ ris claim I-1
 [exit 1]
 
 $ RIS_AGENT=heron ris claim I-1
-claimed I-1: the event envelope
+claimed I-1
+rules:   OSIRIS.md (<hash>), loaded by your rules file
+project: P-1 first slice
+         you are lead
+item:    I-1 the event envelope
   checks: test
 [exit 0]
 
@@ -205,7 +209,11 @@ $ RIS_AGENT=wren ris claim I-2
 [exit 2]
 
 $ RIS_AGENT=heron ris claim I-3
-claimed I-3: the cli
+claimed I-3
+rules:   OSIRIS.md (<hash>), loaded by your rules file
+project: P-1 first slice
+         you are lead
+item:    I-3 the cli
   checks: none
 [exit 0]
 
@@ -267,7 +275,10 @@ $ ris --json report
       },
       {
         "audited_by": [],
-        "checks": [],
+        "checks": [
+          "lint",
+          "test"
+        ],
         "depends_on": [
           "I-1"
         ],
@@ -389,7 +400,10 @@ $ ris --json report
       },
       {
         "audited_by": [],
-        "checks": [],
+        "checks": [
+          "lint",
+          "test"
+        ],
         "depends_on": [
           "I-1"
         ],
@@ -487,7 +501,11 @@ $ ris --json report
 [exit 0]
 
 $ RIS_AGENT=wren ris claim I-4
-claimed I-4: a lint fix
+claimed I-4
+rules:   OSIRIS.md (<hash>), loaded by your rules file
+project: P-1 first slice
+         you are builder
+item:    I-4 a lint fix
   checks: lint
 [exit 0]
 
@@ -516,7 +534,10 @@ $ ris --json report
       },
       {
         "audited_by": [],
-        "checks": [],
+        "checks": [
+          "lint",
+          "test"
+        ],
         "depends_on": [
           "I-1"
         ],
@@ -668,8 +689,14 @@ $ ris merge I-1
 [exit 2]
 
 $ RIS_AGENT=heron ris claim I-3
-claimed I-3: the cli
+claimed I-3
+rules:   OSIRIS.md (<hash>), loaded by your rules file
+project: P-1 first slice
+         you are lead
+item:    I-3 the cli
   checks: none
+  decisions:
+  D-2 daemon now or CLI-direct? → cli-direct (fewer failure modes for agents)
 [exit 0]
 
 $ RIS_AGENT=heron ris done I-3
@@ -710,8 +737,15 @@ I-3 merged at <hash>
 [exit 0]
 
 $ RIS_AGENT=wren ris claim I-2
-claimed I-2: the fold
-  checks: none
+claimed I-2
+rules:   OSIRIS.md (<hash>), loaded by your rules file
+project: P-1 first slice
+         you are builder
+item:    I-2 the fold
+  checks: lint, test
+  depends on I-1 (merged): the event envelope
+  decisions:
+  D-1 sha2 or blake3? → sha2 (checkable with standard tools)
 [exit 0]
 
 $ RIS_AGENT=wren ris send heron --kind question --about I-2 is the fold's interface settled?
@@ -819,7 +853,7 @@ I-1 merged  (phase P-1)
 $ ris show I-2
 I-2 ready  (phase P-1)
   the fold
-  checks: none
+  checks: lint, test
   depends on: I-1 (all merged)
   decisions:
     D-3   rocksdb or sqlite?  → sqlite now, bench rocksdb later  (agent wren, I-2)
@@ -986,7 +1020,10 @@ $ ris --json report
       },
       {
         "audited_by": [],
-        "checks": [],
+        "checks": [
+          "lint",
+          "test"
+        ],
         "depends_on": [
           "I-1"
         ],

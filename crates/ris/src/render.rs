@@ -64,6 +64,7 @@ fn state_name(s: &ItemState) -> &'static str {
         ItemState::Blocked { .. } => "blocked",
         ItemState::Done { .. } => "done",
         ItemState::Merged { .. } => "merged",
+        ItemState::Superseded { .. } => "superseded",
     }
 }
 
@@ -89,6 +90,7 @@ fn item_json(l: &Loaded, i: &Item) -> Value {
             v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>());
             v["commit"] = json!(commit.to_string());
         }
+        ItemState::Superseded { by } => v["superseded_by"] = json!(by.to_string()),
         ItemState::Ready => {}
     }
     v
@@ -98,6 +100,7 @@ fn item_line(l: &Loaded, i: &Item) -> String {
     let who = match &i.state {
         ItemState::Claimed { agent } => format!(" ({agent})"),
         ItemState::Merged { commit, .. } => format!(" ({})", short(&commit.0)),
+        ItemState::Superseded { by } => format!(" (by {by})"),
         _ => String::new(),
     };
     format!(
@@ -409,7 +412,13 @@ pub fn report(l: &Loaded) -> Output {
         .state
         .items
         .values()
-        .filter(|i| i.phase == phase.id || !matches!(i.state, ItemState::Merged { .. }))
+        .filter(|i| {
+            i.phase == phase.id
+                || !matches!(
+                    i.state,
+                    ItemState::Merged { .. } | ItemState::Superseded { .. }
+                )
+        })
         .collect();
     let (substantive, mechanical): (Vec<&Decision>, Vec<&Decision>) = l
         .state
@@ -693,6 +702,7 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
                 s.push_str(&format!("  commit: {commit}\n"));
             }
         }
+        ItemState::Superseded { by } => s.push_str(&format!("  superseded by: {by}\n")),
         ItemState::Ready => {}
     }
     if !i.audited_by.is_empty() {

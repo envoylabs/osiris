@@ -92,6 +92,16 @@ pub enum Role {
     Auditor,
 }
 
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Lead => "lead",
+            Self::Builder => "builder",
+            Self::Auditor => "auditor",
+        })
+    }
+}
+
 impl Config {
     pub fn parse(text: &str) -> Result<Self, String> {
         toml::from_str(text).map_err(|e| format!("config.toml: {e}"))
@@ -149,11 +159,6 @@ impl Config {
                 "{name} was a seat before and is in the log; a name is never given to another seat"
             ));
         }
-        let role = match role {
-            Role::Lead => "lead",
-            Role::Builder => "builder",
-            Role::Auditor => "auditor",
-        };
         let mut out = text.trim_end().to_owned();
         out.push_str(&format!("\n\n[agents.{name}]\nrole = \"{role}\"\n"));
         let parsed = Self::parse(&out)?;
@@ -205,6 +210,23 @@ role = \"auditor\"
 pub struct ChecksConfig {
     #[serde(default)]
     pub checks: BTreeMap<String, CheckConfig>,
+}
+
+impl ChecksConfig {
+    /// The checks an item is held to: the ones it names, or every
+    /// declared check when it names none (`None`). `Some(&[])` is an
+    /// item with no checks, which needs attached evidence to be done.
+    pub fn for_item(&self, named: Option<&[String]>) -> Vec<ris_core::ids::CheckId> {
+        match named {
+            Some(names) => names.iter().cloned().map(ris_core::ids::CheckId).collect(),
+            None => self
+                .checks
+                .keys()
+                .cloned()
+                .map(ris_core::ids::CheckId)
+                .collect(),
+        }
+    }
 }
 
 /// One check: a shell command, passing on exit status zero.

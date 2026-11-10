@@ -110,6 +110,11 @@ pub enum Structure {
         item: ItemId,
         commit: CommitHash,
     },
+    /// The person replaced a ready or blocked item with another.
+    ItemSuperseded {
+        item: ItemId,
+        by: ItemId,
+    },
     /// An auditor reviewed a done or merged item. Findings travel as
     /// messages; this records only that the review happened.
     ItemAudited {
