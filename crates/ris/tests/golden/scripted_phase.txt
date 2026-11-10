@@ -40,6 +40,7 @@ git commit -m "feat(scope): summary" -m "Item: I-7
 Agent: <your seat>"
 ris merge I-7                   # runs every project check and merges
 ris inbox                       # messages to you; read between items
+# A claim refused with "paused by the person" means stop and wait.
 ```
 
 - An item lands as one commit, carrying exactly one `Item:` trailer and

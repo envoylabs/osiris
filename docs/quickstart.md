@@ -113,7 +113,12 @@ The builders loop on `ris ready`, `ris claim`, `ris done`, a commit and
 ris summary                            # decisions waiting, the report, what is ready
 ris status                             # where each seat is: worktree, claim, +ahead -behind
 ris decide D-3 --choose 1 --rationale "..."
+ris seat pause --all                   # each seat finishes its item, then stops
 ris phase close                        # review; merges phase/P-1 into main
+ris seat resume --all                  # after opening the next phase
 ```
+
+A paused seat's next claim is refused with a message telling the agent
+to stop, so nobody has to type into an agent's prompt to halt it.
 
 `ris show <id>` prints any item, decision, phase or message in full.

@@ -29,6 +29,8 @@ pub struct State {
     pub last_report: Hash,
     /// The links read backwards, kept by the fold.
     pub index: Index,
+    /// Seats the person has paused.
+    pub paused: std::collections::BTreeSet<crate::ids::AgentName>,
 }
 
 /// The reverse index: links that events record in one direction, read
@@ -291,6 +293,12 @@ impl State {
                     evidence,
                     commit: commit.clone(),
                 };
+            }
+            Structure::SeatPaused { seat } => {
+                self.paused.insert(seat.clone());
+            }
+            Structure::SeatResumed { seat } => {
+                self.paused.remove(seat);
             }
             Structure::ItemSuperseded { item, by } => {
                 self.item_mut(seq, *item)?.state = ItemState::Superseded { by: *by };

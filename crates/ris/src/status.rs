@@ -13,6 +13,7 @@ use std::process::Command;
 use serde::Serialize;
 use serde_json::json;
 
+use ris_core::ids::AgentName;
 use ris_core::primitives::ItemState;
 
 use crate::config::Role;
@@ -45,6 +46,8 @@ pub struct Seat {
     pub behind: Option<u32>,
     /// Files with uncommitted changes in its worktree.
     pub uncommitted: Option<u32>,
+    /// Paused by the person: takes nothing new until resumed.
+    pub paused: bool,
 }
 
 /// `(path, branch)` for every worktree of the repository at `root`.
@@ -119,6 +122,7 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 ahead,
                 behind,
                 uncommitted,
+                paused: l.state.paused.contains(&AgentName(name.clone())),
             }
         })
         .collect()
@@ -169,6 +173,9 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
             Some(c) => format!("  holds {c}"),
             None => "  idle".into(),
         });
+        if s.paused {
+            line.push_str("  paused");
+        }
         text.push_str(&line);
         text.push('\n');
     }
@@ -188,6 +195,7 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
                 "ahead": s.ahead,
                 "behind": s.behind,
                 "uncommitted": s.uncommitted,
+                "paused": s.paused,
             })
         })
         .collect();

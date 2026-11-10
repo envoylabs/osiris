@@ -78,6 +78,10 @@ pub enum Refusal {
     ThinExplanation(DecisionId),
     /// Replacing an item is the person's to do.
     SupersedeIsForThePerson(ItemId),
+    /// The seat is paused: it takes nothing new until resumed.
+    SeatPaused(AgentName),
+    /// Pausing and resuming seats is the person's to do.
+    SeatControlIsForThePerson,
     /// An item is replaced by another item that is not itself replaced.
     NotAReplacement { item: ItemId, by: ItemId },
 }
@@ -144,6 +148,10 @@ impl Refusal {
             Self::ThinExplanation(_) => {
                 "give --summary, --why, and a --pro or --con for every option".into()
             }
+            Self::SeatPaused(seat) => {
+                format!("stop here: the person resumes the seat with `ris seat resume {seat}`")
+            }
+            Self::SeatControlIsForThePerson => "ask the person; seats are theirs to pause".into(),
             Self::SupersedeIsForThePerson(_) => {
                 "raise it with the person, who runs `ris item supersede`".into()
             }
@@ -231,6 +239,10 @@ impl fmt::Display for Refusal {
                 f,
                 "refused: {d}'s explanation leaves an option without a pro or a con, or has no summary or reason"
             ),
+            Self::SeatPaused(seat) => write!(f, "refused: {seat} is paused by the person"),
+            Self::SeatControlIsForThePerson => {
+                f.write_str("refused: only the person pauses and resumes seats")
+            }
             Self::SupersedeIsForThePerson(item) => {
                 write!(f, "refused: only the person supersedes {item}")
             }

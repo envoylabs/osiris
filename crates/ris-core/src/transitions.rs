@@ -36,6 +36,9 @@ pub enum CommandKind {
     /// The person replacing an item that has not been started with
     /// another.
     Supersede,
+    /// The person pausing seats, or resuming them.
+    Pause,
+    Resume,
 }
 
 impl CommandKind {
@@ -56,6 +59,8 @@ impl CommandKind {
         Self::Audit,
         Self::Explain,
         Self::Supersede,
+        Self::Pause,
+        Self::Resume,
     ];
 }
 

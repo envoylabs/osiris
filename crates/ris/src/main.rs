@@ -199,6 +199,21 @@ enum SeatCmd {
         #[arg(long, value_parser = ["lead", "builder", "auditor"])]
         role: String,
     },
+    /// Pause a seat, or every seat: each finishes what it holds and
+    /// takes nothing new until resumed. The person's only.
+    Pause(SeatSet),
+    /// Resume a paused seat, or every seat.
+    Resume(SeatSet),
+}
+
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct SeatSet {
+    /// The seat, by name.
+    seat: Option<String>,
+    /// Every seat in .osiris/config.toml.
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Args)]
@@ -523,6 +538,51 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(
                 format!("seat {name} added\n  next: {next}"),
                 json!({ "seat": name, "role": role }),
+            ))
+        }
+
+        Cmd::Seat {
+            action: action @ (SeatCmd::Pause(set) | SeatCmd::Resume(set)),
+        } => {
+            let pause = matches!(action, SeatCmd::Pause(_));
+            let seats: Vec<AgentName> = match &set.seat {
+                Some(name) if p.config.agents.contains_key(name) => vec![AgentName(name.clone())],
+                Some(name) => return Err(CliError::UnknownAgent(name.clone())),
+                None => p.config.agents.keys().cloned().map(AgentName).collect(),
+            };
+            let (l, _) = p.run(&if pause {
+                Command::Pause {
+                    seats: seats.clone(),
+                    actor: actor.clone(),
+                }
+            } else {
+                Command::Resume {
+                    seats: seats.clone(),
+                    actor: actor.clone(),
+                }
+            })?;
+            let names: Vec<String> = seats.iter().map(ToString::to_string).collect();
+            let holding: Vec<String> = l
+                .state
+                .items
+                .values()
+                .filter_map(|i| match &i.state {
+                    ris_core::primitives::ItemState::Claimed { agent }
+                        if pause && seats.contains(agent) =>
+                    {
+                        Some(format!("{agent} finishes {}", i.id))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let verb = if pause { "paused" } else { "resumed" };
+            let mut text = format!("{verb}: {}", names.join(", "));
+            if !holding.is_empty() {
+                text.push_str(&format!("\n  {}", holding.join("; ")));
+            }
+            Ok(Output::new(
+                text,
+                json!({ verb: names, "finishing": holding }),
             ))
         }
 

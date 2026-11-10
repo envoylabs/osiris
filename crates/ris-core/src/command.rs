@@ -96,6 +96,16 @@ pub enum Command {
         about: Option<ItemId>,
         body: Text,
     },
+    /// Pause seats: each finishes what it holds, and its next claim or
+    /// audit is refused until it is resumed. The person's only.
+    Pause {
+        seats: Vec<AgentName>,
+        actor: Actor,
+    },
+    Resume {
+        seats: Vec<AgentName>,
+        actor: Actor,
+    },
     /// Replace an item that has not been started with another, which
     /// must exist and stand for itself. The person's only.
     Supersede {
@@ -130,6 +140,8 @@ impl Command {
             Self::Release { .. } => CommandKind::Release,
             Self::Audit { .. } => CommandKind::Audit,
             Self::Supersede { .. } => CommandKind::Supersede,
+            Self::Pause { .. } => CommandKind::Pause,
+            Self::Resume { .. } => CommandKind::Resume,
         }
     }
 }
@@ -297,6 +309,9 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
         }
 
         Command::Claim { item, agent } => {
+            if state.paused.contains(agent) {
+                return Err(Refusal::SeatPaused(agent.clone()));
+            }
             item_move(state, *item, kind)?;
             let i = &state.items[item];
             let waiting_on = state.unlanded_dependencies(i);
@@ -496,6 +511,9 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
         }
 
         Command::Audit { item, by } => {
+            if state.paused.contains(by) {
+                return Err(Refusal::SeatPaused(by.clone()));
+            }
             item_move(state, *item, kind)?;
             let i = &state.items[item];
             if i.author.as_ref() == Some(by) {
@@ -519,6 +537,23 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                 require_claimant(state, *item, by)?;
             }
             Ok(vec![Effect::new(Structure::ItemReady { item: *item })])
+        }
+
+        Command::Pause { seats, actor } | Command::Resume { seats, actor } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::SeatControlIsForThePerson);
+            }
+            let pause = matches!(command, Command::Pause { .. });
+            Ok(seats
+                .iter()
+                .map(|seat| {
+                    Effect::new(if pause {
+                        Structure::SeatPaused { seat: seat.clone() }
+                    } else {
+                        Structure::SeatResumed { seat: seat.clone() }
+                    })
+                })
+                .collect())
         }
 
         Command::Supersede { item, by, actor } => {
@@ -779,6 +814,8 @@ mod tests {
             | CommandKind::PhaseOpen
             | CommandKind::PhaseClose
             | CommandKind::ItemAdd
+            | CommandKind::Pause
+            | CommandKind::Resume
             | CommandKind::MessageSend => return None,
         })
     }
@@ -1212,6 +1249,56 @@ mod tests {
         assert_eq!(h.state.check_index(), Ok(()));
         h.state.index.replaced.clear();
         assert!(h.state.check_index().is_err());
+    }
+
+    #[test]
+    fn a_paused_seat_finishes_what_it_holds_and_takes_nothing_new() {
+        let mut h = item_in(ItemStateKind::Claimed);
+        let heron = agent("heron");
+        let pause = |actor| Command::Pause {
+            seats: vec![agent("heron"), agent("wren")],
+            actor,
+        };
+        assert_eq!(
+            h.run(pause(Actor::Agent(heron.clone()))),
+            Err(Refusal::SeatControlIsForThePerson)
+        );
+        h.must(pause(Actor::Person));
+        // What it holds, it finishes.
+        h.must(Command::Done {
+            item: ItemId(1),
+            by: heron.clone(),
+            evidence: vec![evidence(1)],
+        });
+        h.must(Command::Merge {
+            item: ItemId(1),
+            commit: CommitHash("abc".into()),
+        });
+        // Nothing new: no claim, and no audit for the paused auditor.
+        assert_eq!(
+            h.run(Command::Claim {
+                item: ItemId(2),
+                agent: heron.clone()
+            }),
+            Err(Refusal::SeatPaused(heron.clone()))
+        );
+        assert_eq!(
+            h.run(Command::Audit {
+                item: ItemId(1),
+                by: agent("wren")
+            }),
+            Err(Refusal::SeatPaused(agent("wren")))
+        );
+        h.must(Command::Resume {
+            seats: vec![heron.clone()],
+            actor: Actor::Person,
+        });
+        h.must(Command::Claim {
+            item: ItemId(2),
+            agent: heron,
+        });
+        assert!(h.state.paused.contains(&agent("wren")));
+        assert_eq!(State::fold(&h.log).unwrap(), h.state);
     }
 
     #[test]

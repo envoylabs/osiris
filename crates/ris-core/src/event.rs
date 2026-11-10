@@ -115,6 +115,14 @@ pub enum Structure {
         item: ItemId,
         by: ItemId,
     },
+    /// The person paused a seat: its next claim or audit is refused
+    /// until it is resumed. What it holds now it finishes.
+    SeatPaused {
+        seat: AgentName,
+    },
+    SeatResumed {
+        seat: AgentName,
+    },
     /// An auditor reviewed a done or merged item. Findings travel as
     /// messages; this records only that the review happened.
     ItemAudited {
