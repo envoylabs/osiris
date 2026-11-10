@@ -110,6 +110,7 @@ The builders loop on `ris ready`, `ris claim`, `ris done`, a commit and
 
 ```sh
 ris summary                            # decisions waiting, the report, what is ready
+ris status                             # where each seat is: worktree, claim, +ahead -behind
 ris decide D-3 --choose 1 --rationale "..."
 ris phase close                        # review; merges phase/P-1 into main
 ```

@@ -126,6 +126,9 @@ enum Cmd {
     Summary,
     /// The phase report.
     Report,
+    /// Where each seat is: role, worktree, branch, claim, commits ahead
+    /// of and behind the phase branch, uncommitted changes.
+    Status,
     /// Scan the files git tracks or would pick up (or the given paths,
     /// tracked or not) as `ris merge` scans a commit: exit 2 on a hit,
     /// naming the place and never the text. Scanning no files is an
@@ -760,6 +763,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Summary => Ok(render::summary(&p.load()?, &actor)),
 
         Cmd::Report => Ok(render::report(&p.load()?)),
+
+        Cmd::Status => Ok(ris::status::render(&p, &p.load()?)),
 
         Cmd::Scan { paths } => {
             let files = ris::exits::files_to_scan(&p.work, paths)?;

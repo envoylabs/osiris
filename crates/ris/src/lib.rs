@@ -9,4 +9,5 @@ pub mod export;
 pub mod import;
 pub mod project;
 pub mod render;
+pub mod status;
 pub mod style;
