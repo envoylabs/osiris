@@ -96,6 +96,13 @@ pub enum Command {
         about: Option<ItemId>,
         body: Text,
     },
+    /// Replace an item that has not been started with another, which
+    /// must exist and stand for itself. The person's only.
+    Supersede {
+        item: ItemId,
+        by: ItemId,
+        actor: Actor,
+    },
 }
 
 impl Command {
@@ -122,6 +129,7 @@ impl Command {
             Self::MessageSend { .. } => CommandKind::MessageSend,
             Self::Release { .. } => CommandKind::Release,
             Self::Audit { .. } => CommandKind::Audit,
+            Self::Supersede { .. } => CommandKind::Supersede,
         }
     }
 }
@@ -165,6 +173,7 @@ fn item_state_kind(s: &ItemState) -> ItemStateKind {
         ItemState::Blocked { .. } => ItemStateKind::Blocked,
         ItemState::Done { .. } => ItemStateKind::Done,
         ItemState::Merged { .. } => ItemStateKind::Merged,
+        ItemState::Superseded { .. } => ItemStateKind::Superseded,
     }
 }
 
@@ -175,6 +184,7 @@ fn item_state_name(k: ItemStateKind) -> &'static str {
         ItemStateKind::Blocked => "blocked",
         ItemStateKind::Done => "done",
         ItemStateKind::Merged => "merged",
+        ItemStateKind::Superseded => "superseded",
     }
 }
 
@@ -511,6 +521,24 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             Ok(vec![Effect::new(Structure::ItemReady { item: *item })])
         }
 
+        Command::Supersede { item, by, actor } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::SupersedeIsForThePerson(*item));
+            }
+            item_move(state, *item, kind)?;
+            let replacement = state.items.get(by).ok_or(Refusal::UnknownItem(*by))?;
+            if by == item || matches!(replacement.state, ItemState::Superseded { .. }) {
+                return Err(Refusal::NotAReplacement {
+                    item: *item,
+                    by: *by,
+                });
+            }
+            Ok(vec![Effect::new(Structure::ItemSuperseded {
+                item: *item,
+                by: *by,
+            })])
+        }
+
         Command::MessageSend {
             from,
             to,
@@ -645,7 +673,17 @@ mod tests {
     fn item_in(kind: ItemStateKind) -> Harness {
         let mut h = with_phase_and_item();
         let item = ItemId(1);
+        // I-2 is there to replace I-1 for the Supersede rows.
+        h.must(Command::ItemAdd {
+            goal: t("a replacement"),
+            checks: vec![],
+            depends_on: vec![],
+        });
         if kind == ItemStateKind::Ready {
+            return h;
+        }
+        if kind == ItemStateKind::Superseded {
+            h.must(supersede(item, ItemId(2), Actor::Person));
             return h;
         }
         h.must(Command::Claim {
@@ -732,6 +770,7 @@ mod tests {
                 item,
                 by: agent("wren"),
             },
+            CommandKind::Supersede => supersede(item, ItemId(2), Actor::Person),
             // Decide acts on a decision, and reaches the item through
             // the blocker; covered by the decision table and a test
             // below.
@@ -907,6 +946,7 @@ mod tests {
     #[test]
     fn a_mechanical_decision_is_taken_at_once_by_its_raiser() {
         let mut h = item_in(ItemStateKind::Claimed);
+        let before = h.log.len();
         h.must(item_command(CommandKind::RaiseMechanical).unwrap());
         let d = &h.state.decisions[&DecisionId(1)];
         assert!(matches!(
@@ -917,9 +957,9 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(h.log.len(), 5, "raised and taken are two events");
+        assert_eq!(h.log.len(), before + 2, "raised and taken are two events");
         assert_eq!(
-            h.log[4].text_field("rationale").unwrap().as_str(),
+            h.log[before + 1].text_field("rationale").unwrap().as_str(),
             "because"
         );
     }
@@ -1007,6 +1047,79 @@ mod tests {
         assert_eq!(h.state.items[&ItemId(1)].state, ItemState::Ready);
         h.must(Command::Claim {
             item: ItemId(1),
+            agent: agent("wren"),
+        });
+    }
+
+    fn supersede(item: ItemId, by: ItemId, actor: Actor) -> Command {
+        Command::Supersede { item, by, actor }
+    }
+
+    #[test]
+    fn only_the_person_supersedes_and_only_with_a_live_item() {
+        let mut h = item_in(ItemStateKind::Ready);
+        let heron = Actor::Agent(agent("heron"));
+        assert_eq!(
+            h.run(supersede(ItemId(1), ItemId(2), heron)),
+            Err(Refusal::SupersedeIsForThePerson(ItemId(1)))
+        );
+        assert_eq!(
+            h.run(supersede(ItemId(1), ItemId(1), Actor::Person)),
+            Err(Refusal::NotAReplacement {
+                item: ItemId(1),
+                by: ItemId(1)
+            })
+        );
+        assert_eq!(
+            h.run(supersede(ItemId(1), ItemId(9), Actor::Person)),
+            Err(Refusal::UnknownItem(ItemId(9)))
+        );
+        h.must(supersede(ItemId(1), ItemId(2), Actor::Person));
+        assert_eq!(h.state.ready().count(), 1, "the superseded item left ready");
+        // A chain cannot loop back: I-2 cannot be replaced by I-1.
+        assert_eq!(
+            h.run(supersede(ItemId(2), ItemId(1), Actor::Person)),
+            Err(Refusal::NotAReplacement {
+                item: ItemId(2),
+                by: ItemId(1)
+            })
+        );
+    }
+
+    #[test]
+    fn a_dependency_on_a_superseded_item_waits_on_its_replacement() {
+        let mut h = item_in(ItemStateKind::Ready);
+        h.must(Command::ItemAdd {
+            goal: t("depends on the first"),
+            checks: vec![],
+            depends_on: vec![ItemId(1)],
+        });
+        h.must(supersede(ItemId(1), ItemId(2), Actor::Person));
+        assert_eq!(
+            h.run(Command::Claim {
+                item: ItemId(3),
+                agent: agent("wren")
+            }),
+            Err(Refusal::DependenciesOpen {
+                item: ItemId(3),
+                waiting_on: vec![ItemId(2)]
+            })
+        );
+        h.must(Command::Claim {
+            item: ItemId(2),
+            agent: agent("heron"),
+        });
+        h.must(Command::Done {
+            item: ItemId(2),
+            by: agent("heron"),
+            evidence: vec![evidence(1)],
+        });
+        h.must(Command::Merge {
+            item: ItemId(2),
+            commit: CommitHash("abc".into()),
+        });
+        h.must(Command::Claim {
+            item: ItemId(3),
             agent: agent("wren"),
         });
     }

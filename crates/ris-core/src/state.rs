@@ -75,18 +75,29 @@ impl State {
         })
     }
 
-    /// Dependencies of `item` that have not merged.
+    /// Dependencies of `item` that have not merged. A superseded
+    /// dependency stands for its replacement.
     pub fn unlanded_dependencies(&self, item: &Item) -> Vec<ItemId> {
         item.depends_on
             .iter()
+            .map(|d| self.current(*d))
             .filter(|d| {
                 !matches!(
                     self.items.get(d).map(|i| &i.state),
                     Some(ItemState::Merged { .. })
                 )
             })
-            .copied()
             .collect()
+    }
+
+    /// The item that stands for `item` now: itself, or the end of its
+    /// chain of replacements. The chain cannot loop: an item is only
+    /// superseded by one that is not itself superseded.
+    pub fn current(&self, mut item: ItemId) -> ItemId {
+        while let Some(ItemState::Superseded { by }) = self.items.get(&item).map(|i| &i.state) {
+            item = *by;
+        }
+        item
     }
 
     /// Open decisions, in the order raised.
@@ -186,6 +197,9 @@ impl State {
                     evidence,
                     commit: commit.clone(),
                 };
+            }
+            Structure::ItemSuperseded { item, by } => {
+                self.item_mut(seq, *item)?.state = ItemState::Superseded { by: *by };
             }
             Structure::DecisionRaised {
                 decision,

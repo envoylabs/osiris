@@ -76,6 +76,10 @@ pub enum Refusal {
     /// An explanation needs a summary, a reason for the recommendation,
     /// and at least one pro or con for every option.
     ThinExplanation(DecisionId),
+    /// Replacing an item is the person's to do.
+    SupersedeIsForThePerson(ItemId),
+    /// An item is replaced by another item that is not itself replaced.
+    NotAReplacement { item: ItemId, by: ItemId },
 }
 
 impl Refusal {
@@ -139,6 +143,13 @@ impl Refusal {
             }
             Self::ThinExplanation(_) => {
                 "give --summary, --why, and a --pro or --con for every option".into()
+            }
+            Self::SupersedeIsForThePerson(_) => {
+                "raise it with the person, who runs `ris item supersede`".into()
+            }
+            Self::NotAReplacement { .. } => {
+                "name an item that is neither this one nor superseded; add one with `ris item add`"
+                    .into()
             }
         }
     }
@@ -220,6 +231,12 @@ impl fmt::Display for Refusal {
                 f,
                 "refused: {d}'s explanation leaves an option without a pro or a con, or has no summary or reason"
             ),
+            Self::SupersedeIsForThePerson(item) => {
+                write!(f, "refused: only the person supersedes {item}")
+            }
+            Self::NotAReplacement { item, by } => {
+                write!(f, "refused: {by} cannot replace {item}")
+            }
         }
     }
 }

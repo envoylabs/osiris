@@ -411,6 +411,7 @@ enum ItemState {
     Blocked { on: Vec<Blocker> },             // a decision, another item
     Done { evidence: Vec<EvidenceId> },       // checks passed
     Merged { evidence: Vec<EvidenceId>, commit: CommitHash },
+    Superseded { by: ItemId },                // replaced before it started; final
 }
 
 enum ClaimState {                             // the type exists; no events yet
@@ -424,7 +425,7 @@ enum Structure {                              // an event's structural part
     PhaseOpened { phase }, PhaseClosed { phase, report: Hash },
     ItemAdded { item, phase, checks, depends_on }, ItemClaimed { item, agent },
     ItemBlocked { item, on }, ItemReady { item }, ItemDone { item, evidence },
-    ItemMerged { item, commit }, ItemAudited { item, by },
+    ItemMerged { item, commit }, ItemAudited { item, by }, ItemSuperseded { item, by },
     DecisionRaised { decision, class, by, about, options, recommended },
     DecisionTaken { decision, by, chosen },
     DecisionExplained { decision, by, pros, cons },

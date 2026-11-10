@@ -33,6 +33,9 @@ pub enum CommandKind {
     /// Attaching the full case for an open decision: pros and cons per
     /// option and why the recommendation holds.
     Explain,
+    /// The person replacing an item that has not been started with
+    /// another.
+    Supersede,
 }
 
 impl CommandKind {
@@ -52,6 +55,7 @@ impl CommandKind {
         Self::Release,
         Self::Audit,
         Self::Explain,
+        Self::Supersede,
     ];
 }
 
@@ -63,6 +67,7 @@ pub enum ItemStateKind {
     Blocked,
     Done,
     Merged,
+    Superseded,
 }
 
 impl ItemStateKind {
@@ -72,6 +77,7 @@ impl ItemStateKind {
         Self::Blocked,
         Self::Done,
         Self::Merged,
+        Self::Superseded,
     ];
 }
 
@@ -133,6 +139,11 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         (S::Done, C::Audit, Move::Stay),
         (S::Merged, C::Audit, Move::Stay),
         // Merged: nothing. Changed only by a further item.
+        // An item nobody has started may be replaced; one in progress
+        // is released first, and one done or merged stands.
+        (S::Ready, C::Supersede, Move::To(S::Superseded)),
+        (S::Blocked, C::Supersede, Move::To(S::Superseded)),
+        // Superseded: nothing. Final.
     ]
 };
 
@@ -230,6 +241,13 @@ mod tests {
             DecisionStateKind::ALL,
             &[DecisionStateKind::Superseded],
         );
+    }
+
+    #[test]
+    fn superseded_is_final() {
+        for command in CommandKind::ALL {
+            assert_eq!(lookup(ITEM, ItemStateKind::Superseded, *command), None);
+        }
     }
 
     #[test]

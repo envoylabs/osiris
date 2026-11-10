@@ -60,7 +60,7 @@ enum Cmd {
         #[command(subcommand)]
         action: PhaseCmd,
     },
-    /// Add an item to the open phase.
+    /// Add an item to the open phase, or supersede one.
     Item {
         #[command(subcommand)]
         action: ItemCmd,
@@ -182,6 +182,13 @@ enum PhaseCmd {
 #[derive(Subcommand)]
 enum ItemCmd {
     Add(ItemAdd),
+    /// Replace an item nobody has started with another (the person's
+    /// only). Final; what depended on it waits on the replacement.
+    Supersede {
+        item: ItemId,
+        #[arg(long)]
+        by: ItemId,
+    },
 }
 
 #[derive(Subcommand)]
@@ -594,6 +601,17 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 Ok(Output::new(
                     format!("added {id}"),
                     json!({ "item": id.to_string() }),
+                ))
+            }
+            ItemCmd::Supersede { item, by } => {
+                p.run(&Command::Supersede {
+                    item: *item,
+                    by: *by,
+                    actor: actor.clone(),
+                })?;
+                Ok(Output::new(
+                    format!("{item} superseded by {by}"),
+                    json!({ "item": item.to_string(), "superseded_by": by.to_string() }),
                 ))
             }
         },
