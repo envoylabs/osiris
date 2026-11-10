@@ -1,6 +1,7 @@
-//! `ris up`: the harness declared in .osiris/config.toml is brought up
-//! by doing only the difference, as docker compose up -d does. A fake
-//! agent program on PATH stands in for the agent tool.
+//! `ris up` and `ris down`: the harness declared in .osiris/config.toml
+//! is brought up by doing only the difference, as docker compose up -d
+//! does, and brought down without losing work. A fake agent program on
+//! PATH stands in for the agent tool.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -113,7 +114,7 @@ const WAITING_AGENT: &str = "#!/bin/sh\nprintf 'hello from %s\\n' \"$RIS_AGENT\"
     while [ ! -f \"$RIS_ROOT/.osiris/stop-$RIS_AGENT\" ]; do sleep 0.05; done\nexit 0\n";
 
 #[test]
-fn up_does_only_the_difference() {
+fn up_does_only_the_difference_and_down_stops_without_losing_work() {
     let rig = Rig::new("up", WAITING_AGENT);
     let running = |r: &Rig| -> Vec<String> {
         let v: Value = serde_json::from_slice(&r.ris(None, &["--json", "status"]).stdout).unwrap();
@@ -145,22 +146,40 @@ fn up_does_only_the_difference() {
     );
     assert_eq!(rig.events("run_started").len(), 3, "nothing started twice");
 
-    // Each agent stops when it is done; up starts only the named seat
-    // again.
+    // Down: every seat is paused and lets its agent finish.
+    let out = rig.ok(None, &["down"]);
+    assert!(out.contains("rook: paused"), "{out}");
     for seat in ["heron", "rook", "wren"] {
         fs::write(rig.repo.join(format!(".osiris/stop-{seat}")), "").unwrap();
     }
     rig.until("all stopped", |r| running(r).is_empty());
     assert_eq!(rig.events("run_stopped").len(), 3);
-    fs::remove_file(rig.repo.join(".osiris/stop-rook")).unwrap();
+    assert!(
+        rig.repo.with_file_name("repo-rook").exists(),
+        "worktrees are kept"
+    );
+    let out = rig.ok(None, &["down"]);
+    assert!(
+        out.starts_with("nothing to do"),
+        "down is idempotent: {out}"
+    );
+
+    // Up after down resumes and starts again; only the named seat.
+    for seat in ["heron", "rook", "wren"] {
+        fs::remove_file(rig.repo.join(format!(".osiris/stop-{seat}"))).unwrap();
+    }
     let out = rig.ok(None, &["up", "rook"]);
-    assert!(out.contains("rook: started"), "{out}");
+    assert!(
+        out.contains("rook: resumed") && out.contains("rook: started"),
+        "{out}"
+    );
     assert!(!out.contains("heron"), "{out}");
     rig.until("rook running", |r| running(r) == ["rook"]);
     fs::write(rig.repo.join(".osiris/stop-rook"), "").unwrap();
     rig.until("rook stopped", |r| running(r).is_empty());
 
     // A seat in the log but removed from the file is reported, untouched.
+    rig.ok(None, &["seat", "resume", "heron"]);
     rig.ok(Some("heron"), &["item", "add", "x"]);
     rig.ok(Some("heron"), &["claim", "I-1"]);
     rig.ok(

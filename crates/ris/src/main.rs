@@ -57,6 +57,12 @@ enum Cmd {
         /// Only these seats; all of them when none is named.
         seats: Vec<String>,
     },
+    /// Bring the harness down without losing work: each seat finishes
+    /// the item it holds, then its agent stops. Safe to run again.
+    Down {
+        /// Only these seats; all of them when none is named.
+        seats: Vec<String>,
+    },
     /// Print the agents' rules (what OSIRIS.md holds). Not listed in
     /// help: named wherever it is needed.
     #[command(hide = true)]
@@ -536,6 +542,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         }
 
         Cmd::Up { seats } => up(&mut p, &actor, seats),
+
+        Cmd::Down { seats } => down(&mut p, &actor, seats),
 
         Cmd::Seat {
             action: SeatCmd::Add { name, role },
@@ -1729,6 +1737,58 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
     Ok(Output::new(
         text,
         json!({ "changed": changed, "not_in_file": retired }),
+    ))
+}
+
+/// `ris down`: pause each seat, so it finishes what it holds and its
+/// agent stops at its next claim. Nothing is killed and nothing lost.
+fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliError> {
+    if *actor != Actor::Person {
+        return Err(CliError::Refused(
+            ris_core::Refusal::SeatControlIsForThePerson,
+        ));
+    }
+    for n in named {
+        if !p.config.agents.contains_key(n) {
+            return Err(CliError::UnknownAgent(n.clone()));
+        }
+    }
+    let seats: Vec<AgentName> = if named.is_empty() {
+        p.config.agents.keys().cloned().map(AgentName).collect()
+    } else {
+        named.iter().cloned().map(AgentName).collect()
+    };
+    let l = p.load()?;
+    let to_pause: Vec<AgentName> = seats
+        .into_iter()
+        .filter(|s| !l.state.paused.contains(s))
+        .collect();
+    if to_pause.is_empty() {
+        return Ok(Output::new(
+            "nothing to do: every seat named is already down",
+            json!({ "changed": [] }),
+        ));
+    }
+    let (l, _) = p.run(&Command::Pause {
+        seats: to_pause.clone(),
+        actor: actor.clone(),
+    })?;
+    let changed: Vec<String> = to_pause
+        .iter()
+        .map(|s| {
+            let holds = l.state.items.values().find(|i| {
+                matches!(&i.state, ris_core::primitives::ItemState::Claimed { agent } if agent == s)
+            });
+            match (holds, l.state.running.contains_key(s)) {
+                (Some(i), _) => format!("{s}: paused; finishes {} first", i.id),
+                (None, true) => format!("{s}: paused; its agent stops at its next claim"),
+                (None, false) => format!("{s}: paused"),
+            }
+        })
+        .collect();
+    Ok(Output::new(
+        changed.join("\n"),
+        json!({ "changed": changed }),
     ))
 }
 
