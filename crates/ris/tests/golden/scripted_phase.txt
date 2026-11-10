@@ -120,9 +120,11 @@ forward.
 
 To load an existing project's backlog and standing decisions, follow
 the osiris-onboard skill (in the osiris repository under
-`skills/osiris-onboard`): checks first, then an import file kept in
-`.osiris/`, checked with `ris import --dry-run`, approved by the person,
-then imported. Never record a decision the project has not made.
+`skills/osiris-onboard`): checks first, then what the log already
+holds, then an import file kept in `.osiris/`, checked with `ris import
+--dry-run`, approved by the person, then imported. Never record a
+decision the project has not made; import an undecided question open,
+for the person to answer.
 [exit 0]
 
 $ ris init
