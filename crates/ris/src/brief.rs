@@ -47,7 +47,9 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
         .take(6)
         .map(|b| format!("{b:02x}"))
         .collect();
-    let phase = &l.state.phases[&i.phase];
+    // The open phase: an item carried over from an earlier one is
+    // worked under the current goal.
+    let phase = l.state.open_phase().unwrap_or(&l.state.phases[&i.phase]);
     let phase_goal = l.text(phase.at, "goal");
     let goal = l.text(i.at, "goal");
     let checks: Vec<String> = i.checks.iter().map(ToString::to_string).collect();
@@ -59,7 +61,7 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
     });
     head.push_str(&format!(
         "project: {} {phase_goal}\n         you are {role}\n",
-        i.phase
+        phase.id
     ));
     head.push_str(&format!("item:    {item} {goal}\n"));
     head.push_str(&format!(
@@ -157,7 +159,7 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
 
     let json = json!({
         "rules": { "path": rules.path, "hash": rules_hash },
-        "project": { "phase": i.phase.to_string(), "goal": phase_goal, "role": role },
+        "project": { "phase": phase.id.to_string(), "goal": phase_goal, "role": role },
         "item": item.to_string(),
         "goal": goal,
         "checks": checks,
