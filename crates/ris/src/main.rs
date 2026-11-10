@@ -46,8 +46,17 @@ enum Cmd {
         local: bool,
     },
     /// Create a builder's worktree beside the repository, on its own
-    /// branch from the phase branch, with the rules imported.
+    /// branch from the phase branch, with the rules imported. Done by
+    /// `ris up`; not listed in help.
+    #[command(hide = true)]
     Worktree { seat: String },
+    /// Make the harness match .osiris/config.toml, doing only the
+    /// difference: worktrees, resumes, and agents started in the
+    /// background. Safe to run again. The person's.
+    Up {
+        /// Only these seats; all of them when none is named.
+        seats: Vec<String>,
+    },
     /// Print the agents' rules (what OSIRIS.md holds). Not listed in
     /// help: named wherever it is needed.
     #[command(hide = true)]
@@ -157,9 +166,13 @@ enum Cmd {
         dry_run: bool,
     },
     /// Write each closed phase's events to <dir>/P-n.jsonl, scanned
-    /// first. Nothing is exported unless you run this.
+    /// first. Nothing is exported unless you run this. Not listed in
+    /// help.
+    #[command(hide = true)]
     Export { dir: PathBuf },
-    /// Dump the log as JSON lines, from a sequence number.
+    /// Dump the log as JSON lines, from a sequence number. Not listed
+    /// in help: `ris watch` serves clients.
+    #[command(hide = true)]
     Log {
         #[arg(long, default_value_t = 1)]
         from: u64,
@@ -512,47 +525,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Init { .. } | Cmd::Rules => unreachable!(),
 
         Cmd::Worktree { seat } => {
-            if !p.config.agents.contains_key(seat) {
-                return Err(CliError::UnknownAgent(seat.clone()));
-            }
-            let name = p
-                .root
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "repo".into());
-            let path = p
-                .root
-                .parent()
-                .unwrap_or(&p.root)
-                .join(format!("{name}-{seat}"));
-            if path.exists() {
-                return Err(CliError::Other(format!(
-                    "{} already exists\n  next: start the agent there, or remove it with `git worktree remove`",
-                    path.display()
-                )));
-            }
-            let has_branch = git(
-                &p.root,
-                &[
-                    "rev-parse",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/heads/{seat}"),
-                ],
-            )
-            .is_ok();
-            let target = path.to_string_lossy().into_owned();
-            let args: Vec<&str> = if has_branch {
-                vec!["worktree", "add", "--quiet", &target, seat]
-            } else {
-                vec!["worktree", "add", "--quiet", "-b", seat, &target]
-            };
-            git(&p.root, &args).map_err(|e| CliError::Other(format!("git worktree add: {e}")))?;
-            ris::project::exclude_locally(&p.root, &[ris::project::LOCAL_IMPORT_FILE])?;
-            let import = path.join(ris::project::LOCAL_IMPORT_FILE);
-            if !import.exists() {
-                std::fs::write(&import, format!("@{}\n", p.rules_path().display()))?;
-            }
+            let path = make_worktree(&p, seat)?;
             Ok(Output::new(
                 format!(
                     "worktree for {seat} at {}\n  next: cd there and start the agent with RIS_AGENT={seat}",
@@ -561,6 +534,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 json!({ "seat": seat, "path": path }),
             ))
         }
+
+        Cmd::Up { seats } => up(&mut p, &actor, seats),
 
         Cmd::Seat {
             action: SeatCmd::Add { name, role },
@@ -1622,6 +1597,149 @@ fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), Cl
 /// merge from a worktree requires. Skipped only when there is no base
 /// to count from: work committed straight onto the main line with no
 /// merge yet recorded in the phase, or no main line to fork from.
+/// Create a writing seat's worktree beside the repository, on its own
+/// branch, with the rules imported. Its path.
+fn make_worktree(p: &Project, seat: &str) -> Result<PathBuf, CliError> {
+    if !p.config.agents.contains_key(seat) {
+        return Err(CliError::UnknownAgent(seat.to_owned()));
+    }
+    let name = p
+        .root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "repo".into());
+    let path = p
+        .root
+        .parent()
+        .unwrap_or(&p.root)
+        .join(format!("{name}-{seat}"));
+    if path.exists() {
+        return Err(CliError::Other(format!(
+            "{} already exists\n  next: start the agent there, or remove it with `git worktree remove`",
+            path.display()
+        )));
+    }
+    let has_branch = git(
+        &p.root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{seat}"),
+        ],
+    )
+    .is_ok();
+    let target = path.to_string_lossy().into_owned();
+    let args: Vec<&str> = if has_branch {
+        vec!["worktree", "add", "--quiet", &target, seat]
+    } else {
+        vec!["worktree", "add", "--quiet", "-b", seat, &target]
+    };
+    git(&p.root, &args).map_err(|e| CliError::Other(format!("git worktree add: {e}")))?;
+    ris::project::exclude_locally(&p.root, &[ris::project::LOCAL_IMPORT_FILE])?;
+    let import = path.join(ris::project::LOCAL_IMPORT_FILE);
+    if !import.exists() {
+        std::fs::write(&import, format!("@{}\n", p.rules_path().display()))?;
+    }
+    Ok(path)
+}
+
+/// `ris up`: make the harness match the configuration, doing only the
+/// difference. Each named seat (or every seat) gets the worktree it
+/// needs, is resumed if paused, and is started in the background if its
+/// agent is not running. Seats in the log but not in the file are
+/// reported and left alone.
+fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliError> {
+    if *actor != Actor::Person {
+        return Err(CliError::Refused(
+            ris_core::Refusal::SeatControlIsForThePerson,
+        ));
+    }
+    for n in named {
+        if !p.config.agents.contains_key(n) {
+            return Err(CliError::UnknownAgent(n.clone()));
+        }
+    }
+    let seats: Vec<String> = if named.is_empty() {
+        p.config.agents.keys().cloned().collect()
+    } else {
+        named.to_vec()
+    };
+    let mut changed: Vec<String> = Vec::new();
+    let l = p.load()?;
+    let places = ris::status::seats(p, &l);
+    for seat in &seats {
+        let role = p.config.agents[seat].role;
+        let place = places.iter().find(|s| &s.seat == seat);
+        if role == ris::config::Role::Builder && place.and_then(|s| s.worktree.as_ref()).is_none() {
+            let path = make_worktree(p, seat)?;
+            changed.push(format!("{seat}: worktree at {}", shown_beside(p, &path)));
+        }
+    }
+    let name = |s: &String| AgentName(s.clone());
+    let paused: Vec<AgentName> = seats
+        .iter()
+        .map(name)
+        .filter(|s| l.state.paused.contains(s))
+        .collect();
+    if !paused.is_empty() {
+        p.run(&Command::Resume {
+            seats: paused.clone(),
+            actor: actor.clone(),
+        })?;
+        for s in &paused {
+            changed.push(format!("{s}: resumed"));
+        }
+    }
+    let exe = std::env::current_exe()?;
+    for seat in &seats {
+        if l.state.running.contains_key(&name(seat)) {
+            continue;
+        }
+        // In the background, in its own process group, so it outlives
+        // this command and the terminal's interrupt does not reach it;
+        // it records its own start and stop.
+        use std::os::unix::process::CommandExt;
+        std::process::Command::new(&exe)
+            .args(["seat", "start", seat, "--quiet"])
+            .current_dir(&p.root)
+            .env("RIS_AGENT", ris::project::PERSON)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()?;
+        changed.push(format!("{seat}: started; `ris logs {seat}` follows it"));
+    }
+    let retired: Vec<String> = names_in_log(&l.state)
+        .into_iter()
+        .filter(|n| !p.config.agents.contains_key(n))
+        .collect();
+    let mut text = if changed.is_empty() {
+        "nothing to do: the harness matches .osiris/config.toml".to_owned()
+    } else {
+        changed.join("\n")
+    };
+    if !retired.is_empty() {
+        text.push_str(&format!(
+            "\nin the log but not in the file, left alone: {}",
+            retired.join(", ")
+        ));
+    }
+    Ok(Output::new(
+        text,
+        json!({ "changed": changed, "not_in_file": retired }),
+    ))
+}
+
+/// A path beside the repository, shown relative to its parent.
+fn shown_beside(p: &Project, path: &std::path::Path) -> String {
+    let base = p.root.parent().unwrap_or(&p.root);
+    path.strip_prefix(base)
+        .map(|r| format!("../{}", r.display()))
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
 /// `ris seat start`: run a seat's agent through the runner and record
 /// its start and stop around it.
 fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result<Output, CliError> {
