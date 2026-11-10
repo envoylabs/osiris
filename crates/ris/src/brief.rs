@@ -84,21 +84,19 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
     // Decisions raised about this item or what it depends on, newest
     // first, so a cut drops the oldest.
     // An item stands for every item it replaced, so a decision about a
-    // superseded item touches its replacement: compare through
-    // `current`, which follows the chain of replacements.
+    // superseded item touches its replacement: each item counts with its
+    // lineage, read from the reverse index.
     let touching: BTreeSet<ItemId> = std::iter::once(item)
         .chain(i.depends_on.iter().copied())
         .map(|t| l.state.current(t))
+        .flat_map(|t| l.state.lineage(t))
         .collect();
-    let mut decisions: Vec<&Decision> = l
-        .state
-        .decisions
-        .values()
-        .filter(|d| {
-            d.about
-                .is_some_and(|a| touching.contains(&l.state.current(a)))
-        })
+    let ids: BTreeSet<_> = touching
+        .iter()
+        .flat_map(|t| l.state.decisions_about(*t))
+        .copied()
         .collect();
+    let mut decisions: Vec<&Decision> = ids.iter().map(|d| &l.state.decisions[d]).collect();
     decisions.reverse();
 
     let mut lines = Vec::new();

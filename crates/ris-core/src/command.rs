@@ -1124,6 +1124,96 @@ mod tests {
         });
     }
 
+    /// The reverse index is a second copy of facts the log already
+    /// holds, so it is checked against a full scan after every command
+    /// of a long pseudo-random history of adds, dependencies, decisions
+    /// and replacements, and against a fresh fold of the log.
+    #[test]
+    fn the_reverse_index_always_matches_a_scan() {
+        for seed in 1..=20u64 {
+            let mut rng = seed;
+            let mut next = |n: u32| {
+                // A linear congruential generator: enough to vary the
+                // history, and the same on every run.
+                rng = rng
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((rng >> 33) % u64::from(n.max(1))) as u32
+            };
+            let mut h = Harness::new();
+            h.must(Command::PhaseOpen { goal: t("index") });
+            for _ in 0..60 {
+                let items = h.state.items.len() as u32;
+                match next(4) {
+                    0 | 1 => {
+                        let depends_on = if items == 0 {
+                            vec![]
+                        } else {
+                            (0..next(3)).map(|_| ItemId(next(items) + 1)).collect()
+                        };
+                        let mut depends_on: Vec<ItemId> = depends_on;
+                        depends_on.sort();
+                        depends_on.dedup();
+                        h.must(Command::ItemAdd {
+                            goal: t("an item"),
+                            checks: vec![],
+                            depends_on,
+                        });
+                    }
+                    2 if items > 0 => {
+                        let item = ItemId(next(items) + 1);
+                        let agent = agent("heron");
+                        if h.run(Command::Claim {
+                            item,
+                            agent: agent.clone(),
+                        })
+                        .is_ok()
+                        {
+                            h.must(Command::DecisionRaise {
+                                by: Actor::Agent(agent.clone()),
+                                about: Some(item),
+                                class: DecisionClass::Mechanical,
+                                question: t("q"),
+                                options: vec![t("a"), t("b")],
+                                recommended: 0,
+                                rationale: t("r"),
+                            });
+                            h.must(Command::Release {
+                                item,
+                                by: Actor::Agent(agent),
+                            });
+                        }
+                    }
+                    3 if items > 1 => {
+                        // Refused when the pair is not allowed; either
+                        // way the index must still match.
+                        let _ = h.run(supersede(
+                            ItemId(next(items) + 1),
+                            ItemId(next(items) + 1),
+                            Actor::Person,
+                        ));
+                    }
+                    _ => {}
+                }
+                assert_eq!(h.state.check_index(), Ok(()), "seed {seed}");
+            }
+            assert!(
+                !h.state.index.replaced.is_empty() && !h.state.index.dependents.is_empty(),
+                "seed {seed} exercised too little"
+            );
+            assert_eq!(State::fold(&h.log).unwrap(), h.state, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn a_wrong_index_is_caught() {
+        let mut h = item_in(ItemStateKind::Ready);
+        h.must(supersede(ItemId(1), ItemId(2), Actor::Person));
+        assert_eq!(h.state.check_index(), Ok(()));
+        h.state.index.replaced.clear();
+        assert!(h.state.check_index().is_err());
+    }
+
     #[test]
     fn dependencies_must_merge_before_a_claim() {
         let mut h = with_phase_and_item();

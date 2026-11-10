@@ -472,7 +472,14 @@ Functional core, imperative shell; hexagonal between components.
   slice there is no daemon: the CLI hosts the core and opens the store
   itself, one transaction per command, which SQLite serialises across
   processes. The daemon arrives with leases, timers and the MCP
-  adapter. Either way every command passes through the core, which is
+  adapter. A view the daemon keeps instead of refolding (the reverse
+  index of dependents, decisions about each item and replacements is
+  the first) records the log head it was built at: when that differs
+  from the store's head it is rebuilt from the log, and at phase close
+  it is rebuilt and compared, the rebuilt copy winning and any
+  difference reported. Until then the index is part of the fold,
+  checked against a full scan by a property test, after every fold in
+  debug builds, and by `ris verify` and `ris phase close`. Either way every command passes through the core, which is
   where refusals, the confidentiality scan and atomicity live, so the
   agent sees the same commands and the same answers in both.
 - **`Store` trait:** the port that hides the engine. Swapping engines

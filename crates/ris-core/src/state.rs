@@ -27,7 +27,38 @@ pub struct State {
     pub messages: Vec<Message>,
     /// The last closed phase's report hash; [`Hash::ZERO`] before any.
     pub last_report: Hash,
+    /// The links read backwards, kept by the fold.
+    pub index: Index,
 }
+
+/// The reverse index: links that events record in one direction, read
+/// in the other. Derived, like the rest of the state, and rebuilt on
+/// every fold; [`State::check_index`] compares it with a full scan.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Index {
+    /// For each item, the items that depend on it, in the order added.
+    pub dependents: BTreeMap<ItemId, Vec<ItemId>>,
+    /// For each item, the decisions raised about it, in the order raised.
+    pub decisions_about: BTreeMap<ItemId, Vec<DecisionId>>,
+    /// For each item, the items it directly replaced, in id order.
+    pub replaced: BTreeMap<ItemId, Vec<ItemId>>,
+}
+
+/// The index disagrees with a scan of the items and decisions: a bug in
+/// the fold, never a fact about the log.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexMismatch {
+    pub kept: Index,
+    pub scanned: Index,
+}
+
+impl std::fmt::Display for IndexMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the reverse index disagrees with a scan of the state; this is a bug in ris")
+    }
+}
+
+impl std::error::Error for IndexMismatch {}
 
 /// A structural reference that the log should have made impossible.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +89,7 @@ impl State {
         for e in log {
             state.apply_event(e)?;
         }
+        debug_assert_eq!(state.check_index(), Ok(()));
         Ok(state)
     }
 
@@ -98,6 +130,65 @@ impl State {
             item = *by;
         }
         item
+    }
+
+    /// The index as a scan of the items and decisions gives it.
+    pub fn scan_index(&self) -> Index {
+        let mut ix = Index::default();
+        for i in self.items.values() {
+            for d in &i.depends_on {
+                ix.dependents.entry(*d).or_default().push(i.id);
+            }
+            if let ItemState::Superseded { by } = i.state {
+                ix.replaced.entry(by).or_default().push(i.id);
+            }
+        }
+        for d in self.decisions.values() {
+            if let Some(a) = d.about {
+                ix.decisions_about.entry(a).or_default().push(d.id);
+            }
+        }
+        ix
+    }
+
+    /// Whether the kept index matches a scan.
+    pub fn check_index(&self) -> Result<(), Box<IndexMismatch>> {
+        let scanned = self.scan_index();
+        if scanned == self.index {
+            Ok(())
+        } else {
+            Err(Box::new(IndexMismatch {
+                kept: self.index.clone(),
+                scanned,
+            }))
+        }
+    }
+
+    /// Items that depend on `item`, in the order added.
+    pub fn dependents(&self, item: ItemId) -> &[ItemId] {
+        self.index.dependents.get(&item).map_or(&[], Vec::as_slice)
+    }
+
+    /// Decisions raised about `item`, in the order raised.
+    pub fn decisions_about(&self, item: ItemId) -> &[DecisionId] {
+        self.index
+            .decisions_about
+            .get(&item)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// `item` and every item it stands for: those it replaced, and
+    /// those they replaced, in no particular order.
+    pub fn lineage(&self, item: ItemId) -> Vec<ItemId> {
+        let mut out = vec![item];
+        let mut n = 0;
+        while n < out.len() {
+            if let Some(r) = self.index.replaced.get(&out[n]) {
+                out.extend(r);
+            }
+            n += 1;
+        }
+        out
     }
 
     /// Open decisions, in the order raised.
@@ -165,6 +256,9 @@ impl State {
                         state: ItemState::Ready,
                     },
                 );
+                for d in depends_on {
+                    self.index.dependents.entry(*d).or_default().push(*item);
+                }
             }
             Structure::ItemClaimed { item, agent } => {
                 let i = self.item_mut(seq, *item)?;
@@ -200,6 +294,10 @@ impl State {
             }
             Structure::ItemSuperseded { item, by } => {
                 self.item_mut(seq, *item)?.state = ItemState::Superseded { by: *by };
+                // In id order, as a scan of the items gives it.
+                let r = self.index.replaced.entry(*by).or_default();
+                r.push(*item);
+                r.sort();
             }
             Structure::DecisionRaised {
                 decision,
@@ -223,6 +321,13 @@ impl State {
                         explained: None,
                     },
                 );
+                if let Some(a) = about {
+                    self.index
+                        .decisions_about
+                        .entry(*a)
+                        .or_default()
+                        .push(*decision);
+                }
             }
             Structure::DecisionExplained {
                 decision,

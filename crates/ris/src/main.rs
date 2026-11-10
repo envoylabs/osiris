@@ -561,6 +561,11 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     .open_phase()
                     .ok_or(CliError::Refused(ris_core::Refusal::NoOpenPhase))?;
                 let (phase_id, goal) = (phase.id, l.text(phase.at, "goal").to_owned());
+                // Facts become final here: check the derived index
+                // against a scan before anything is written.
+                l.state
+                    .check_index()
+                    .map_err(|e| CliError::Other(e.to_string()))?;
                 let closing = closing_merge(&mut p, phase_id, &goal)?;
                 let (l, events) = p.run(&Command::PhaseClose)?;
                 let closed = events.last().expect("close emits one event");
@@ -1098,6 +1103,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             let l = p.load()?;
             let v =
                 ris_core::event::verify(&l.log).map_err(ris_core::store::StoreError::Corrupt)?;
+            l.state
+                .check_index()
+                .map_err(|e| CliError::Other(e.to_string()))?;
             Ok(Output::new(
                 format!(
                     "ok: {} events, head {}{}",
