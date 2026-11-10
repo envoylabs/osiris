@@ -25,8 +25,8 @@ use ris::render::{self, Output};
     version,
     disable_help_subcommand = true,
     about = "osiris: decide at the boundaries, build in between",
-    after_help = "Ids: I-n item (a unit of work, one commit), D-n decision, P-n phase, \
-                  M-n message, E-<hash> evidence. `ris show <id>` prints any of them."
+    after_help = "Ids: I-n item (a unit of work, one commit), D-n decision, A-n person action, \
+                  P-n phase, M-n message, E-<hash> evidence. `ris show <id>` prints any of them."
 )]
 struct Cli {
     /// Print JSON instead of text.
@@ -48,7 +48,9 @@ enum Cmd {
     /// Create a builder's worktree beside the repository, on its own
     /// branch from the phase branch, with the rules imported.
     Worktree { seat: String },
-    /// Print the agents' rules (what OSIRIS.md holds).
+    /// Print the agents' rules (what OSIRIS.md holds). Not listed in
+    /// help: named wherever it is needed.
+    #[command(hide = true)]
     Rules,
     /// Add an agent seat to .osiris/config.toml. The person's command.
     Seat {
@@ -73,6 +75,11 @@ enum Cmd {
     Release { item: ItemId },
     /// The review queue; with an item, record that you reviewed it.
     Audit { item: Option<ItemId> },
+    /// Something only the person can do: raise one, or record it done.
+    Action {
+        #[command(subcommand)]
+        action: ActionCmd,
+    },
     /// Raise a decision: mechanical ones are taken at once and logged;
     /// substantive ones wait for the person and set the item aside.
     Decision {
@@ -188,6 +195,36 @@ enum ItemCmd {
         item: ItemId,
         #[arg(long)]
         by: ItemId,
+    },
+}
+
+#[derive(Subcommand)]
+enum ActionCmd {
+    /// Raise something only the person can do, linked to the items it
+    /// blocks (they wait) or informs (they proceed).
+    Raise {
+        /// What to do, in a sentence.
+        what: String,
+        /// How to tell it is done.
+        #[arg(long)]
+        done_when: String,
+        /// An item that waits for it. Repeatable.
+        #[arg(long = "blocks")]
+        blocks: Vec<ItemId>,
+        /// An item that proceeds and is shaped by it. Repeatable.
+        #[arg(long = "informs")]
+        informs: Vec<ItemId>,
+    },
+    /// Record a person action done, with evidence or a note. The
+    /// person's only.
+    Done {
+        action: ris_core::ids::ActionId,
+        /// A file to attach as evidence. Repeatable.
+        #[arg(long = "evidence")]
+        evidence: Vec<PathBuf>,
+        /// What happened, in a sentence.
+        #[arg(long)]
+        note: Option<String>,
     },
 }
 
@@ -1053,6 +1090,79 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 Some(hex) => show_evidence(&p, &hex.to_ascii_lowercase()),
                 None => render::show(&p.load()?, id).map_err(CliError::Other),
             }
+        }
+
+        Cmd::Action {
+            action:
+                ActionCmd::Raise {
+                    what,
+                    done_when,
+                    blocks,
+                    informs,
+                },
+        } => {
+            let (l, events) = p.run(&Command::RaiseAction {
+                by: actor.clone(),
+                what: p.text("what", what)?,
+                done_when: p.text("done_when", done_when)?,
+                blocks: blocks.clone(),
+                informs: informs.clone(),
+            })?;
+            let id = l.state.actions.keys().last().expect("just raised");
+            let blocked: Vec<String> = events
+                .iter()
+                .filter_map(|e| match &e.structure {
+                    ris_core::event::Structure::ItemBlocked { item, .. } => Some(item.to_string()),
+                    _ => None,
+                })
+                .collect();
+            let mut text = format!("{id} raised for the person");
+            if !blocked.is_empty() {
+                text.push_str(&format!(
+                    "; {} set aside until it is done",
+                    blocked.join(", ")
+                ));
+            }
+            Ok(Output::new(
+                text,
+                json!({ "action": id.to_string(), "blocked": blocked }),
+            ))
+        }
+
+        Cmd::Action {
+            action:
+                ActionCmd::Done {
+                    action,
+                    evidence,
+                    note,
+                },
+        } => {
+            let note = note.as_deref().map(|n| p.text("note", n)).transpose()?;
+            let mut ids = Vec::new();
+            for file in evidence {
+                ids.push(p.evidence.put_file(file)?);
+            }
+            let (_, events) = p.run(&Command::ActionDone {
+                action: *action,
+                by: actor.clone(),
+                evidence: ids,
+                note,
+            })?;
+            let ready: Vec<String> = events
+                .iter()
+                .filter_map(|e| match &e.structure {
+                    ris_core::event::Structure::ItemReady { item } => Some(item.to_string()),
+                    _ => None,
+                })
+                .collect();
+            let mut text = format!("{action} done");
+            if !ready.is_empty() {
+                text.push_str(&format!("; ready again: {}", ready.join(", ")));
+            }
+            Ok(Output::new(
+                text,
+                json!({ "action": action.to_string(), "ready": ready }),
+            ))
         }
 
         Cmd::Summary => Ok(render::summary(&p.load()?, &actor)),

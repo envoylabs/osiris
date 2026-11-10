@@ -91,6 +91,21 @@ The test is the cost of reversing, not whether reversal is possible.
   writing the thing yourself; raise the dependency rather than working
   around it. Never take a substantive decision yourself; `ris` refuses.
 
+## Person actions
+
+Something only the person can do (run a trial, grant access, add a
+seat, a chore) is an action, not an item: raise it, link it, and carry
+on. `--blocks` sets an item aside until it is done; `--informs` lets the
+item proceed, and the report shows anything merged before the action
+was done.
+
+```
+ris action raise "add a builder seat" --done-when "ris status lists it" --blocks I-7
+```
+
+Never mark one done yourself; `ris` refuses. Never do the person's part
+of the work by another route.
+
 ## Confidentiality: the ground rule
 
 Nothing secret, and nothing that identifies a person or a machine, goes
@@ -236,8 +251,9 @@ D-2 [substantive] daemon now or CLI-direct?  (about I-3)
 --
 answer:  ris decide D-n --choose <option number> --rationale "..."
      or  ris decide D-n --other "your own answer" --rationale "..."
+   and   ris action done A-n --note "what happened" (or --evidence <file>)
 look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
-ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
+ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<hash> evidence
 [exit 0]
 
 $ RIS_AGENT=heron ris decide D-2 --choose 1 --rationale agents do not take these
@@ -339,6 +355,7 @@ $ ris --json report
         }
       }
     ],
+    "merged_ahead": [],
     "messages": 0,
     "phase": {
       "goal": "first slice",
@@ -464,6 +481,7 @@ $ ris --json report
         }
       }
     ],
+    "merged_ahead": [],
     "messages": 0,
     "phase": {
       "goal": "first slice",
@@ -599,6 +617,7 @@ $ ris --json report
         }
       }
     ],
+    "merged_ahead": [],
     "messages": 0,
     "phase": {
       "goal": "first slice",
@@ -924,8 +943,9 @@ no decisions waiting
 --
 answer:  ris decide D-n --choose <option number> --rationale "..."
      or  ris decide D-n --other "your own answer" --rationale "..."
+   and   ris action done A-n --note "what happened" (or --evidence <file>)
 look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
-ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
+ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<hash> evidence
 
 == what waits on what ==
 no links between open decisions and unmerged items
@@ -1092,6 +1112,7 @@ $ ris --json report
         }
       }
     ],
+    "merged_ahead": [],
     "messages": 1,
     "phase": {
       "goal": "first slice",

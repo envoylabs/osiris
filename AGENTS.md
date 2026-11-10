@@ -71,6 +71,21 @@ The test is the cost of reversing, not whether reversal is possible.
 - Never take a substantive decision; `ris` refuses it. The person does,
   at a check-in.
 
+## Person actions
+
+Something only the person can do (run a trial, grant access, add a
+seat, a chore) is an action, not an item: raise it, link it, and carry
+on. `--blocks` sets an item aside until it is done; `--informs` lets the
+item proceed, and the report shows anything merged before the action
+was done.
+
+```
+ris action raise "add a builder seat" --done-when "ris status lists it" --blocks I-7
+```
+
+Never mark one done yourself; `ris` refuses. Never do the person's part
+of the work by another route.
+
 ## Confidentiality: the ground rule
 
 Nothing secret, and nothing that identifies a person or a machine, goes

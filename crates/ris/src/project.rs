@@ -223,6 +223,15 @@ impl Loaded {
         Self { state, log, by_seq }
     }
 
+    /// A text field of the event at `seq`, if the event carries it and
+    /// it has not been removed: for optional fields.
+    pub fn log_text(&self, seq: u64, field: &str) -> Option<&str> {
+        self.by_seq
+            .get(&seq)
+            .and_then(|i| self.log[*i].text_field(field))
+            .map(Text::as_str)
+    }
+
     /// A text field of the event at `seq`, or a marker if the text has
     /// been removed.
     pub fn text(&self, seq: u64, field: &str) -> &str {

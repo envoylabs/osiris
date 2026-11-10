@@ -6,7 +6,8 @@
 use ris_core::command::report_hash;
 use ris_core::ids::{Actor, AgentName, Hash, PhaseId};
 use ris_core::primitives::{
-    Decision, DecisionClass, DecisionState, Item, ItemState, Message, PhaseState,
+    Action, ActionState, Decision, DecisionClass, DecisionState, Item, ItemState, Message,
+    PhaseState,
 };
 use serde_json::{Value, json};
 
@@ -80,9 +81,7 @@ fn item_json(l: &Loaded, i: &Item) -> Value {
     });
     match &i.state {
         ItemState::Claimed { agent } => v["agent"] = json!(agent.to_string()),
-        ItemState::Blocked { on } => {
-            v["blocked_on"] = json!(on.iter().map(|b| format!("{b:?}")).collect::<Vec<_>>())
-        }
+        ItemState::Blocked { on } => v["blocked_on"] = json!(on),
         ItemState::Done { evidence } => {
             v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>())
         }
@@ -114,6 +113,96 @@ fn item_line(l: &Loaded, i: &Item) -> String {
 
 fn short(s: &str) -> &str {
     &s[..s.len().min(8)]
+}
+
+/// Items merged before a person action that informs them was done:
+/// work that went ahead of the person's input, for review.
+fn ahead_of_the_person(l: &Loaded) -> Vec<(ris_core::ids::ItemId, ris_core::ids::ActionId)> {
+    let merged_at: std::collections::BTreeMap<_, _> = l
+        .log
+        .iter()
+        .filter_map(|e| match &e.structure {
+            ris_core::event::Structure::ItemMerged { item, .. } => Some((*item, e.seq)),
+            _ => None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    for a in l.state.actions.values() {
+        let done_at = match a.state {
+            ActionState::Done { at, .. } => at,
+            ActionState::Open => u64::MAX,
+        };
+        for i in &a.informs {
+            if merged_at.get(i).is_some_and(|m| *m < done_at) {
+                out.push((*i, a.id));
+            }
+        }
+    }
+    out
+}
+
+/// A person action in full, for the inbox and `ris show`.
+fn action_block(l: &Loaded, a: &Action) -> String {
+    let mut s = format!(
+        "{} {}  (raised by {})\n     done when: {}\n",
+        a.id,
+        l.text(a.at, "what"),
+        a.by,
+        l.text(a.at, "done_when")
+    );
+    let ids = |v: &[ris_core::ids::ItemId]| {
+        v.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !a.blocks.is_empty() {
+        s.push_str(&format!("     blocks: {}\n", ids(&a.blocks)));
+    }
+    if !a.informs.is_empty() {
+        s.push_str(&format!("     informs: {}\n", ids(&a.informs)));
+    }
+    match &a.state {
+        ActionState::Open => s.push_str(&format!(
+            "     open; when done: ris action done {} --note \"...\" or --evidence <file>\n",
+            a.id
+        )),
+        ActionState::Done { at, evidence } => {
+            s.push_str("     done");
+            if let Some(n) = l.log_text(*at, "note") {
+                s.push_str(&format!(": {n}"));
+            }
+            if !evidence.is_empty() {
+                s.push_str(&format!(
+                    " (evidence {})",
+                    evidence
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            s.push('\n');
+        }
+    }
+    s
+}
+
+fn action_json(l: &Loaded, a: &Action) -> Value {
+    let mut v = json!({
+        "id": a.id.to_string(),
+        "by": a.by,
+        "what": l.text(a.at, "what"),
+        "done_when": l.text(a.at, "done_when"),
+        "blocks": a.blocks.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "informs": a.informs.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "state": match a.state { ActionState::Open => "open", ActionState::Done { .. } => "done" },
+    });
+    if let ActionState::Done { at, evidence } = &a.state {
+        v["note"] = json!(l.log_text(*at, "note"));
+        v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>());
+    }
+    v
 }
 
 fn decision_json(l: &Loaded, d: &Decision) -> Value {
@@ -328,8 +417,9 @@ const PERSON_FOOTER: &str = "\
 --
 answer:  ris decide D-n --choose <option number> --rationale \"...\"
      or  ris decide D-n --other \"your own answer\" --rationale \"...\"
+   and   ris action done A-n --note \"what happened\" (or --evidence <file>)
 look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
-ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
+ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<hash> evidence
 ";
 
 /// `ris inbox`: for the person, the decision queue; for an agent, its
@@ -351,11 +441,29 @@ pub fn inbox(l: &Loaded, actor: &Actor) -> Output {
                 }
                 s
             };
+            let actions: Vec<&Action> = l
+                .state
+                .actions
+                .values()
+                .filter(|a| a.state == ActionState::Open)
+                .collect();
+            if !actions.is_empty() {
+                text.push_str(&format!(
+                    "\n{}\n",
+                    style::heading(&format!("{} action(s) for you", actions.len()))
+                ));
+                for a in &actions {
+                    text.push_str(&action_block(l, a));
+                }
+            }
             text.push_str(&style::dim(PERSON_FOOTER));
             let text = text.trim_end().to_owned();
             Output::new(
                 text,
-                json!({ "decisions": open.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>() }),
+                json!({
+                    "decisions": open.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
+                    "actions": actions.iter().map(|a| action_json(l, a)).collect::<Vec<_>>(),
+                }),
             )
         }
         Actor::Agent(name) => agent_inbox(l, name),
@@ -500,6 +608,17 @@ pub fn report(l: &Loaded) -> Output {
         .filter(|i| matches!(i.state, ItemState::Done { .. } | ItemState::Merged { .. }))
         .collect();
     let audited = finished.iter().filter(|i| !i.audited_by.is_empty()).count();
+    let ahead = ahead_of_the_person(l);
+    if !ahead.is_empty() {
+        s.push_str(&style::heading("merged ahead of the person:"));
+        s.push('\n');
+        for (item, action) in &ahead {
+            s.push_str(&format!(
+                "  {item} merged before {action} was done: {}\n",
+                l.text(l.state.actions[action].at, "what")
+            ));
+        }
+    }
     s.push_str(&format!(
         "audited: {audited} of {} done or merged\n",
         finished.len()
@@ -530,6 +649,10 @@ pub fn report(l: &Loaded) -> Output {
             "mechanical": mechanical.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
             "messages": l.state.messages.len(),
             "answered_outside_options": outside,
+            "merged_ahead": ahead
+                .iter()
+                .map(|(i, a)| json!({ "item": i.to_string(), "action": a.to_string() }))
+                .collect::<Vec<_>>(),
             "log": { "len": l.state.len, "head": l.state.head.to_string() },
             "report": report_hash.to_string(),
             "previous_report": previous_report(l, phase.id).to_string(),
@@ -571,6 +694,17 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
         let mut json = decision_json(l, d);
         json["raised_at_event"] = json!(d.at);
         return Ok(Output::new(decision_block(l, d).trim_end(), json));
+    }
+    if let Ok(action) = id.parse::<ris_core::ids::ActionId>() {
+        let a = l
+            .state
+            .actions
+            .get(&action)
+            .ok_or_else(|| format!("no action {action}"))?;
+        return Ok(Output::new(
+            action_block(l, a).trim_end(),
+            action_json(l, a),
+        ));
     }
     if let Ok(phase) = id.parse::<PhaseId>() {
         let p = l
@@ -685,6 +819,7 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
                 .map(|b| match b {
                     ris_core::primitives::Blocker::Decision(d) => d.to_string(),
                     ris_core::primitives::Blocker::Item(i) => i.to_string(),
+                    ris_core::primitives::Blocker::Action(a) => a.to_string(),
                 })
                 .collect::<Vec<_>>()
                 .join(", ")

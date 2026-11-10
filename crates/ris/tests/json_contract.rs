@@ -116,7 +116,7 @@ fn every_outcome_is_one_envelope_and_the_data_keys_are_pinned() {
     // Pinned top-level keys of the data a client reads most.
     let pinned: &[(&[&str], &[&str])] = &[
         (&["ready"], &["ready"]),
-        (&["inbox"], &["decisions"]),
+        (&["inbox"], &["actions", "decisions"]),
         (&["summary"], &["graph", "inbox", "ready", "report"]),
         (&["status"], &["seats"]),
         (
@@ -126,6 +126,7 @@ fn every_outcome_is_one_envelope_and_the_data_keys_are_pinned() {
                 "items",
                 "log",
                 "mechanical",
+                "merged_ahead",
                 "messages",
                 "phase",
                 "previous_report",

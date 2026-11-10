@@ -76,6 +76,11 @@ sequential_id!(
     "M",
     "A message: a typed, targeted note between agents."
 );
+sequential_id!(
+    ActionId,
+    "A",
+    "A person action: something only the person can do, linked to the work it blocks or informs."
+);
 
 /// Why an id failed to parse.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -304,6 +309,7 @@ mod tests {
         assert_eq!("D5".parse::<DecisionId>(), Ok(DecisionId(5)));
         assert_eq!("P12".parse::<PhaseId>(), Ok(PhaseId(12)));
         assert_eq!("M3".parse::<MessageId>(), Ok(MessageId(3)));
+        assert_eq!("a-4".parse::<ActionId>().unwrap().to_string(), "A-4");
         assert_eq!("D5".parse::<DecisionId>().unwrap().to_string(), "D-5");
         assert_eq!("d5".parse::<DecisionId>(), Ok(DecisionId(5)));
         assert_eq!("i-7".parse::<ItemId>(), Ok(ItemId(7)));

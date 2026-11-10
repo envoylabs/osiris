@@ -41,8 +41,12 @@ event as `data`. Without `--json` they print bare event lines.
 
 ## Values
 
-- Ids are strings in display form: `"I-7"`, `"D-5"`, `"P-1"`, `"M-3"`,
-  and evidence as `"E-<64 hex>"`.
+- Ids are strings in display form: `"I-7"`, `"D-5"`, `"A-2"`, `"P-1"`,
+  `"M-3"`, and evidence as `"E-<64 hex>"`.
+- What an item is blocked on is typed: `{"kind": "decision", "id": "D-5"}`,
+  `{"kind": "item", "id": "I-3"}` or `{"kind": "action", "id": "A-2"}`.
+- Graph edges (`ris summary`'s `graph`) have `from`, `to` and `kind`,
+  either `blocks` (the target waits) or `informs` (it proceeds).
 - Hashes are 64 lowercase hex characters.
 - Actors are typed: `{"kind": "person"}` or
   `{"kind": "agent", "seat": "heron"}`.

@@ -33,7 +33,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::ids::{
-    Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId, MessageId, PhaseId,
+    ActionId, Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
+    MessageId, PhaseId,
 };
 use crate::primitives::{Blocker, DecisionClass, MessageKind};
 use crate::text::Text;
@@ -114,6 +115,20 @@ pub enum Structure {
     ItemSuperseded {
         item: ItemId,
         by: ItemId,
+    },
+    /// A person action. The text part carries `what` and `done_when`.
+    /// Items it blocks are set aside by `ItemBlocked` events emitted
+    /// with it.
+    ActionRaised {
+        action: ActionId,
+        by: Actor,
+        blocks: Vec<ItemId>,
+        informs: Vec<ItemId>,
+    },
+    /// The person did it. The text part carries `note`, if given.
+    ActionDone {
+        action: ActionId,
+        evidence: Vec<EvidenceId>,
     },
     /// The person paused a seat: its next claim or audit is refused
     /// until it is resumed. What it holds now it finishes.

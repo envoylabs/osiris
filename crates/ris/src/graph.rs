@@ -5,8 +5,9 @@
 //! Edges point from what must happen first to what waits on it or is
 //! shaped by it:
 //!
-//! - a decision to each item it was raised about, `blocks` when the
-//!   item is set aside on it and `informs` otherwise;
+//! - a decision to each item it was raised about, and a person action
+//!   to each item it blocks or informs: `blocks` when the item is set
+//!   aside on it, `informs` otherwise;
 //! - an item to each item that depends on it, `blocks` (a dependency
 //!   must merge first).
 //!
@@ -18,8 +19,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ris_core::ids::{DecisionId, ItemId};
-use ris_core::primitives::{Blocker, DecisionState, ItemState};
+use ris_core::ids::{ActionId, DecisionId, ItemId};
+use ris_core::primitives::{ActionState, Blocker, DecisionState, ItemState};
 use serde_json::{Value, json};
 
 use crate::project::Loaded;
@@ -29,10 +30,11 @@ pub const WIDTH: usize = 80;
 /// The most lines the drawing takes; the rest is counted.
 pub const MAX_LINES: usize = 40;
 
-/// A node: decisions sort before items, each by number.
+/// A node: decisions, then person actions, then items, each by number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Node {
     Decision(DecisionId),
+    Action(ActionId),
     Item(ItemId),
 }
 
@@ -40,6 +42,7 @@ impl std::fmt::Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Decision(d) => d.fmt(f),
+            Self::Action(a) => a.fmt(f),
             Self::Item(i) => i.fmt(f),
         }
     }
@@ -77,6 +80,11 @@ impl Graph {
         for d in s.open_decisions() {
             nodes.insert(Node::Decision(d.id));
         }
+        for a in s.actions.values() {
+            if a.state == ActionState::Open {
+                nodes.insert(Node::Action(a.id));
+            }
+        }
         for i in s.items.values() {
             if !matches!(
                 i.state,
@@ -90,6 +98,17 @@ impl Graph {
             let Node::Item(item) = n else { continue };
             // What this item stands for: itself and what it replaced.
             for source in s.lineage(item) {
+                for a in s.actions_about(source) {
+                    if !nodes.contains(&Node::Action(*a)) {
+                        continue;
+                    }
+                    let blocked = matches!(
+                        &s.items[&item].state,
+                        ItemState::Blocked { on } if on.contains(&Blocker::Action(*a))
+                    );
+                    let kind = if blocked { Kind::Blocks } else { Kind::Informs };
+                    edges.entry(Node::Action(*a)).or_default().push((n, kind));
+                }
                 for d in s.decisions_about(source) {
                     if !nodes.contains(&Node::Decision(*d)) {
                         continue;
@@ -226,6 +245,10 @@ fn state(l: &Loaded, n: Node) -> &'static str {
             DecisionState::Taken { .. } => "taken",
             DecisionState::Superseded(_) => "superseded",
         },
+        Node::Action(a) => match l.state.actions[&a].state {
+            ActionState::Open => "for you",
+            ActionState::Done { .. } => "done",
+        },
         Node::Item(i) => {
             let item = &l.state.items[&i];
             match &item.state {
@@ -244,6 +267,7 @@ fn state(l: &Loaded, n: Node) -> &'static str {
 fn label(l: &Loaded, n: Node) -> String {
     let text = match n {
         Node::Decision(d) => l.text(l.state.decisions[&d].at, "question"),
+        Node::Action(a) => l.text(l.state.actions[&a].at, "what"),
         Node::Item(i) => l.text(l.state.items[&i].at, "goal"),
     };
     format!("{n}  {}  {text}", state(l, n))

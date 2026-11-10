@@ -101,6 +101,37 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
     let mut decisions: Vec<&Decision> = ids.iter().map(|d| &l.state.decisions[d]).collect();
     decisions.reverse();
 
+    // Person actions that touch the item, and whether it waits on them.
+    let actions: BTreeSet<_> = touching
+        .iter()
+        .flat_map(|t| l.state.actions_about(*t))
+        .copied()
+        .collect();
+    let mut actions_json = Vec::new();
+    if !actions.is_empty() {
+        head.push_str("  person actions:\n");
+    }
+    for a in &actions {
+        let act = &l.state.actions[a];
+        let how = if act.blocks.iter().any(|b| touching.contains(b)) {
+            "blocks"
+        } else {
+            "informs"
+        };
+        let state = match &act.state {
+            ris_core::primitives::ActionState::Open => "open".to_owned(),
+            ris_core::primitives::ActionState::Done { at, .. } => match l.log_text(*at, "note") {
+                Some(n) => format!("done: {n}"),
+                None => "done".to_owned(),
+            },
+        };
+        head.push_str(&format!(
+            "  {a} ({how}) {} → {state}\n",
+            l.text(act.at, "what")
+        ));
+        actions_json.push(json!({ "id": a.to_string(), "kind": how }));
+    }
+
     let mut lines = Vec::new();
     let mut decisions_json = Vec::new();
     for d in &decisions {
@@ -164,6 +195,7 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
         "goal": goal,
         "checks": checks,
         "depends_on": deps_json,
+        "actions": actions_json,
         "decisions": decisions_json[..kept].to_vec(),
         "decisions_left_out": lines.len() - kept,
     });
