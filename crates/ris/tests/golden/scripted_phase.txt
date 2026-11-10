@@ -639,6 +639,11 @@ clean: 3 file(s) scanned
 [exit 0]
 
 $ ris merge I-3
+[stderr] refused: 2 commits since the last merge (<hash>); I-3 merges as one commit
+  next: squash them (`git reset --soft` to that commit, then commit once with the trailers)
+[exit 1]
+
+$ ris merge I-3
 I-3: check lint passed (E-<hash>)
 I-3: check test passed (E-<hash>)
 I-3 merged at <hash>

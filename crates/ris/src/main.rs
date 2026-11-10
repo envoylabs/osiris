@@ -599,6 +599,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     Some(c) => c.clone(),
                     None => checks::git_head(&p.work)?,
                 };
+                require_one_commit(&p, &l, *item, &commit)?;
                 let lines = vet_and_check(&mut p, *item, &author, &commit)?;
                 (commit, lines)
             } else {
@@ -961,6 +962,74 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+    }
+}
+
+/// Width one: the item must be exactly one commit on top of where the
+/// phase branch stood after its last recorded merge (or where the phase
+/// branch left the main line, before the phase's first merge), as a
+/// merge from a worktree requires. Skipped only when there is no base
+/// to count from: work committed straight onto the main line with no
+/// merge yet recorded in the phase, or no main line to fork from.
+fn require_one_commit(
+    p: &Project,
+    l: &ris::project::Loaded,
+    item: ItemId,
+    commit: &str,
+) -> Result<(), CliError> {
+    let Some(phase) = l.state.open_phase() else {
+        return Ok(());
+    };
+    let count = |base: &str| -> Option<u32> {
+        git(
+            &p.work,
+            &["rev-list", "--count", &format!("{base}..{commit}")],
+        )
+        .ok()?
+        .parse()
+        .ok()
+    };
+    let is_ancestor =
+        |base: &str| git(&p.work, &["merge-base", "--is-ancestor", base, commit]).is_ok();
+    // The nearest merge recorded in this phase that the commit builds on.
+    let merged = l
+        .state
+        .items
+        .values()
+        .filter(|i| i.phase == phase.id)
+        .filter_map(|i| match &i.state {
+            ris_core::primitives::ItemState::Merged { commit: c, .. } => Some(c.0.clone()),
+            _ => None,
+        })
+        .filter(|c| c != commit && is_ancestor(c))
+        .filter_map(|c| count(&c).map(|n| (n, c)))
+        .min();
+    let (n, base) = match merged {
+        Some((n, c)) => (n, format!("the last merge ({})", &c[..c.len().min(8)])),
+        None => {
+            // On the main line itself there is no fork point to count from.
+            let branch = git(&p.work, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+            if branch == p.config.main_line {
+                return Ok(());
+            }
+            let Ok(fork) = git(&p.work, &["merge-base", &p.config.main_line, commit]) else {
+                return Ok(());
+            };
+            match count(&fork) {
+                Some(n) => (n, format!("where the phase left {}", p.config.main_line)),
+                None => return Ok(()),
+            }
+        }
+    };
+    match n {
+        1 => Ok(()),
+        0 => Err(CliError::Other(format!(
+            "nothing to merge: no commit for {item} beyond {base}\n  next: commit the item first"
+        ))),
+        n => Err(CliError::Other(format!(
+            "refused: {n} commits since {base}; {item} merges as one commit\n  \
+             next: squash them (`git reset --soft` to that commit, then commit once with the trailers)"
+        ))),
     }
 }
 

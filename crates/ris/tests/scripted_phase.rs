@@ -70,6 +70,18 @@ impl Sandbox {
         run
     }
 
+    /// Squash the last `n` commits into one, staging everything, with
+    /// `trailer` as the last message line.
+    fn squash(&self, n: usize, subject: &str, trailer: &str) {
+        let reset = Command::new("git")
+            .args(["reset", "-q", "--soft", &format!("HEAD~{n}")])
+            .current_dir(&self.dir)
+            .status()
+            .unwrap();
+        assert!(reset.success());
+        self.commit(subject, trailer);
+    }
+
     /// Stage everything and commit it (empty commits allowed) with
     /// `trailer` as the last message line.
     fn commit(&self, subject: &str, trailer: &str) {
@@ -393,6 +405,16 @@ fn scripted_phase_matches_the_golden_transcript() {
     fs::remove_file(sb.dir.join("notes.txt")).unwrap();
     sb.commit("docs: notes, without the path", "Item: I-3\nAgent: heron");
     sb.ok(None, &["scan"]);
+    // A fix stacked on the refused commit makes two: an item merges as
+    // exactly one commit beyond the last merge, so it is squashed.
+    let r = sb.ris(None, &["merge", "I-3"]);
+    assert_eq!(r.status, 1);
+    assert!(
+        r.stderr.contains("2 commits since the last merge"),
+        "{}",
+        r.stderr
+    );
+    sb.squash(2, "docs: notes", "Item: I-3\nAgent: heron");
     sb.ok(None, &["merge", "I-3"]);
 
     // I-2's dependency has merged.
