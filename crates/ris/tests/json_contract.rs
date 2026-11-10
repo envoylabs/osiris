@@ -117,7 +117,7 @@ fn every_outcome_is_one_envelope_and_the_data_keys_are_pinned() {
     let pinned: &[(&[&str], &[&str])] = &[
         (&["ready"], &["ready"]),
         (&["inbox"], &["decisions"]),
-        (&["summary"], &["inbox", "ready", "report"]),
+        (&["summary"], &["graph", "inbox", "ready", "report"]),
         (&["status"], &["seats"]),
         (
             &["report"],

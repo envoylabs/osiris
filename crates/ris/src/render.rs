@@ -766,10 +766,13 @@ pub fn summary(l: &Loaded, actor: &Actor) -> Output {
     let queue = inbox(l, actor);
     let rep = report(l);
     let rdy = ready(l);
+    let graph = crate::graph::Graph::of(l);
     let text = format!(
-        "{}\n{}\n\n{}\n{}\n\n{}\n{}",
+        "{}\n{}\n\n{}\n{}\n\n{}\n{}\n\n{}\n{}",
         style::header("== decisions =="),
         queue.text,
+        style::header("== what waits on what =="),
+        graph.draw(l),
         style::header("== report =="),
         rep.text,
         style::header("== ready =="),
@@ -777,7 +780,7 @@ pub fn summary(l: &Loaded, actor: &Actor) -> Output {
     );
     Output::new(
         text,
-        json!({ "inbox": queue.json, "report": rep.json, "ready": rdy.json }),
+        json!({ "inbox": queue.json, "graph": graph.json(l), "report": rep.json, "ready": rdy.json }),
     )
 }
 

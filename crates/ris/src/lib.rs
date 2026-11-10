@@ -7,6 +7,7 @@ pub mod config;
 pub mod evidence;
 pub mod exits;
 pub mod export;
+pub mod graph;
 pub mod import;
 pub mod project;
 pub mod render;

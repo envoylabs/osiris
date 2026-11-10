@@ -1,0 +1,260 @@
+//! The graph of work in motion, for `ris summary`: open decisions and
+//! unmerged items as nodes, and the links between them as edges, drawn
+//! as a tree.
+//!
+//! Edges point from what must happen first to what waits on it or is
+//! shaped by it:
+//!
+//! - a decision to each item it was raised about, `blocks` when the
+//!   item is set aside on it and `informs` otherwise;
+//! - an item to each item that depends on it, `blocks` (a dependency
+//!   must merge first).
+//!
+//! The links come from the reverse index, and an item stands for the
+//! items it replaced. Nodes with no edge are counted, not drawn. A node
+//! with two parents is drawn under the first one reached and shown as
+//! `(above)` under the others, so every edge appears exactly once.
+//! Lines are cut at [`WIDTH`] columns and the drawing at [`MAX_LINES`].
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use ris_core::ids::{DecisionId, ItemId};
+use ris_core::primitives::{Blocker, DecisionState, ItemState};
+use serde_json::{Value, json};
+
+use crate::project::Loaded;
+
+/// The widest a drawn line may be, in characters.
+pub const WIDTH: usize = 80;
+/// The most lines the drawing takes; the rest is counted.
+pub const MAX_LINES: usize = 40;
+
+/// A node: decisions sort before items, each by number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Node {
+    Decision(DecisionId),
+    Item(ItemId),
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Decision(d) => d.fmt(f),
+            Self::Item(i) => i.fmt(f),
+        }
+    }
+}
+
+/// How hard a link is: the target cannot proceed until the source
+/// resolves (`Blocks`), or proceeds and is shaped by it (`Informs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Kind {
+    Blocks,
+    Informs,
+}
+
+impl Kind {
+    fn word(self) -> &'static str {
+        match self {
+            Self::Blocks => "blocks",
+            Self::Informs => "informs",
+        }
+    }
+}
+
+/// The nodes in motion and the edges between them.
+pub struct Graph {
+    /// Every node in motion, linked or not.
+    pub nodes: BTreeSet<Node>,
+    /// `from → [(to, kind)]`, children in order.
+    pub edges: BTreeMap<Node, Vec<(Node, Kind)>>,
+}
+
+impl Graph {
+    pub fn of(l: &Loaded) -> Self {
+        let s = &l.state;
+        let mut nodes = BTreeSet::new();
+        for d in s.open_decisions() {
+            nodes.insert(Node::Decision(d.id));
+        }
+        for i in s.items.values() {
+            if !matches!(
+                i.state,
+                ItemState::Merged { .. } | ItemState::Superseded { .. }
+            ) {
+                nodes.insert(Node::Item(i.id));
+            }
+        }
+        let mut edges: BTreeMap<Node, Vec<(Node, Kind)>> = BTreeMap::new();
+        for &n in &nodes {
+            let Node::Item(item) = n else { continue };
+            // What this item stands for: itself and what it replaced.
+            for source in s.lineage(item) {
+                for d in s.decisions_about(source) {
+                    if !nodes.contains(&Node::Decision(*d)) {
+                        continue;
+                    }
+                    let blocked = matches!(
+                        &s.items[&item].state,
+                        ItemState::Blocked { on } if on.contains(&Blocker::Decision(*d))
+                    );
+                    let kind = if blocked { Kind::Blocks } else { Kind::Informs };
+                    edges.entry(Node::Decision(*d)).or_default().push((n, kind));
+                }
+            }
+            for dep in &s.items[&item].depends_on {
+                let from = Node::Item(s.current(*dep));
+                if nodes.contains(&from) {
+                    edges.entry(from).or_default().push((n, Kind::Blocks));
+                }
+            }
+        }
+        for children in edges.values_mut() {
+            children.sort();
+            children.dedup();
+        }
+        Self { nodes, edges }
+    }
+
+    fn linked(&self) -> BTreeSet<Node> {
+        let mut out: BTreeSet<Node> = self.edges.keys().copied().collect();
+        for children in self.edges.values() {
+            out.extend(children.iter().map(|(c, _)| *c));
+        }
+        out
+    }
+
+    /// The tree as lines, with what was left out counted.
+    pub fn draw(&self, l: &Loaded) -> String {
+        let linked = self.linked();
+        if linked.is_empty() {
+            return "no links between open decisions and unmerged items".into();
+        }
+        let has_parent: BTreeSet<Node> = self
+            .edges
+            .values()
+            .flat_map(|c| c.iter().map(|(n, _)| *n))
+            .collect();
+        let mut lines = Vec::new();
+        let mut drawn = BTreeSet::new();
+        for &root in linked.iter().filter(|n| !has_parent.contains(n)) {
+            self.walk(l, root, None, "", true, &mut drawn, &mut lines);
+        }
+        let mut out: Vec<String> = lines.iter().take(MAX_LINES).cloned().collect();
+        if lines.len() > MAX_LINES {
+            out.push(format!(
+                "and {} more line(s): ris --json summary has the whole graph",
+                lines.len() - MAX_LINES
+            ));
+        }
+        let unlinked = self.nodes.len() - linked.len();
+        if unlinked > 0 {
+            out.push(format!(
+                "{unlinked} open decision(s) and unmerged item(s) have no links"
+            ));
+        }
+        out.join("\n")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn walk(
+        &self,
+        l: &Loaded,
+        node: Node,
+        via: Option<Kind>,
+        prefix: &str,
+        last: bool,
+        drawn: &mut BTreeSet<Node>,
+        lines: &mut Vec<String>,
+    ) {
+        let (branch, carry) = match (via, last) {
+            (None, _) => ("", ""),
+            (Some(Kind::Blocks), false) => ("├── ", "│   "),
+            (Some(Kind::Blocks), true) => ("└── ", "    "),
+            (Some(Kind::Informs), false) => ("├╌╌ ", "│   "),
+            (Some(Kind::Informs), true) => ("└╌╌ ", "    "),
+        };
+        let seen = !drawn.insert(node);
+        let label = if seen {
+            format!("{node}  (above)")
+        } else {
+            label(l, node)
+        };
+        lines.push(cut(&format!("{prefix}{branch}{label}"), WIDTH));
+        if seen {
+            return;
+        }
+        let children = self.edges.get(&node).cloned().unwrap_or_default();
+        let next = format!("{prefix}{carry}");
+        for (k, (child, kind)) in children.iter().enumerate() {
+            self.walk(
+                l,
+                *child,
+                Some(*kind),
+                &next,
+                k + 1 == children.len(),
+                drawn,
+                lines,
+            );
+        }
+    }
+
+    /// Nodes and edges for `--json`.
+    pub fn json(&self, l: &Loaded) -> Value {
+        let nodes: Vec<Value> = self
+            .linked()
+            .iter()
+            .map(|n| json!({ "id": n.to_string(), "state": state(l, *n) }))
+            .collect();
+        let edges: Vec<Value> = self
+            .edges
+            .iter()
+            .flat_map(|(from, children)| {
+                children.iter().map(move |(to, kind)| {
+                    json!({ "from": from.to_string(), "to": to.to_string(), "kind": kind.word() })
+                })
+            })
+            .collect();
+        json!({ "nodes": nodes, "edges": edges, "unlinked": self.nodes.len() - self.linked().len() })
+    }
+}
+
+fn state(l: &Loaded, n: Node) -> &'static str {
+    match n {
+        Node::Decision(d) => match l.state.decisions[&d].state {
+            DecisionState::Open => "open",
+            DecisionState::Taken { .. } => "taken",
+            DecisionState::Superseded(_) => "superseded",
+        },
+        Node::Item(i) => {
+            let item = &l.state.items[&i];
+            match &item.state {
+                ItemState::Ready if !l.state.unlanded_dependencies(item).is_empty() => "waiting",
+                ItemState::Ready => "ready",
+                ItemState::Claimed { .. } => "claimed",
+                ItemState::Blocked { .. } => "blocked",
+                ItemState::Done { .. } => "done",
+                ItemState::Merged { .. } => "merged",
+                ItemState::Superseded { .. } => "superseded",
+            }
+        }
+    }
+}
+
+fn label(l: &Loaded, n: Node) -> String {
+    let text = match n {
+        Node::Decision(d) => l.text(l.state.decisions[&d].at, "question"),
+        Node::Item(i) => l.text(l.state.items[&i].at, "goal"),
+    };
+    format!("{n}  {}  {text}", state(l, n))
+}
+
+/// At most `width` characters, ending in `…` when cut.
+fn cut(s: &str, width: usize) -> String {
+    if s.chars().count() <= width {
+        return s.to_owned();
+    }
+    let mut out: String = s.chars().take(width - 1).collect();
+    out.push('…');
+    out
+}

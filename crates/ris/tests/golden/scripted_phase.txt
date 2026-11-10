@@ -927,6 +927,9 @@ answer:  ris decide D-n --choose <option number> --rationale "..."
 look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
 ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 
+== what waits on what ==
+no links between open decisions and unmerged items
+
 == report ==
 P-1 open: first slice
 items: 1 claimed, 2 merged, 1 ready
