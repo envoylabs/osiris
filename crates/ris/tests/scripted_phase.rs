@@ -26,7 +26,7 @@ impl Sandbox {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let git = Command::new("git")
-            .args(["init", "-q"])
+            .args(["init", "-q", "-b", "main"])
             .current_dir(&dir)
             .status()
             .unwrap();

@@ -68,7 +68,7 @@ fn project(name: &str) -> PathBuf {
     // A git repository, for `ris scan`; no commits, so no phase branches.
     assert!(
         Command::new("git")
-            .args(["init", "-q"])
+            .args(["init", "-q", "-b", "main"])
             .current_dir(&dir)
             .status()
             .unwrap()
