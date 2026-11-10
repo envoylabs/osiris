@@ -26,12 +26,19 @@ macro_rules! sequential_id {
             type Err = IdParseError;
 
             /// The hyphen is for reading, so input may leave it out:
-            /// `D-5` and `D5` are the same id. Output always has it.
+            /// `D-5`, `D5`, `d-5` and `d5` are the same id. Output is
+            /// always `D-5`.
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 let rest = s
-                    .strip_prefix($prefix)
+                    .get(..$prefix.len())
+                    .filter(|p| p.eq_ignore_ascii_case($prefix))
+                    .map(|_| &s[$prefix.len()..])
                     .map(|r| r.strip_prefix('-').unwrap_or(r))
                     .ok_or(IdParseError::WrongPrefix { expected: $prefix })?;
+                // Digits only: `u32` parsing alone would take `+7`.
+                if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
+                    return Err(IdParseError::NotANumber);
+                }
                 rest.parse::<u32>()
                     .map(Self)
                     .map_err(|_| IdParseError::NotANumber)
@@ -188,7 +195,7 @@ mod tests {
             "D7".parse::<ItemId>(),
             Err(IdParseError::WrongPrefix { expected: "I" })
         );
-        for bad in ["I", "I-", "I--7", "I 7", "I-7x", "7", "i7"] {
+        for bad in ["I", "I-", "I--7", "I 7", "I-7x", "7", "I+7", "I-+7", "x7"] {
             assert!(bad.parse::<ItemId>().is_err(), "{bad:?}");
         }
     }
@@ -200,6 +207,9 @@ mod tests {
         assert_eq!("P12".parse::<PhaseId>(), Ok(PhaseId(12)));
         assert_eq!("M3".parse::<MessageId>(), Ok(MessageId(3)));
         assert_eq!("D5".parse::<DecisionId>().unwrap().to_string(), "D-5");
+        assert_eq!("d5".parse::<DecisionId>(), Ok(DecisionId(5)));
+        assert_eq!("i-7".parse::<ItemId>(), Ok(ItemId(7)));
+        assert_eq!("d5".parse::<DecisionId>().unwrap().to_string(), "D-5");
     }
 
     #[test]

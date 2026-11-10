@@ -127,6 +127,11 @@ fn a_raiser_explains_and_the_person_drills_down() {
         ok(&dir, None, &["eli5", "D-1"])
     );
     assert!(ok(&dir, None, &["show", "P1"]).starts_with("P-1"));
+    assert_eq!(
+        ok(&dir, None, &["eli5", "d1"]),
+        ok(&dir, None, &["eli5", "D-1"])
+    );
+    assert!(ok(&dir, None, &["show", "p-1"]).starts_with("P-1"));
     let case = ok(&dir, None, &["eli5", "D-1"]);
     for want in [
         "Where the log lives",

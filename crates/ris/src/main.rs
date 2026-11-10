@@ -848,7 +848,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             // prefix of at least 8 characters. The stored output is
             // printed as it is.
             let hex = id
-                .strip_prefix('E')
+                .strip_prefix(['E', 'e'])
                 .map(|r| r.strip_prefix('-').unwrap_or(r))
                 .filter(|h| h.len() >= 8 && h.chars().all(|c| c.is_ascii_hexdigit()));
             match hex {

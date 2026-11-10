@@ -102,7 +102,7 @@ fn an_item_is_one_commit_from_the_phase_start_and_from_each_merge() {
     let e = v["evidence"][0].as_str().unwrap().to_owned();
     let full = String::from_utf8(ris(&dir, None, &["show", &e]).stdout).unwrap();
     assert!(full.contains("command: true"), "{full}");
-    let short = format!("E{}", &e[2..10]);
+    let short = format!("e{}", e[2..10].to_ascii_uppercase());
     assert_eq!(
         String::from_utf8(ris(&dir, None, &["show", &short]).stdout).unwrap(),
         full
