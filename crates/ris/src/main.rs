@@ -128,8 +128,8 @@ enum Cmd {
     Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
-    /// Import items and standing decisions from a TOML file into the
-    /// open phase. The whole file is validated first; see `ris import
+    /// Import items, standing decisions and open questions from a TOML
+    /// file into the open phase. The whole file is validated first; see `ris import
     /// --help` and the onboarding skill for the format.
     Import {
         file: PathBuf,
@@ -757,10 +757,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             if *dry_run {
                 return Ok(Output::new(
                     format!(
-                        "valid: would import {} item(s) and {} decision(s); nothing written",
-                        plan.items, plan.decisions
+                        "valid: would import {} item(s) and {} decision(s), {} of them open; nothing written",
+                        plan.items, plan.decisions, plan.open
                     ),
-                    json!({ "items": plan.items, "decisions": plan.decisions, "written": false }),
+                    json!({ "items": plan.items, "decisions": plan.decisions, "open": plan.open, "written": false }),
                 ));
             }
             let first_item = l.state.next_item_id().0;
@@ -775,11 +775,15 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             };
             Ok(Output::new(
                 format!(
-                    "imported items {} and decisions {}",
+                    "imported items {} and decisions {}{}",
                     range("I", first_item, plan.items),
-                    range("D", first_decision, plan.decisions)
+                    range("D", first_decision, plan.decisions),
+                    match plan.open {
+                        0 => String::new(),
+                        n => format!("; {n} open, waiting in ris inbox"),
+                    }
                 ),
-                json!({ "items": plan.items, "decisions": plan.decisions, "written": true }),
+                json!({ "items": plan.items, "decisions": plan.decisions, "open": plan.open, "written": true }),
             ))
         }
 

@@ -67,6 +67,12 @@ question = "The question as it was decided"
 options = ["what was chosen", "the main alternative"]
 answer = 0                    # or: other = "..."
 rationale = "Why, citing the document: docs/adr/0003.md"
+
+[[decision]]                  # no answer: an open question
+question = "A question the documents leave open"
+options = ["one way", "another"]
+recommend = 0                 # your recommendation, required
+rationale = "Why it is open and why you recommend that option, citing the document"
 ```
 
 - Items: work the documents say is outstanding, one outcome each,
@@ -74,6 +80,11 @@ rationale = "Why, citing the document: docs/adr/0003.md"
 - Decisions: only ones the project has actually made and written down,
   or the person tells you. Never invent a standing decision; a guess
   recorded as decided is worse than none.
+- Open questions: a question the documents name as open, or that you
+  find undecided and that blocks or shapes outstanding work, goes in
+  without an answer. It is raised as a substantive decision and waits
+  for the person. When unsure whether something was decided, import it
+  open.
 - Paths are relative to the repository root. No names of people, no
   client or product names the denylist would refuse, no URLs to
   private systems.

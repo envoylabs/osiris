@@ -12,14 +12,23 @@
 //! options = ["sqlite", "postgres"]
 //! answer = 0                    # or: other = "an answer outside the options"
 //! rationale = "Why it was decided"
+//!
+//! [[decision]]                  # no answer: an open question
+//! question = "Which runner first?"
+//! options = ["runner-a", "runner-b"]
+//! recommend = 0
+//! rationale = "Why it is open, and what the recommendation rests on"
 //! ```
 //!
 //! The whole file is validated first: every text field scanned under
 //! the policy, every check declared, every dependency resolved,
 //! every answer in range. Only a file with no problems is written, so a
-//! bad entry anywhere means nothing is imported. Decisions are standing
-//! decisions, recorded as the person's; importing them needs the
-//! person's seat.
+//! bad entry anywhere means nothing is imported. A decision with an
+//! `answer` or `other` is a standing decision, recorded as taken by the
+//! person. One with neither is an open question: it is raised as a
+//! substantive decision and waits in the person's queue, so a project's
+//! open questions come in without a guessed answer. Importing needs the
+//! person's seat either way.
 
 use serde::Deserialize;
 
@@ -58,6 +67,9 @@ struct RawDecision {
     options: Vec<String>,
     answer: Option<usize>,
     other: Option<String>,
+    /// The recommended option: required for an open decision, and for a
+    /// taken one defaulting to the answer.
+    recommend: Option<usize>,
     rationale: String,
 }
 
@@ -66,6 +78,8 @@ pub struct Plan {
     pub commands: Vec<Command>,
     pub items: usize,
     pub decisions: usize,
+    /// How many of `decisions` are open, waiting for the person.
+    pub open: usize,
 }
 
 /// Parse and validate `source` against the current state, the declared
@@ -133,6 +147,7 @@ pub fn plan(
     }
 
     let first_decision = state.next_decision_id().0;
+    let mut open = 0;
     for (n, d) in file.decision.iter().enumerate() {
         let label = format!("decision {}", n + 1);
         let question = text(label.clone(), "question", &d.question, &mut problems);
@@ -146,8 +161,9 @@ pub fn plan(
         if d.options.len() < 2 {
             problems.push(format!("{label}: give at least two options"));
         }
-        let choice = match (d.answer, &d.other) {
-            (Some(i), None) if i < d.options.len() => Some(Choice::Option(i)),
+        // None: invalid. Some(None): open. Some(Some(c)): taken.
+        let choice: Option<Option<Choice>> = match (d.answer, &d.other) {
+            (Some(i), None) if i < d.options.len() => Some(Some(Choice::Option(i))),
             (Some(i), None) => {
                 problems.push(format!(
                     "{label}: answer {i} is not one of its {} options",
@@ -155,20 +171,40 @@ pub fn plan(
                 ));
                 None
             }
-            (None, Some(o)) => text(label.clone(), "other", o, &mut problems).map(Choice::Other),
-            _ => {
-                problems.push(format!("{label}: give exactly one of `answer` or `other`"));
+            (None, Some(o)) => {
+                text(label.clone(), "other", o, &mut problems).map(|t| Some(Choice::Other(t)))
+            }
+            (None, None) => Some(None),
+            (Some(_), Some(_)) => {
+                problems.push(format!(
+                    "{label}: give `answer` or `other`, not both (or neither, for an open question)"
+                ));
                 None
             }
         };
+        let recommended = match (d.recommend, &choice) {
+            (Some(r), _) if r < d.options.len() => Some(r),
+            (Some(r), _) => {
+                problems.push(format!(
+                    "{label}: recommend {r} is not one of its {} options",
+                    d.options.len()
+                ));
+                None
+            }
+            (None, Some(Some(Choice::Option(i)))) => Some(*i),
+            (None, Some(Some(Choice::Other(_)))) => Some(0),
+            (None, Some(None)) => {
+                problems.push(format!(
+                    "{label}: an open question needs `recommend`, the option the person is advised to take"
+                ));
+                None
+            }
+            (None, None) => None,
+        };
         let options: Option<Vec<Text>> = options.into_iter().collect();
-        if let (Some(question), Some(options), Some(rationale), Some(chosen)) =
-            (question, options, rationale, choice)
+        if let (Some(question), Some(options), Some(rationale), Some(chosen), Some(recommended)) =
+            (question, options, rationale, choice, recommended)
         {
-            let recommended = match &chosen {
-                Choice::Option(i) => *i,
-                Choice::Other(_) => 0,
-            };
             commands.push(Command::DecisionRaise {
                 by: Actor::Person,
                 about: None,
@@ -178,12 +214,15 @@ pub fn plan(
                 recommended,
                 rationale: rationale.clone(),
             });
-            commands.push(Command::Decide {
-                decision: ris_core::ids::DecisionId(first_decision + n as u32),
-                by: Actor::Person,
-                chosen,
-                rationale,
-            });
+            match chosen {
+                Some(chosen) => commands.push(Command::Decide {
+                    decision: ris_core::ids::DecisionId(first_decision + n as u32),
+                    by: Actor::Person,
+                    chosen,
+                    rationale,
+                }),
+                None => open += 1,
+            }
         }
     }
 
@@ -192,6 +231,7 @@ pub fn plan(
             commands,
             items: file.item.len(),
             decisions: file.decision.len(),
+            open,
         })
     } else {
         Err(problems)
