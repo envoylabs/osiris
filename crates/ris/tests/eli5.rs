@@ -121,6 +121,12 @@ fn a_raiser_explains_and_the_person_drills_down() {
         String::from_utf8_lossy(&out.stderr)
     );
 
+    // The hyphen is optional on input, for every kind of id.
+    assert_eq!(
+        ok(&dir, None, &["eli5", "D1"]),
+        ok(&dir, None, &["eli5", "D-1"])
+    );
+    assert!(ok(&dir, None, &["show", "P1"]).starts_with("P-1"));
     let case = ok(&dir, None, &["eli5", "D-1"]);
     for want in [
         "Where the log lives",

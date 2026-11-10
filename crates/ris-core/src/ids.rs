@@ -25,10 +25,12 @@ macro_rules! sequential_id {
         impl std::str::FromStr for $name {
             type Err = IdParseError;
 
+            /// The hyphen is for reading, so input may leave it out:
+            /// `D-5` and `D5` are the same id. Output always has it.
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 let rest = s
                     .strip_prefix($prefix)
-                    .and_then(|r| r.strip_prefix('-'))
+                    .map(|r| r.strip_prefix('-').unwrap_or(r))
                     .ok_or(IdParseError::WrongPrefix { expected: $prefix })?;
                 rest.parse::<u32>()
                     .map(Self)
@@ -183,9 +185,21 @@ mod tests {
         );
         assert_eq!("I-x".parse::<ItemId>(), Err(IdParseError::NotANumber));
         assert_eq!(
-            "I7".parse::<ItemId>(),
+            "D7".parse::<ItemId>(),
             Err(IdParseError::WrongPrefix { expected: "I" })
         );
+        for bad in ["I", "I-", "I--7", "I 7", "I-7x", "7", "i7"] {
+            assert!(bad.parse::<ItemId>().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_hyphen_is_optional_on_input_and_always_shown() {
+        assert_eq!("I7".parse::<ItemId>(), Ok(ItemId(7)));
+        assert_eq!("D5".parse::<DecisionId>(), Ok(DecisionId(5)));
+        assert_eq!("P12".parse::<PhaseId>(), Ok(PhaseId(12)));
+        assert_eq!("M3".parse::<MessageId>(), Ok(MessageId(3)));
+        assert_eq!("D5".parse::<DecisionId>().unwrap().to_string(), "D-5");
     }
 
     #[test]

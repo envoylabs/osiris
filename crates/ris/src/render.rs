@@ -592,7 +592,7 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
         ));
     }
     Err(format!(
-        "`{id}` is not an id; use I-n (item), D-n (decision), P-n (phase) or M-n (message)"
+        "`{id}` is not an id; use I-n (item), D-n (decision), P-n (phase), M-n (message) or E-<hash> (evidence); the hyphen is optional"
     ))
 }
 

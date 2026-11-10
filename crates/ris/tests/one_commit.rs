@@ -94,7 +94,23 @@ fn an_item_is_one_commit_from_the_phase_start_and_from_each_merge() {
     let heron = Some("heron");
 
     ok(&dir, heron, &["claim", "I-1"]);
-    ok(&dir, heron, &["done", "I-1"]);
+    ok(&dir, heron, &["done", "I1"]);
+    // Evidence is shown by id, with or without the hyphen, in full or
+    // by a prefix of at least eight characters.
+    let shown = ris(&dir, None, &["--json", "show", "I1"]);
+    let v: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let e = v["evidence"][0].as_str().unwrap().to_owned();
+    let full = String::from_utf8(ris(&dir, None, &["show", &e]).stdout).unwrap();
+    assert!(full.contains("command: true"), "{full}");
+    let short = format!("E{}", &e[2..10]);
+    assert_eq!(
+        String::from_utf8(ris(&dir, None, &["show", &short]).stdout).unwrap(),
+        full
+    );
+    assert!(
+        !ris(&dir, None, &["show", "E-0000"]).status.success(),
+        "too short to be an id"
+    );
     assert!(refusal(&dir, "I-1").contains("nothing to merge"));
     commit(&dir, "a.txt", "I-1");
     commit(&dir, "b.txt", "I-1");

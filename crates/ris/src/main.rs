@@ -843,7 +843,19 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Show { id } => render::show(&p.load()?, id).map_err(CliError::Other),
+        Cmd::Show { id } => {
+            // Evidence: E-<hex> or E<hex>, the full hash or a unique
+            // prefix of at least 8 characters. The stored output is
+            // printed as it is.
+            let hex = id
+                .strip_prefix('E')
+                .map(|r| r.strip_prefix('-').unwrap_or(r))
+                .filter(|h| h.len() >= 8 && h.chars().all(|c| c.is_ascii_hexdigit()));
+            match hex {
+                Some(hex) => show_evidence(&p, &hex.to_ascii_lowercase()),
+                None => render::show(&p.load()?, id).map_err(CliError::Other),
+            }
+        }
 
         Cmd::Summary => Ok(render::summary(&p.load()?, &actor)),
 
@@ -1152,6 +1164,37 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
     }
+}
+
+/// `ris show E-<hex>`: one piece of evidence, by full hash or a unique
+/// prefix. Content-addressed, so the bytes are checked against the id.
+fn show_evidence(p: &Project, hex: &str) -> Result<Output, CliError> {
+    let dir = p.root.join(ris::project::DIR).join("evidence");
+    let matches: Vec<String> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|name| name.starts_with(hex))
+        .collect();
+    let name = match matches.as_slice() {
+        [one] => one,
+        [] => return Err(CliError::Other(format!("no evidence E-{hex}"))),
+        many => {
+            return Err(CliError::Other(format!(
+                "E-{hex} matches {} pieces of evidence; give more of the hash",
+                many.len()
+            )));
+        }
+    };
+    let bytes = std::fs::read(dir.join(name))?;
+    if ris::evidence::EvidenceStore::id_of(&bytes).to_string() != format!("E-{name}") {
+        return Err(CliError::Other(format!(
+            "evidence E-{name} does not match its hash; it was changed after it was stored"
+        )));
+    }
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    Ok(Output::new(
+        text.trim_end().to_owned(),
+        json!({ "evidence": format!("E-{name}"), "content": text }),
+    ))
 }
 
 /// Every agent name the log has seen: claimants, authors, auditors,

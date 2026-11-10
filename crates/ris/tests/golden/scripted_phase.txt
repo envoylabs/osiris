@@ -805,7 +805,7 @@ $ ris show I-99
 [exit 1]
 
 $ ris show banana
-[stderr] `banana` is not an id; use I-n (item), D-n (decision), P-n (phase) or M-n (message)
+[stderr] `banana` is not an id; use I-n (item), D-n (decision), P-n (phase), M-n (message) or E-<hash> (evidence); the hyphen is optional
 [exit 1]
 
 $ ris report
