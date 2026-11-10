@@ -12,24 +12,74 @@
 //! options = ["sqlite", "postgres"]
 //! answer = 0                    # or: other = "an answer outside the options"
 //! rationale = "Why it was decided"
+//!
+//! [[decision]]                  # no answer: an open question
+//! question = "Which runner first?"
+//! options = ["runner-a", "runner-b"]
+//! recommend = 0
+//! rationale = "Why it is open, and what the recommendation rests on"
 //! ```
 //!
 //! The whole file is validated first: every text field scanned under
 //! the policy, every check declared, every dependency resolved,
 //! every answer in range. Only a file with no problems is written, so a
-//! bad entry anywhere means nothing is imported. Decisions are standing
-//! decisions, recorded as the person's; importing them needs the
-//! person's seat.
+//! bad entry anywhere means nothing is imported. A decision with an
+//! `answer` or `other` is a standing decision, recorded as taken by the
+//! person. One with neither is an open question: it is raised as a
+//! substantive decision and waits in the person's queue, so a project's
+//! open questions come in without a guessed answer. Importing needs the
+//! person's seat either way. An item or decision whose text matches
+//! one already in the log, or an earlier one in the file, is refused.
 
 use serde::Deserialize;
 
 use ris_core::command::{Choice, Command};
-use ris_core::ids::{Actor, CheckId, ItemId};
+use ris_core::ids::{Actor, CheckId, DecisionId, ItemId};
 use ris_core::primitives::DecisionClass;
 use ris_core::state::State;
 use ris_core::text::{Policy, Text};
 
 use crate::config::ChecksConfig;
+use crate::project::Loaded;
+
+/// What the log already holds, by normalised text, so an import cannot
+/// record the same item or decision twice. Exact matching after
+/// normalisation only: a reworded duplicate gets through, which is why
+/// the onboarding skill reads the log before drafting.
+#[derive(Default)]
+pub struct Recorded {
+    goals: Vec<(String, ItemId)>,
+    questions: Vec<(String, DecisionId)>,
+}
+
+/// Lowercase, whitespace collapsed, trailing punctuation dropped.
+fn normalise(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+        .trim_end_matches(['.', '?', '!', ';', ':'])
+        .to_owned()
+}
+
+impl Recorded {
+    pub fn from(l: &Loaded) -> Self {
+        Self {
+            goals: l
+                .state
+                .items
+                .values()
+                .map(|i| (normalise(l.text(i.at, "goal")), i.id))
+                .collect(),
+            questions: l
+                .state
+                .decisions
+                .values()
+                .map(|d| (normalise(l.text(d.at, "question")), d.id))
+                .collect(),
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +108,9 @@ struct RawDecision {
     options: Vec<String>,
     answer: Option<usize>,
     other: Option<String>,
+    /// The recommended option: required for an open decision, and for a
+    /// taken one defaulting to the answer.
+    recommend: Option<usize>,
     rationale: String,
 }
 
@@ -66,6 +119,8 @@ pub struct Plan {
     pub commands: Vec<Command>,
     pub items: usize,
     pub decisions: usize,
+    /// How many of `decisions` are open, waiting for the person.
+    pub open: usize,
 }
 
 /// Parse and validate `source` against the current state, the declared
@@ -74,6 +129,7 @@ pub struct Plan {
 pub fn plan(
     source: &str,
     state: &State,
+    recorded: &Recorded,
     checks: &ChecksConfig,
     policy: &Policy,
 ) -> Result<Plan, Vec<String>> {
@@ -92,10 +148,22 @@ pub fn plan(
 
     let first = state.next_item_id().0;
     let mut keys: Vec<(String, ItemId)> = Vec::new();
+    let mut seen_goals: Vec<String> = Vec::new();
     for (n, it) in file.item.iter().enumerate() {
         let label = format!("item {}", n + 1);
         let id = ItemId(first + n as u32);
         let goal = text(label.clone(), "goal", &it.goal, &mut problems);
+        let norm = normalise(&it.goal);
+        if let Some((_, existing)) = recorded.goals.iter().find(|(g, _)| *g == norm) {
+            problems.push(format!(
+                "{label}: the same goal as {existing}, already recorded"
+            ));
+        } else if seen_goals.contains(&norm) {
+            problems.push(format!(
+                "{label}: the same goal as an earlier item in this file"
+            ));
+        }
+        seen_goals.push(norm);
         for c in &it.checks {
             if !checks.checks.contains_key(c) {
                 problems.push(format!(
@@ -133,9 +201,22 @@ pub fn plan(
     }
 
     let first_decision = state.next_decision_id().0;
+    let mut open = 0;
+    let mut seen_questions: Vec<String> = Vec::new();
     for (n, d) in file.decision.iter().enumerate() {
         let label = format!("decision {}", n + 1);
         let question = text(label.clone(), "question", &d.question, &mut problems);
+        let norm = normalise(&d.question);
+        if let Some((_, existing)) = recorded.questions.iter().find(|(q, _)| *q == norm) {
+            problems.push(format!(
+                "{label}: the same question as {existing}, already recorded; to revisit it, ask a new question that names {existing}"
+            ));
+        } else if seen_questions.contains(&norm) {
+            problems.push(format!(
+                "{label}: the same question as an earlier decision in this file"
+            ));
+        }
+        seen_questions.push(norm);
         let options: Vec<Option<Text>> = d
             .options
             .iter()
@@ -146,8 +227,9 @@ pub fn plan(
         if d.options.len() < 2 {
             problems.push(format!("{label}: give at least two options"));
         }
-        let choice = match (d.answer, &d.other) {
-            (Some(i), None) if i < d.options.len() => Some(Choice::Option(i)),
+        // None: invalid. Some(None): open. Some(Some(c)): taken.
+        let choice: Option<Option<Choice>> = match (d.answer, &d.other) {
+            (Some(i), None) if i < d.options.len() => Some(Some(Choice::Option(i))),
             (Some(i), None) => {
                 problems.push(format!(
                     "{label}: answer {i} is not one of its {} options",
@@ -155,20 +237,40 @@ pub fn plan(
                 ));
                 None
             }
-            (None, Some(o)) => text(label.clone(), "other", o, &mut problems).map(Choice::Other),
-            _ => {
-                problems.push(format!("{label}: give exactly one of `answer` or `other`"));
+            (None, Some(o)) => {
+                text(label.clone(), "other", o, &mut problems).map(|t| Some(Choice::Other(t)))
+            }
+            (None, None) => Some(None),
+            (Some(_), Some(_)) => {
+                problems.push(format!(
+                    "{label}: give `answer` or `other`, not both (or neither, for an open question)"
+                ));
                 None
             }
         };
+        let recommended = match (d.recommend, &choice) {
+            (Some(r), _) if r < d.options.len() => Some(r),
+            (Some(r), _) => {
+                problems.push(format!(
+                    "{label}: recommend {r} is not one of its {} options",
+                    d.options.len()
+                ));
+                None
+            }
+            (None, Some(Some(Choice::Option(i)))) => Some(*i),
+            (None, Some(Some(Choice::Other(_)))) => Some(0),
+            (None, Some(None)) => {
+                problems.push(format!(
+                    "{label}: an open question needs `recommend`, the option the person is advised to take"
+                ));
+                None
+            }
+            (None, None) => None,
+        };
         let options: Option<Vec<Text>> = options.into_iter().collect();
-        if let (Some(question), Some(options), Some(rationale), Some(chosen)) =
-            (question, options, rationale, choice)
+        if let (Some(question), Some(options), Some(rationale), Some(chosen), Some(recommended)) =
+            (question, options, rationale, choice, recommended)
         {
-            let recommended = match &chosen {
-                Choice::Option(i) => *i,
-                Choice::Other(_) => 0,
-            };
             commands.push(Command::DecisionRaise {
                 by: Actor::Person,
                 about: None,
@@ -178,12 +280,15 @@ pub fn plan(
                 recommended,
                 rationale: rationale.clone(),
             });
-            commands.push(Command::Decide {
-                decision: ris_core::ids::DecisionId(first_decision + n as u32),
-                by: Actor::Person,
-                chosen,
-                rationale,
-            });
+            match chosen {
+                Some(chosen) => commands.push(Command::Decide {
+                    decision: ris_core::ids::DecisionId(first_decision + n as u32),
+                    by: Actor::Person,
+                    chosen,
+                    rationale,
+                }),
+                None => open += 1,
+            }
         }
     }
 
@@ -192,6 +297,7 @@ pub fn plan(
             commands,
             items: file.item.len(),
             decisions: file.decision.len(),
+            open,
         })
     } else {
         Err(problems)

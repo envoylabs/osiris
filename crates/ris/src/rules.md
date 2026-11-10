@@ -65,6 +65,13 @@ The test is the cost of reversing, not whether reversal is possible.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```
+  Then attach the full case, which the person reads with `ris eli5`:
+  ```
+  ris decision explain D-4 --summary "what is being decided, plainly" \
+    --pro "0: ..." --con "0: ..." --pro "1: ..." --con "1: ..." \
+    --why "why the recommendation is the recommendation"
+  ```
+  Every option gets at least one point for or against.
   Adding a dependency is substantive. Prefer an existing library to
   writing the thing yourself; raise the dependency rather than working
   around it. Never take a substantive decision yourself; `ris` refuses.
@@ -93,7 +100,9 @@ Kinds: `handoff`, `interface-changed`, `question`, `finding`.
 
 ## An auditor's seat
 
-An auditor never writes to the tree. `ris audit` is its queue: done and
+An auditor never writes to the tree, and `ris` refuses an auditor seat
+that tries to claim, finish or merge an item, or to get a worktree.
+`ris audit` is its queue: done and
 merged items it did not write and has not reviewed. For each, it reads
 the diff and the evidence against the goal, the decisions that touch it
 and these rules, and checks the item's mechanical decisions for any
@@ -107,6 +116,8 @@ forward.
 
 To load an existing project's backlog and standing decisions, follow
 the osiris-onboard skill (in the osiris repository under
-`skills/osiris-onboard`): checks first, then an import file kept in
-`.osiris/`, checked with `ris import --dry-run`, approved by the person,
-then imported. Never record a decision the project has not made.
+`skills/osiris-onboard`): checks first, then what the log already
+holds, then an import file kept in `.osiris/`, checked with `ris import
+--dry-run`, approved by the person, then imported. Never record a
+decision the project has not made; import an undecided question open,
+for the person to answer.

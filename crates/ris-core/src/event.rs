@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! text_hash(n) = H("ris-text-v1"  || salt(n) || text(n))
-//! hash(n)      = H("ris-event-v2" || hash(n-1) || at(n) || structure(n) || text_hash(n))
+//! hash(n)      = H("ris-event-v3" || hash(n-1) || at(n) || structure(n) || text_hash(n))
 //! ```
 //!
 //! The core has no randomness and no clock: the shell supplies the salt
@@ -18,8 +18,14 @@
 //! is its compact JSON, so a chain can be checked outside the harness
 //! with standard tools.
 //!
-//! Format history: version 1 had no `at`; [`upgrade_from_v1`] rechains
-//! such a log under version 2.
+//! The stored form is the shown form: event names and enum values in
+//! snake_case, ids as `I-1`, hashes and salts as hex, actors as
+//! `{"kind": "agent", "seat": "heron"}`.
+//!
+//! Format history: version 1 had no `at`; version 2 added it; version 3
+//! changed the JSON form to the one above. [`upgrade`] verifies a
+//! version-1 or version-2 log from its stored bytes and rechains it
+//! under version 3, recomputing phase report hashes over the new heads.
 
 use std::collections::BTreeMap;
 
@@ -34,17 +40,39 @@ use crate::text::Text;
 
 /// The event format version. Events are versioned from the first
 /// release, with an upgrade step for old versions.
-pub const FORMAT_VERSION: u16 = 2;
+pub const FORMAT_VERSION: u16 = 3;
 
 /// Random bytes the shell supplies for each event's text hash. Deleted
 /// with the text, so a short text cannot be recovered by guessing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Salt(pub [u8; 16]);
+
+impl Serialize for Salt {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(
+            &self
+                .0
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for Salt {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        crate::ids::decode_hex(&s)
+            .and_then(|b| b.try_into().ok())
+            .map(Salt)
+            .ok_or_else(|| serde::de::Error::custom("expected 32 hex characters"))
+    }
+}
 
 /// The structural part of an event: everything the fold reads. No free
 /// text lives here, by construction: none of these fields is a `Text`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "event")]
+#[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Structure {
     PhaseOpened {
         phase: PhaseId,
@@ -102,6 +130,15 @@ pub enum Structure {
         decision: DecisionId,
         by: Actor,
         chosen: usize,
+    },
+    /// The full case for an open decision. The text part carries
+    /// `summary`, `why`, and `option.{n}.pro.{k}` and `option.{n}.con.{k}`
+    /// for the counts given here, one entry per option.
+    DecisionExplained {
+        decision: DecisionId,
+        by: Actor,
+        pros: Vec<usize>,
+        cons: Vec<usize>,
     },
     CheckRan {
         item: ItemId,
@@ -208,10 +245,10 @@ pub fn hash_text(salt: &Salt, text: &TextPart) -> Hash {
     digest("ris-text-v1", &[&salt.0, &canonical(text)])
 }
 
-/// `H("ris-event-v2" || prev || at || canonical(structure) || text_hash)`.
+/// `H("ris-event-v3" || prev || at || canonical(structure) || text_hash)`.
 pub fn hash_event(prev: &Hash, at: u64, structure: &Structure, text_hash: &Hash) -> Hash {
     digest(
-        "ris-event-v2",
+        "ris-event-v3",
         &[
             &prev.0,
             &at.to_be_bytes(),
@@ -221,56 +258,180 @@ pub fn hash_event(prev: &Hash, at: u64, structure: &Structure, text_hash: &Hash)
     )
 }
 
-/// Format version 1's chain hash: no `at`.
-fn hash_event_v1(prev: &Hash, structure: &Structure, text_hash: &Hash) -> Hash {
-    digest(
-        "ris-event-v1",
-        &[&prev.0, &canonical(structure), &text_hash.0],
-    )
+/// An event as stored by an older format: the structural part as the
+/// exact JSON text its hash was computed over, so the old chain can be
+/// checked without the old types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawEvent {
+    pub seq: u64,
+    pub version: u16,
+    pub prev: Hash,
+    pub at: u64,
+    pub structure: String,
+    pub text_hash: Hash,
+    pub salt: Option<Salt>,
+    pub text: Option<TextPart>,
+    pub hash: Hash,
 }
 
-/// Rechain a format-version-1 log under the current version. The old
-/// chain is verified first, so a broken log is not laundered into a
-/// valid one; every event's `at` becomes 0 (unknown). The head hash
-/// changes: this is the one-off cost of adding a field to the format.
-pub fn upgrade_from_v1(old: &[Event]) -> Result<Vec<Event>, ChainError> {
-    let mut prev_old = Hash::ZERO;
-    let mut prev_new = Hash::ZERO;
+/// The chain hash of an older format, over the structure's stored text.
+fn hash_raw(e: &RawEvent) -> Option<Hash> {
+    let s = e.structure.as_bytes();
+    match e.version {
+        1 => Some(digest("ris-event-v1", &[&e.prev.0, s, &e.text_hash.0])),
+        2 => Some(digest(
+            "ris-event-v2",
+            &[&e.prev.0, &e.at.to_be_bytes(), s, &e.text_hash.0],
+        )),
+        _ => None,
+    }
+}
+
+/// `PhaseOpened` to `phase_opened`.
+fn snake(s: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A version-1 or version-2 structure, as stored, in version 3's form.
+/// Field by field, by name; the result must then deserialize as a
+/// [`Structure`], which refuses unknown fields.
+fn structure_from_old(json: &str) -> Option<Structure> {
+    use serde_json::{Value, json};
+    let id = |prefix: &str, v: &Value| v.as_u64().map(|n| json!(format!("{prefix}-{n}")));
+    let hex = |v: &Value| -> Option<String> {
+        let bytes: Option<Vec<u8>> = v
+            .as_array()?
+            .iter()
+            .map(|b| b.as_u64().and_then(|b| u8::try_from(b).ok()))
+            .collect();
+        let bytes = bytes?;
+        (bytes.len() == 32).then(|| bytes.iter().map(|b| format!("{b:02x}")).collect())
+    };
+    let actor = |v: &Value| -> Option<Value> {
+        match v {
+            Value::String(s) if s == "Person" => Some(json!({ "kind": "person" })),
+            Value::Object(o) => Some(json!({ "kind": "agent", "seat": o.get("Agent")?.as_str()? })),
+            _ => None,
+        }
+    };
+    let mut v: Value = serde_json::from_str(json).ok()?;
+    let o = v.as_object_mut()?;
+    let event = o.get("event")?.as_str()?.to_owned();
+    for (k, val) in o.iter_mut() {
+        let new = match k.as_str() {
+            "event" => json!(snake(val.as_str()?)),
+            "phase" => id("P", val)?,
+            "item" => id("I", val)?,
+            "decision" => id("D", val)?,
+            "message" => id("M", val)?,
+            "about" if val.is_null() => Value::Null,
+            "about" => id("I", val)?,
+            "depends_on" => Value::Array(
+                val.as_array()?
+                    .iter()
+                    .map(|d| id("I", d))
+                    .collect::<Option<_>>()?,
+            ),
+            "report" => json!(hex(val)?),
+            "evidence" if event == "CheckRan" => json!(format!("E-{}", hex(val)?)),
+            "evidence" => Value::Array(
+                val.as_array()?
+                    .iter()
+                    .map(|e| hex(e).map(|h| json!(format!("E-{h}"))))
+                    .collect::<Option<_>>()?,
+            ),
+            // ItemAudited's `by` is a seat name, already a string.
+            "by" if event == "ItemAudited" => val.clone(),
+            "by" | "from" => actor(val)?,
+            "class" | "kind" => json!(snake(val.as_str()?)),
+            "on" => Value::Array(
+                val.as_array()?
+                    .iter()
+                    .map(|b| {
+                        let (kind, n) = b.as_object()?.iter().next()?;
+                        let prefix = if kind == "Decision" { "D" } else { "I" };
+                        Some(json!({ "kind": snake(kind), "id": id(prefix, n)? }))
+                    })
+                    .collect::<Option<_>>()?,
+            ),
+            _ => val.clone(),
+        };
+        *val = new;
+    }
+    serde_json::from_value(v).ok()
+}
+
+/// Rechain a version-1 or version-2 log under the current format. The
+/// old chain is verified first, from the stored bytes, so a broken log
+/// is not laundered into a valid one. Timestamps are kept (version 1
+/// has none: 0). Each phase report, which is a hash over the previous
+/// report and the head before the close, is checked against the old
+/// chain and recomputed over the new one. Every hash changes: this is
+/// the one-off cost of changing the format.
+pub fn upgrade(old: &[RawEvent]) -> Result<Vec<Event>, ChainError> {
+    use crate::command::report_hash;
+    let (mut prev_old, mut prev_new) = (Hash::ZERO, Hash::ZERO);
+    let (mut report_old, mut report_new) = (Hash::ZERO, Hash::ZERO);
     let mut out = Vec::with_capacity(old.len());
-    for (at_index, e) in old.iter().enumerate() {
-        let expected = at_index as u64 + 1;
+    for (index, e) in old.iter().enumerate() {
+        let expected = index as u64 + 1;
         if e.seq != expected {
             return Err(ChainError::Sequence {
-                at: at_index,
+                at: index,
                 expected,
                 found: e.seq,
             });
         }
-        if e.version != 1 {
+        let Some(hash) = hash_raw(e) else {
             return Err(ChainError::Version {
                 seq: e.seq,
                 version: e.version,
             });
-        }
+        };
         if e.prev != prev_old {
             return Err(ChainError::Link { seq: e.seq });
         }
-        if hash_event_v1(&e.prev, &e.structure, &e.text_hash) != e.hash {
+        if hash != e.hash {
             return Err(ChainError::Hash { seq: e.seq });
         }
-        if let (Some(salt), Some(text)) = (&e.salt, &e.text)
-            && hash_text(salt, text) != e.text_hash
-        {
-            return Err(ChainError::TextHash { seq: e.seq });
+        match (&e.salt, &e.text) {
+            (Some(salt), Some(text)) if hash_text(salt, text) != e.text_hash => {
+                return Err(ChainError::TextHash { seq: e.seq });
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(ChainError::HalfRedacted { seq: e.seq });
+            }
+            _ => {}
+        }
+        let mut structure =
+            structure_from_old(&e.structure).ok_or(ChainError::Unreadable { seq: e.seq })?;
+        if let Structure::PhaseClosed { report, .. } = &mut structure {
+            if *report != report_hash(&report_old, &e.prev) {
+                return Err(ChainError::Report { seq: e.seq });
+            }
+            report_old = *report;
+            report_new = report_hash(&report_new, &prev_new);
+            *report = report_new;
         }
         prev_old = e.hash;
-        let hash = hash_event(&prev_new, 0, &e.structure, &e.text_hash);
+        let hash = hash_event(&prev_new, e.at, &structure, &e.text_hash);
         out.push(Event {
             seq: e.seq,
             version: FORMAT_VERSION,
             prev: prev_new,
-            at: 0,
-            structure: e.structure.clone(),
+            at: e.at,
+            structure,
             text_hash: e.text_hash,
             salt: e.salt,
             text: e.text.clone(),
@@ -310,6 +471,10 @@ pub enum ChainError {
     HalfRedacted { seq: u64 },
     /// An event format this version cannot read.
     Version { seq: u64, version: u16 },
+    /// An old event's structure could not be put in the current form.
+    Unreadable { seq: u64 },
+    /// A phase report does not match the log it was taken over.
+    Report { seq: u64 },
 }
 
 impl std::fmt::Display for ChainError {
@@ -333,6 +498,18 @@ impl std::fmt::Display for ChainError {
                 f,
                 "event {seq} has format version {version}, which this build cannot read"
             ),
+            Self::Unreadable { seq } => {
+                write!(
+                    f,
+                    "event {seq}'s structure cannot be read in the current form"
+                )
+            }
+            Self::Report { seq } => {
+                write!(
+                    f,
+                    "event {seq}'s report hash does not match the log before it"
+                )
+            }
         }
     }
 }
@@ -342,10 +519,18 @@ impl std::error::Error for ChainError {}
 /// Check a log from its first event. Every link and every hash is
 /// recomputed; removed text is reported, not failed.
 pub fn verify(events: &[Event]) -> Result<Verified, ChainError> {
-    let mut prev = Hash::ZERO;
+    verify_after(0, Hash::ZERO, events)
+}
+
+/// Verify `events` as the continuation of a verified log of `len`
+/// events ending in `head`: what a follower checks as the log grows,
+/// without re-reading what it has already verified. The result's `len`
+/// and `head` are the whole log's.
+pub fn verify_after(len: u64, head: Hash, events: &[Event]) -> Result<Verified, ChainError> {
+    let mut prev = head;
     let mut missing_text = Vec::new();
     for (at, e) in events.iter().enumerate() {
-        let expected = at as u64 + 1;
+        let expected = len + at as u64 + 1;
         if e.seq != expected {
             return Err(ChainError::Sequence {
                 at,
@@ -378,7 +563,7 @@ pub fn verify(events: &[Event]) -> Result<Verified, ChainError> {
     }
     Ok(Verified {
         head: prev,
-        len: events.len() as u64,
+        len: len + events.len() as u64,
         missing_text,
     })
 }
@@ -467,6 +652,24 @@ mod tests {
         assert_eq!(v.head, log[3].hash);
         assert!(v.missing_text.is_empty());
         assert_eq!(verify(&[]).unwrap().head, Hash::ZERO);
+    }
+
+    #[test]
+    fn a_continuation_verifies_against_the_head_it_follows() {
+        let log = sample_log();
+        let first = verify(&log[..2]).unwrap();
+        let rest = verify_after(first.len, first.head, &log[2..]).unwrap();
+        assert_eq!((rest.len, rest.head), (4, log[3].hash));
+        // Wrong head: the first new event does not link.
+        assert_eq!(
+            verify_after(first.len, log[0].hash, &log[2..]),
+            Err(ChainError::Link { seq: 3 })
+        );
+        // Wrong length: the sequence does not continue.
+        assert!(matches!(
+            verify_after(1, first.head, &log[2..]),
+            Err(ChainError::Sequence { .. })
+        ));
     }
 
     #[test]
@@ -592,68 +795,199 @@ mod tests {
         );
         assert_eq!(
             e.hash.to_hex(),
-            "aa0b6149af0580a8c704561a257068c597a7af5ec0292960916320e9a416cdbe"
+            "f88155e61ba2108a74b72c2da1d879c4d941ddb2e71dfd4e92a4c4aad8493f5b"
         );
-    }
-
-    /// A version-1 event, as the format was before `at`.
-    fn v1(seq: u64, prev: Hash, structure: Structure, t: TextPart, s: Salt) -> Event {
-        let text_hash = hash_text(&s, &t);
-        let hash = hash_event_v1(&prev, &structure, &text_hash);
-        Event {
-            seq,
-            version: 1,
-            prev,
-            at: 0,
-            structure,
-            text_hash,
-            salt: Some(s),
-            text: Some(t),
-            hash,
-        }
     }
 
     #[test]
-    fn a_v1_log_upgrades_to_v2_and_a_broken_one_is_refused() {
-        let a = v1(
+    fn the_stored_form_is_the_shown_form() {
+        let s = |st: Structure| serde_json::to_string(&st).unwrap();
+        assert_eq!(
+            s(Structure::DecisionRaised {
+                decision: DecisionId(5),
+                class: DecisionClass::Substantive,
+                by: Actor::Agent(AgentName("heron".into())),
+                about: Some(ItemId(32)),
+                options: 2,
+                recommended: 0,
+            }),
+            r#"{"event":"decision_raised","decision":"D-5","class":"substantive","by":{"kind":"agent","seat":"heron"},"about":"I-32","options":2,"recommended":0}"#
+        );
+        assert_eq!(
+            s(Structure::ItemBlocked {
+                item: ItemId(1),
+                on: vec![crate::primitives::Blocker::Decision(DecisionId(2))],
+            }),
+            r#"{"event":"item_blocked","item":"I-1","on":[{"kind":"decision","id":"D-2"}]}"#
+        );
+        let mut h = [0u8; 32];
+        h[0] = 0xab;
+        let hex = Hash(h).to_hex();
+        assert_eq!(
+            s(Structure::CheckRan {
+                item: ItemId(1),
+                check: CheckId("test".into()),
+                passed: true,
+                evidence: EvidenceId(Hash(h)),
+            }),
+            format!(
+                r#"{{"event":"check_ran","item":"I-1","check":"test","passed":true,"evidence":"E-{hex}"}}"#
+            )
+        );
+        let e = Event::new(
             1,
             Hash::ZERO,
+            0,
             Structure::PhaseOpened { phase: PhaseId(1) },
-            text(&[("goal", "old")]),
+            text(&[("goal", "g")]),
             salt(1),
         );
-        let b = v1(
-            2,
-            a.hash,
-            Structure::ItemAdded {
-                item: ItemId(1),
-                phase: PhaseId(1),
-                checks: vec![],
-                depends_on: vec![],
-            },
-            text(&[("goal", "an old item")]),
-            salt(2),
+        let v: serde_json::Value = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["prev"], Hash::ZERO.to_hex());
+        assert_eq!(v["salt"], "01".repeat(16));
+        let back: Event = serde_json::from_value(v).unwrap();
+        assert_eq!(back, e, "the stored form reads back as the same event");
+    }
+
+    /// The old JSON form of each converted field, with old hashes,
+    /// built by hand: the old types no longer exist.
+    fn old_log() -> Vec<RawEvent> {
+        let arr = |n: u8| format!("[{}]", vec![n.to_string(); 32].join(","));
+        let structures = [
+            r#"{"event":"PhaseOpened","phase":1}"#.to_owned(),
+            r#"{"event":"ItemAdded","item":1,"phase":1,"checks":["test"],"depends_on":[]}"#.to_owned(),
+            r#"{"event":"ItemAdded","item":2,"phase":1,"checks":[],"depends_on":[1]}"#.to_owned(),
+            r#"{"event":"ItemClaimed","item":1,"agent":"heron"}"#.to_owned(),
+            r#"{"event":"DecisionRaised","decision":1,"class":"Substantive","by":{"Agent":"heron"},"about":1,"options":2,"recommended":0}"#.to_owned(),
+            r#"{"event":"ItemBlocked","item":1,"on":[{"Decision":1}]}"#.to_owned(),
+            r#"{"event":"DecisionTaken","decision":1,"by":"Person","chosen":0}"#.to_owned(),
+            r#"{"event":"ItemReady","item":1}"#.to_owned(),
+            format!(r#"{{"event":"CheckRan","item":1,"check":"test","passed":true,"evidence":{}}}"#, arr(7)),
+            format!(r#"{{"event":"ItemDone","item":1,"evidence":[{}]}}"#, arr(7)),
+            r#"{"event":"ItemMerged","item":1,"commit":"abc"}"#.to_owned(),
+            r#"{"event":"ItemAudited","item":1,"by":"wren"}"#.to_owned(),
+            r#"{"event":"MessageSent","message":1,"from":{"Agent":"wren"},"to":"heron","kind":"InterfaceChanged","about":null}"#.to_owned(),
+            "CLOSE".to_owned(),
+        ];
+        let mut log = Vec::new();
+        let (mut prev, mut report) = (Hash::ZERO, Hash::ZERO);
+        for (i, st) in structures.iter().enumerate() {
+            let seq = i as u64 + 1;
+            let structure = if st == "CLOSE" {
+                report = crate::command::report_hash(&report, &prev);
+                format!(
+                    r#"{{"event":"PhaseClosed","phase":1,"report":[{}]}}"#,
+                    report
+                        .0
+                        .iter()
+                        .map(|b| b.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            } else {
+                st.clone()
+            };
+            let t = text(&[("goal", "old text")]);
+            let text_hash = hash_text(&salt(i as u8), &t);
+            let at = 1_700_000_000_000 + seq;
+            let hash = digest(
+                "ris-event-v2",
+                &[
+                    &prev.0,
+                    &at.to_be_bytes(),
+                    structure.as_bytes(),
+                    &text_hash.0,
+                ],
+            );
+            log.push(RawEvent {
+                seq,
+                version: 2,
+                prev,
+                at,
+                structure,
+                text_hash,
+                salt: Some(salt(i as u8)),
+                text: Some(t),
+                hash,
+            });
+            prev = hash;
+        }
+        log
+    }
+
+    #[test]
+    fn an_old_log_upgrades_field_by_field_and_its_reports_are_recomputed() {
+        let old = old_log();
+        let new = upgrade(&old).unwrap();
+        let v = verify(&new).unwrap();
+        assert_eq!(v.len, old.len() as u64);
+        assert!(
+            new.iter()
+                .zip(&old)
+                .all(|(n, o)| n.at == o.at && n.version == FORMAT_VERSION)
         );
-        // A v1 log does not verify under v2.
+        assert_ne!(new.last().unwrap().hash, old.last().unwrap().hash);
+        // The upgraded log folds, and its meaning is unchanged.
+        let state = crate::state::State::fold(&new).unwrap();
+        assert_eq!(state.items.len(), 2);
+        assert_eq!(state.items[&ItemId(2)].depends_on, vec![ItemId(1)]);
         assert_eq!(
-            verify(&[a.clone(), b.clone()]),
-            Err(ChainError::Version { seq: 1, version: 1 })
+            state.items[&ItemId(1)].audited_by,
+            vec![AgentName("wren".into())]
         );
-        let upgraded = upgrade_from_v1(&[a.clone(), b.clone()]).unwrap();
-        let v = verify(&upgraded).unwrap();
-        assert_eq!(v.len, 2);
-        assert!(upgraded.iter().all(|e| e.version == 2 && e.at == 0));
+        assert_eq!(state.messages[0].kind, MessageKind::InterfaceChanged);
         assert_eq!(
-            upgraded[1].text_field("goal").unwrap().as_str(),
-            "an old item"
+            state.decisions[&DecisionId(1)].by,
+            Actor::Agent(AgentName("heron".into()))
         );
-        assert_ne!(upgraded[1].hash, b.hash, "the head hash changes once");
-        // Tampered v1 history is not laundered.
-        let mut broken = b.clone();
-        broken.structure = Structure::PhaseOpened { phase: PhaseId(9) };
+        // The report is the one the new chain gives.
+        let close = new.last().unwrap();
+        let Structure::PhaseClosed { report, .. } = close.structure else {
+            panic!()
+        };
         assert_eq!(
-            upgrade_from_v1(&[a, broken]),
-            Err(ChainError::Hash { seq: 2 })
+            report,
+            crate::command::report_hash(&Hash::ZERO, &close.prev)
+        );
+        assert_eq!(state.last_report, report);
+    }
+
+    #[test]
+    fn a_broken_old_log_is_refused_not_laundered() {
+        let mut tampered = old_log();
+        tampered[3].structure = r#"{"event":"ItemClaimed","item":1,"agent":"wren"}"#.into();
+        assert_eq!(upgrade(&tampered), Err(ChainError::Hash { seq: 4 }));
+
+        // A report that does not match the old chain, rehashed so the
+        // chain itself holds: the upgrade still refuses it.
+        let mut log = old_log();
+        let last = log.len() - 1;
+        let e = &mut log[last];
+        e.structure = format!(
+            r#"{{"event":"PhaseClosed","phase":1,"report":[{}]}}"#,
+            vec!["9"; 32].join(",")
+        );
+        e.hash = digest(
+            "ris-event-v2",
+            &[
+                &e.prev.0,
+                &e.at.to_be_bytes(),
+                e.structure.as_bytes(),
+                &e.text_hash.0,
+            ],
+        );
+        assert_eq!(
+            upgrade(&log),
+            Err(ChainError::Report {
+                seq: last as u64 + 1
+            })
+        );
+
+        let mut v1 = old_log();
+        v1[0].version = 7;
+        assert_eq!(
+            upgrade(&v1),
+            Err(ChainError::Version { seq: 1, version: 7 })
         );
     }
 }

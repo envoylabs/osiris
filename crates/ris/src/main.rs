@@ -23,6 +23,7 @@ use ris::render::{self, Output};
 #[command(
     name = "ris",
     version,
+    disable_help_subcommand = true,
     about = "osiris: decide at the boundaries, build in between",
     after_help = "Ids: I-n item (a unit of work, one commit), D-n decision, P-n phase, \
                   M-n message, E-<hash> evidence. `ris show <id>` prints any of them."
@@ -49,6 +50,11 @@ enum Cmd {
     Worktree { seat: String },
     /// Print the agents' rules (what OSIRIS.md holds).
     Rules,
+    /// Add an agent seat to .osiris/config.toml. The person's command.
+    Seat {
+        #[command(subcommand)]
+        action: SeatCmd,
+    },
     /// Open or close a phase.
     Phase {
         #[command(subcommand)]
@@ -73,6 +79,9 @@ enum Cmd {
         #[command(subcommand)]
         action: DecisionCmd,
     },
+    /// A decision's full case: what it is about, the pros and cons of
+    /// each option, and why the recommendation is what it is.
+    Eli5 { decision: DecisionId },
     /// Take a queued decision: one of its options, or your own answer.
     Decide {
         decision: DecisionId,
@@ -121,13 +130,18 @@ enum Cmd {
     Summary,
     /// The phase report.
     Report,
-    /// Scan tracked files (or the given paths) as `ris merge` scans a
-    /// commit: exit 2 on a hit, naming the place and never the text.
+    /// Where each seat is: role, worktree, branch, claim, commits ahead
+    /// of and behind the phase branch, uncommitted changes.
+    Status,
+    /// Scan the files git tracks or would pick up (or the given paths,
+    /// tracked or not) as `ris merge` scans a commit: exit 2 on a hit,
+    /// naming the place and never the text. Scanning no files is an
+    /// error, not a clean result.
     Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
-    /// Import items and standing decisions from a TOML file into the
-    /// open phase. The whole file is validated first; see `ris import
+    /// Import items, standing decisions and open questions from a TOML
+    /// file into the open phase. The whole file is validated first; see `ris import
     /// --help` and the onboarding skill for the format.
     Import {
         file: PathBuf,
@@ -143,6 +157,20 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         from: u64,
     },
+    /// Follow the log: wait for new events and print each as a JSON
+    /// line as it is appended, verified against the chain. For a GUI or
+    /// daemon; runs until stopped.
+    Watch {
+        /// Start from this sequence number instead of the next event.
+        #[arg(long)]
+        from: Option<u64>,
+        /// Exit after the first batch of events.
+        #[arg(long)]
+        once: bool,
+        /// How often to look at the log's head, in milliseconds.
+        #[arg(long, default_value_t = 200)]
+        interval_ms: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -154,6 +182,16 @@ enum PhaseCmd {
 #[derive(Subcommand)]
 enum ItemCmd {
     Add(ItemAdd),
+}
+
+#[derive(Subcommand)]
+enum SeatCmd {
+    /// Add a seat: a durable pseudonym, never a real person's name.
+    Add {
+        name: String,
+        #[arg(long, value_parser = ["lead", "builder", "auditor"])]
+        role: String,
+    },
 }
 
 #[derive(Args)]
@@ -170,6 +208,27 @@ struct ItemAdd {
 #[derive(Subcommand)]
 enum DecisionCmd {
     Raise(DecisionRaise),
+    /// Attach the full case to an open decision, for `ris eli5`: what it
+    /// is about, pros and cons per option, and why the recommendation
+    /// holds. Its raiser or the person; again to replace it.
+    Explain(DecisionExplain),
+}
+
+#[derive(Args)]
+struct DecisionExplain {
+    decision: DecisionId,
+    /// What is being decided and what it touches, in plain words.
+    #[arg(long)]
+    summary: String,
+    /// A point for an option, as "<option number>: <text>". Repeatable.
+    #[arg(long = "pro")]
+    pros: Vec<String>,
+    /// A point against an option, as "<option number>: <text>". Repeatable.
+    #[arg(long = "con")]
+    cons: Vec<String>,
+    /// Why the recommended option is the recommendation.
+    #[arg(long)]
+    why: String,
 }
 
 #[derive(Args)]
@@ -212,27 +271,108 @@ impl From<Kind> for MessageKind {
     }
 }
 
+/// Print a line to stdout. A reader that has gone (`ris log | head`)
+/// ends the program quietly rather than with a panic.
+fn emit(line: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    if let Err(e) = writeln!(out, "{line}").and_then(|()| out.flush()) {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        eprintln!("ris: writing output: {e}");
+        std::process::exit(1);
+    }
+}
+
+/// A failure in the `--json` envelope: its kind, the message, the next
+/// step when there is one, and the details a client can act on.
+fn error_envelope(e: &CliError) -> serde_json::Value {
+    let text = e.to_string();
+    let (mut message, mut next) = (Vec::new(), Vec::new());
+    for line in text.lines() {
+        match line.trim_start().strip_prefix("next:") {
+            Some(n) => next.push(n.trim().to_owned()),
+            None => message.push(line),
+        }
+    }
+    let mut error = json!({
+        "kind": match e {
+            CliError::Refused(_) => "refused",
+            CliError::Leak { .. } => "leak",
+            CliError::RoleForbids { .. } => "role_forbids",
+            CliError::CheckFailed { .. } => "check_failed",
+            CliError::ChecksFailed { .. } => "checks_failed",
+            CliError::NotAProject(_) => "not_a_project",
+            CliError::AlreadyAProject(_) => "already_a_project",
+            CliError::Config(_) => "config",
+            CliError::UnknownAgent(_) => "unknown_agent",
+            CliError::Contended => "contended",
+            CliError::Store(_) => "store",
+            CliError::Io(_) => "io",
+            CliError::Other(_) => "other",
+        },
+        "message": message.join("\n"),
+        "next": if next.is_empty() { serde_json::Value::Null } else { json!(next.join("; ")) },
+    });
+    match e {
+        CliError::Refused(r) => {
+            error["refusal"] = json!(r);
+            error["next"] = json!(r.next_step());
+        }
+        CliError::Leak { what, hits } => {
+            error["scanned"] = json!(what);
+            error["hits"] = hits
+                .iter()
+                .map(|h| json!({ "file": h.file, "line": h.line, "category": h.category.description() }))
+                .collect();
+        }
+        CliError::ChecksFailed {
+            item,
+            stage,
+            failed,
+            ..
+        } => {
+            error["item"] = json!(item);
+            error["stage"] = json!(stage);
+            error["failed"] = failed
+                .iter()
+                .map(|(check, evidence)| json!({ "check": check, "evidence": evidence }))
+                .collect();
+        }
+        CliError::RoleForbids { seat, role, .. } => {
+            error["seat"] = json!(seat);
+            error["role"] = json!(role);
+        }
+        _ => {}
+    }
+    json!({ "format": render::JSON_FORMAT, "ok": false, "error": error })
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     ris::style::init(cli.json);
     match run(&cli) {
         Ok(out) => {
-            if cli.json {
-                println!("{}", serde_json::to_string_pretty(&out.json).unwrap());
-            } else {
-                println!("{}", out.text);
+            match (cli.json, out.stream) {
+                (true, true) => {
+                    for item in out.json.as_array().into_iter().flatten() {
+                        emit(&render::envelope(item).to_string());
+                    }
+                }
+                (true, false) => {
+                    emit(&serde_json::to_string_pretty(&render::envelope(&out.json)).unwrap())
+                }
+                (false, _) if out.text.is_empty() => {}
+                (false, _) => emit(&out.text),
             }
             ExitCode::SUCCESS
         }
         Err(e) => {
             if cli.json {
-                let (kind, detail) = match &e {
-                    CliError::Refused(r) => {
-                        ("refused", json!({ "refusal": r, "next": r.next_step() }))
-                    }
-                    other => ("error", json!({ "message": other.to_string() })),
-                };
-                eprintln!("{}", json!({ kind: detail }));
+                // Failures go to stdout too, so a client reads one
+                // stream; the exit status still says what kind it was.
+                emit(&serde_json::to_string_pretty(&error_envelope(&e)).unwrap());
             } else {
                 let text = e.to_string();
                 // Colour the leading "refused:" when styling is on.
@@ -244,7 +384,7 @@ fn main() -> ExitCode {
                 }
             }
             ExitCode::from(match e {
-                CliError::Refused(_) | CliError::Leak { .. } => 2,
+                CliError::Refused(_) | CliError::Leak { .. } | CliError::RoleForbids { .. } => 2,
                 CliError::ChecksFailed { .. } | CliError::CheckFailed { .. } => 3,
                 _ => 1,
             })
@@ -287,6 +427,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     }
     let mut p = Project::find(&cwd)?;
     let actor = p.actor()?;
+    forbidden_by_role(&p, &actor, &cli.command)?;
 
     match &cli.command {
         Cmd::Init { .. } | Cmd::Rules => unreachable!(),
@@ -339,6 +480,37 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     path.display()
                 ),
                 json!({ "seat": seat, "path": path }),
+            ))
+        }
+
+        Cmd::Seat {
+            action: SeatCmd::Add { name, role },
+        } => {
+            if actor != Actor::Person {
+                return Err(CliError::Other(
+                    "seats are the person's to add; run ris seat add without RIS_AGENT".into(),
+                ));
+            }
+            let role = match role.as_str() {
+                "lead" => ris::config::Role::Lead,
+                "builder" => ris::config::Role::Builder,
+                _ => ris::config::Role::Auditor,
+            };
+            let l = p.load()?;
+            let retired = names_in_log(&l.state);
+            let path = p.root.join(ris::project::DIR).join("config.toml");
+            let text = std::fs::read_to_string(&path)?;
+            let out = ris::config::Config::with_seat(&text, name, role, &retired)
+                .map_err(|e| CliError::Other(format!("refused: {e}")))?;
+            std::fs::write(&path, out)?;
+            let next = if role == ris::config::Role::Auditor {
+                format!("start it in the main checkout with RIS_AGENT={name}")
+            } else {
+                format!("`ris worktree {name}`, then start it there with RIS_AGENT={name}")
+            };
+            Ok(Output::new(
+                format!("seat {name} added\n  next: {next}"),
+                json!({ "seat": name, "role": role }),
             ))
         }
 
@@ -436,46 +608,92 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Decision { action } => match action {
-            DecisionCmd::Raise(d) => {
-                let class = if d.substantive {
-                    DecisionClass::Substantive
-                } else {
-                    DecisionClass::Mechanical
+        Cmd::Eli5 { decision } => {
+            let l = p.load()?;
+            let d = l.state.decisions.get(decision).ok_or(CliError::Refused(
+                ris_core::Refusal::UnknownDecision(*decision),
+            ))?;
+            Ok(render::eli5(&l, d))
+        }
+
+        Cmd::Decision { action } => {
+            match action {
+                DecisionCmd::Explain(e) => {
+                    let points = |field: &str, list: &[String]| -> Result<Vec<(usize, ris_core::text::Text)>, CliError> {
+                    list.iter()
+                        .map(|raw| {
+                            let (n, text) = raw
+                                .split_once(':')
+                                .and_then(|(n, t)| Some((n.trim().parse::<usize>().ok()?, t.trim())))
+                                .ok_or_else(|| {
+                                    CliError::Other(format!(
+                                        "--{field} takes \"<option number>: <text>\", as in --{field} \"0: cheaper to reverse\""
+                                    ))
+                                })?;
+                            Ok((n, p.text(&format!("option.{n}.{field}"), text)?))
+                        })
+                        .collect()
                 };
-                if class == DecisionClass::Mechanical && d.rationale.trim().is_empty() {
-                    return Err(CliError::Other(
-                        "a mechanical decision needs --rationale: it is taken at once".into(),
-                    ));
+                    let pros = points("pro", &e.pros)?;
+                    let cons = points("con", &e.cons)?;
+                    let summary = p.text("summary", &e.summary)?;
+                    let why = p.text("why", &e.why)?;
+                    p.run(&Command::Explain {
+                        decision: e.decision,
+                        by: actor.clone(),
+                        summary,
+                        pros,
+                        cons,
+                        why,
+                    })?;
+                    Ok(Output::new(
+                        format!(
+                            "{} explained\n  next: `ris eli5 {}` shows it",
+                            e.decision, e.decision
+                        ),
+                        json!({ "decision": e.decision.to_string() }),
+                    ))
                 }
-                let question = p.text("question", &d.question)?;
-                let mut options = Vec::new();
-                for (n, o) in d.options.iter().enumerate() {
-                    options.push(p.text(&format!("option.{n}"), o)?);
+                DecisionCmd::Raise(d) => {
+                    let class = if d.substantive {
+                        DecisionClass::Substantive
+                    } else {
+                        DecisionClass::Mechanical
+                    };
+                    if class == DecisionClass::Mechanical && d.rationale.trim().is_empty() {
+                        return Err(CliError::Other(
+                            "a mechanical decision needs --rationale: it is taken at once".into(),
+                        ));
+                    }
+                    let question = p.text("question", &d.question)?;
+                    let mut options = Vec::new();
+                    for (n, o) in d.options.iter().enumerate() {
+                        options.push(p.text(&format!("option.{n}"), o)?);
+                    }
+                    let rationale = p.text("rationale", &d.rationale)?;
+                    let (l, _) = p.run(&Command::DecisionRaise {
+                        by: actor.clone(),
+                        about: d.about,
+                        class,
+                        question,
+                        options,
+                        recommended: d.recommend,
+                        rationale,
+                    })?;
+                    let id = l.state.decisions.keys().last().expect("just raised");
+                    let text = match class {
+                        DecisionClass::Mechanical => format!("{id} taken: option {}", d.recommend),
+                        DecisionClass::Substantive => format!(
+                            "{id} queued for the person{}",
+                            d.about
+                                .map(|i| format!("; {i} is set aside, take another"))
+                                .unwrap_or_default()
+                        ),
+                    };
+                    Ok(Output::new(text, json!({ "decision": id.to_string() })))
                 }
-                let rationale = p.text("rationale", &d.rationale)?;
-                let (l, _) = p.run(&Command::DecisionRaise {
-                    by: actor.clone(),
-                    about: d.about,
-                    class,
-                    question,
-                    options,
-                    recommended: d.recommend,
-                    rationale,
-                })?;
-                let id = l.state.decisions.keys().last().expect("just raised");
-                let text = match class {
-                    DecisionClass::Mechanical => format!("{id} taken: option {}", d.recommend),
-                    DecisionClass::Substantive => format!(
-                        "{id} queued for the person{}",
-                        d.about
-                            .map(|i| format!("; {i} is set aside, take another"))
-                            .unwrap_or_default()
-                    ),
-                };
-                Ok(Output::new(text, json!({ "decision": id.to_string() })))
             }
-        },
+        }
 
         Cmd::Decide {
             decision,
@@ -597,6 +815,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     Some(c) => c.clone(),
                     None => checks::git_head(&p.work)?,
                 };
+                require_one_commit(&p, &l, *item, &commit)?;
                 let lines = vet_and_check(&mut p, *item, &author, &commit)?;
                 (commit, lines)
             } else {
@@ -705,14 +924,35 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Show { id } => render::show(&p.load()?, id).map_err(CliError::Other),
+        Cmd::Show { id } => {
+            // Evidence: E-<hex> or E<hex>, the full hash or a unique
+            // prefix of at least 8 characters. The stored output is
+            // printed as it is.
+            let hex = id
+                .strip_prefix(['E', 'e'])
+                .map(|r| r.strip_prefix('-').unwrap_or(r))
+                .filter(|h| h.len() >= 8 && h.chars().all(|c| c.is_ascii_hexdigit()));
+            match hex {
+                Some(hex) => show_evidence(&p, &hex.to_ascii_lowercase()),
+                None => render::show(&p.load()?, id).map_err(CliError::Other),
+            }
+        }
 
         Cmd::Summary => Ok(render::summary(&p.load()?, &actor)),
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 
+        Cmd::Status => Ok(ris::status::render(&p, &p.load()?)),
+
         Cmd::Scan { paths } => {
-            let files = ris::exits::tracked_files(&p.work, paths)?;
+            let files = ris::exits::files_to_scan(&p.work, paths)?;
+            if files.is_empty() {
+                return Err(CliError::Other(
+                    "nothing scanned: no files matched, so there is nothing to call clean\n  \
+                     next: name the files or directories to scan"
+                        .into(),
+                ));
+            }
             let hits = ris::exits::scan_files(&p.work, &files, &p.policy)?;
             if !hits.is_empty() {
                 return Err(CliError::Leak {
@@ -737,21 +977,27 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 return Err(CliError::Refused(ris_core::Refusal::NoOpenPhase));
             }
             let source = std::fs::read_to_string(file)?;
-            let plan =
-                ris::import::plan(&source, &l.state, &p.checks, &p.policy).map_err(|problems| {
-                    CliError::Other(format!(
-                        "refused: nothing was imported; {} problem(s):\n  {}",
-                        problems.len(),
-                        problems.join("\n  ")
-                    ))
-                })?;
+            let plan = ris::import::plan(
+                &source,
+                &l.state,
+                &ris::import::Recorded::from(&l),
+                &p.checks,
+                &p.policy,
+            )
+            .map_err(|problems| {
+                CliError::Other(format!(
+                    "refused: nothing was imported; {} problem(s):\n  {}",
+                    problems.len(),
+                    problems.join("\n  ")
+                ))
+            })?;
             if *dry_run {
                 return Ok(Output::new(
                     format!(
-                        "valid: would import {} item(s) and {} decision(s); nothing written",
-                        plan.items, plan.decisions
+                        "valid: would import {} item(s) and {} decision(s), {} of them open; nothing written",
+                        plan.items, plan.decisions, plan.open
                     ),
-                    json!({ "items": plan.items, "decisions": plan.decisions, "written": false }),
+                    json!({ "items": plan.items, "decisions": plan.decisions, "open": plan.open, "written": false }),
                 ));
             }
             let first_item = l.state.next_item_id().0;
@@ -766,11 +1012,15 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             };
             Ok(Output::new(
                 format!(
-                    "imported items {} and decisions {}",
+                    "imported items {} and decisions {}{}",
                     range("I", first_item, plan.items),
-                    range("D", first_decision, plan.decisions)
+                    range("D", first_decision, plan.decisions),
+                    match plan.open {
+                        0 => String::new(),
+                        n => format!("; {n} open, waiting in ris inbox"),
+                    }
                 ),
-                json!({ "items": plan.items, "decisions": plan.decisions, "written": true }),
+                json!({ "items": plan.items, "decisions": plan.decisions, "open": plan.open, "written": true }),
             ))
         }
 
@@ -815,6 +1065,62 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
+        Cmd::Watch {
+            from,
+            once,
+            interval_ms,
+        } => {
+            // Verify what is there once; after that only what is new.
+            let l = p.load()?;
+            let start = from.unwrap_or(l.state.len + 1).max(1);
+            let (mut len, mut head) = match start - 1 {
+                0 => (0, ris_core::ids::Hash::ZERO),
+                n => (
+                    n,
+                    l.log.get(n as usize - 1).map(|e| e.hash).ok_or_else(|| {
+                        CliError::Other(format!(
+                            "--from {start} is beyond the log's {} events",
+                            l.state.len
+                        ))
+                    })?,
+                ),
+            };
+            drop(l);
+            let interval = std::time::Duration::from_millis((*interval_ms).max(10));
+            loop {
+                let (stored, _) = p.head()?;
+                if stored < len {
+                    return Err(CliError::Other(format!(
+                        "the log shrank from {len} to {stored} events; it was replaced, not appended to"
+                    )));
+                }
+                if stored > len {
+                    let new = p.read_from(len + 1)?;
+                    let v = ris_core::event::verify_after(len, head, &new)
+                        .map_err(ris_core::store::StoreError::Corrupt)?;
+                    let lines: Vec<String> = new
+                        .iter()
+                        .map(|e| serde_json::to_string(e).unwrap())
+                        .collect();
+                    (len, head) = (v.len, v.head);
+                    if *once {
+                        return Ok(Output::stream(
+                            lines.join("\n"),
+                            new.iter().map(|e| json!(e)).collect(),
+                        ));
+                    }
+                    for (line, e) in lines.iter().zip(&new) {
+                        if cli.json {
+                            emit(&render::envelope(&json!(e)).to_string());
+                        } else {
+                            emit(line);
+                        }
+                    }
+                }
+                std::thread::sleep(interval);
+            }
+        }
+
         Cmd::Log { from } => {
             let l = p.load()?;
             let events: Vec<_> = l.log.iter().filter(|e| e.seq >= *from).collect();
@@ -822,7 +1128,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 .iter()
                 .map(|e| serde_json::to_string(e).unwrap())
                 .collect();
-            Ok(Output::new(lines.join("\n"), json!(events)))
+            Ok(Output::stream(
+                lines.join("\n"),
+                events.iter().map(|e| json!(e)).collect(),
+            ))
         }
     }
 }
@@ -942,6 +1251,176 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+    }
+}
+
+/// `ris show E-<hex>`: one piece of evidence, by full hash or a unique
+/// prefix. Content-addressed, so the bytes are checked against the id.
+fn show_evidence(p: &Project, hex: &str) -> Result<Output, CliError> {
+    let dir = p.root.join(ris::project::DIR).join("evidence");
+    let matches: Vec<String> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|name| name.starts_with(hex))
+        .collect();
+    let name = match matches.as_slice() {
+        [one] => one,
+        [] => return Err(CliError::Other(format!("no evidence E-{hex}"))),
+        many => {
+            return Err(CliError::Other(format!(
+                "E-{hex} matches {} pieces of evidence; give more of the hash",
+                many.len()
+            )));
+        }
+    };
+    let bytes = std::fs::read(dir.join(name))?;
+    if ris::evidence::EvidenceStore::id_of(&bytes).to_string() != format!("E-{name}") {
+        return Err(CliError::Other(format!(
+            "evidence E-{name} does not match its hash; it was changed after it was stored"
+        )));
+    }
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    Ok(Output::new(
+        text.trim_end().to_owned(),
+        json!({ "evidence": format!("E-{name}"), "content": text }),
+    ))
+}
+
+/// Every agent name the log has seen: claimants, authors, auditors,
+/// deciders and message parties. A name in the log is never reused.
+fn names_in_log(state: &ris_core::state::State) -> Vec<String> {
+    use ris_core::primitives::{DecisionState, ItemState};
+    let mut actors: Vec<&Actor> = Vec::new();
+    for d in state.decisions.values() {
+        actors.push(&d.by);
+        if let DecisionState::Taken { by, .. } = &d.state {
+            actors.push(by);
+        }
+    }
+    actors.extend(state.messages.iter().map(|m| &m.from));
+    let mut names: std::collections::BTreeSet<String> = actors
+        .into_iter()
+        .filter_map(|a| match a {
+            Actor::Agent(n) => Some(n.0.clone()),
+            Actor::Person => None,
+        })
+        .collect();
+    names.extend(state.messages.iter().map(|m| m.to.0.clone()));
+    for i in state.items.values() {
+        names.extend(i.author.iter().map(|a| a.0.clone()));
+        names.extend(i.audited_by.iter().map(|a| a.0.clone()));
+        if let ItemState::Claimed { agent } = &i.state {
+            names.insert(agent.0.clone());
+        }
+    }
+    names.into_iter().collect()
+}
+
+/// What a seat's role rules out, checked before anything runs. An
+/// auditor reviews and never writes to the tree, so it cannot take,
+/// finish or merge an item, and has no worktree. Every other role may
+/// do everything; the core separately refuses anyone auditing an item
+/// they authored.
+fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), CliError> {
+    let is_auditor = |seat: &str| {
+        p.config
+            .agents
+            .get(seat)
+            .is_some_and(|a| a.role == ris::config::Role::Auditor)
+    };
+    let refuse = |seat: &str, what: &'static str| {
+        Err(CliError::RoleForbids {
+            seat: seat.to_owned(),
+            role: "auditor",
+            what,
+        })
+    };
+    if let Cmd::Worktree { seat } = command
+        && is_auditor(seat)
+    {
+        return refuse(
+            seat,
+            "need a worktree: it reads the main checkout and never writes",
+        );
+    }
+    let Actor::Agent(name) = actor else {
+        return Ok(());
+    };
+    if !is_auditor(&name.0) {
+        return Ok(());
+    }
+    match command {
+        Cmd::Claim { .. } => refuse(&name.0, "claim items"),
+        Cmd::Done { .. } => refuse(&name.0, "finish items"),
+        Cmd::Merge { .. } => refuse(&name.0, "merge items"),
+        _ => Ok(()),
+    }
+}
+
+/// Width one: the item must be exactly one commit on top of where the
+/// phase branch stood after its last recorded merge (or where the phase
+/// branch left the main line, before the phase's first merge), as a
+/// merge from a worktree requires. Skipped only when there is no base
+/// to count from: work committed straight onto the main line with no
+/// merge yet recorded in the phase, or no main line to fork from.
+fn require_one_commit(
+    p: &Project,
+    l: &ris::project::Loaded,
+    item: ItemId,
+    commit: &str,
+) -> Result<(), CliError> {
+    let Some(phase) = l.state.open_phase() else {
+        return Ok(());
+    };
+    let count = |base: &str| -> Option<u32> {
+        git(
+            &p.work,
+            &["rev-list", "--count", &format!("{base}..{commit}")],
+        )
+        .ok()?
+        .parse()
+        .ok()
+    };
+    let is_ancestor =
+        |base: &str| git(&p.work, &["merge-base", "--is-ancestor", base, commit]).is_ok();
+    // The nearest merge recorded in this phase that the commit builds on.
+    let merged = l
+        .state
+        .items
+        .values()
+        .filter(|i| i.phase == phase.id)
+        .filter_map(|i| match &i.state {
+            ris_core::primitives::ItemState::Merged { commit: c, .. } => Some(c.0.clone()),
+            _ => None,
+        })
+        .filter(|c| c != commit && is_ancestor(c))
+        .filter_map(|c| count(&c).map(|n| (n, c)))
+        .min();
+    let (n, base) = match merged {
+        Some((n, c)) => (n, format!("the last merge ({})", &c[..c.len().min(8)])),
+        None => {
+            // On the main line itself there is no fork point to count from.
+            let branch = git(&p.work, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+            if branch == p.config.main_line {
+                return Ok(());
+            }
+            let Ok(fork) = git(&p.work, &["merge-base", &p.config.main_line, commit]) else {
+                return Ok(());
+            };
+            match count(&fork) {
+                Some(n) => (n, format!("where the phase left {}", p.config.main_line)),
+                None => return Ok(()),
+            }
+        }
+    };
+    match n {
+        1 => Ok(()),
+        0 => Err(CliError::Other(format!(
+            "nothing to merge: no commit for {item} beyond {base}\n  next: commit the item first"
+        ))),
+        n => Err(CliError::Other(format!(
+            "refused: {n} commits since {base}; {item} merges as one commit\n  \
+             next: squash them (`git reset --soft` to that commit, then commit once with the trailers)"
+        ))),
     }
 }
 

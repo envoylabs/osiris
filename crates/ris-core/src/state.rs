@@ -206,8 +206,29 @@ impl State {
                         recommended: *recommended,
                         about: *about,
                         state: DecisionState::Open,
+                        explained: None,
                     },
                 );
+            }
+            Structure::DecisionExplained {
+                decision,
+                by,
+                pros,
+                cons,
+            } => {
+                let d = self
+                    .decisions
+                    .get_mut(decision)
+                    .ok_or(FoldError::UnknownDecision {
+                        seq,
+                        decision: *decision,
+                    })?;
+                d.explained = Some(crate::primitives::Explanation {
+                    at: seq,
+                    by: by.clone(),
+                    pros: pros.clone(),
+                    cons: cons.clone(),
+                });
             }
             Structure::DecisionTaken {
                 decision,

@@ -130,10 +130,23 @@ pub fn scan_commit(
     Ok(hits)
 }
 
-/// The files git tracks under `root`, optionally narrowed to `paths`.
-pub fn tracked_files(root: &Path, paths: &[String]) -> Result<Vec<String>, CliError> {
+/// The files `ris scan` reads: what git tracks plus what it would pick
+/// up next (untracked and not ignored), narrowed to `paths` when any are
+/// given. A path named explicitly is scanned even if git ignores it or
+/// does not know it: naming a file is asking for it to be read. A named
+/// path that does not exist is an error, so a typo is not reported
+/// clean.
+pub fn files_to_scan(root: &Path, paths: &[String]) -> Result<Vec<String>, CliError> {
     let mut cmd = Command::new("git");
-    cmd.args(["ls-files", "-z", "--"]).current_dir(root);
+    cmd.args([
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+    ])
+    .current_dir(root);
     for p in paths {
         cmd.arg(p);
     }
@@ -141,14 +154,26 @@ pub fn tracked_files(root: &Path, paths: &[String]) -> Result<Vec<String>, CliEr
     if !out.status.success() {
         return Err(CliError::Other("git ls-files failed".into()));
     }
-    Ok(String::from_utf8_lossy(&out.stdout)
+    let mut files: std::collections::BTreeSet<String> = String::from_utf8_lossy(&out.stdout)
         .split('\0')
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
-        .collect())
+        .collect();
+    for p in paths {
+        let path = root.join(p);
+        if !path.exists() {
+            return Err(CliError::Other(format!(
+                "{p}: no such file or directory\n  next: name a path relative to the repository root"
+            )));
+        }
+        if path.is_file() {
+            files.insert(p.strip_prefix("./").unwrap_or(p).to_owned());
+        }
+    }
+    Ok(files.into_iter().collect())
 }
 
-/// Scan tracked files. Files that are not UTF-8 are skipped: the scan
+/// Scan `files` under `root`. Files that are not UTF-8 are skipped: the scan
 /// is for text, and a binary is not where a secret is typed.
 pub fn scan_files(root: &Path, files: &[String], policy: &Policy) -> Result<Vec<Hit>, CliError> {
     let mut hits = Vec::new();

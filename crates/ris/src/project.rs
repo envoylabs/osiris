@@ -74,6 +74,13 @@ pub enum CliError {
     Config(String),
     /// `RIS_AGENT` names a seat `config.toml` does not.
     UnknownAgent(String),
+    /// The seat's role does not do this: an auditor reads and never
+    /// writes to the tree. Exit status 2, like any refusal.
+    RoleForbids {
+        seat: String,
+        role: &'static str,
+        what: &'static str,
+    },
     /// Two writers kept colliding; the caller may retry.
     Contended,
     /// The exit scan found something in a commit or in files. Exit
@@ -119,6 +126,10 @@ impl std::fmt::Display for CliError {
             Self::UnknownAgent(a) => write!(
                 f,
                 "RIS_AGENT={a} is not a seat in {DIR}/config.toml\n  next: add [agents.{a}] there, or unset RIS_AGENT to act as the person"
+            ),
+            Self::RoleForbids { seat, role, what } => write!(
+                f,
+                "refused: {seat} is an {role}, and an {role} does not {what}\n  next: `ris audit` for the review queue; a builder or lead seat does this"
             ),
             Self::Contended => write!(f, "the log kept moving under this command; try again"),
             Self::Leak { what, hits } => {
@@ -353,6 +364,12 @@ impl Project {
     /// Scan free text from the command line under this project's policy.
     pub fn text(&self, field: &str, raw: &str) -> Result<Text, CliError> {
         Ok(Text::new(field, raw, &self.policy)?)
+    }
+
+    /// The events from `from` on, unverified: the caller verifies them
+    /// against the head it holds.
+    pub fn read_from(&self, from: u64) -> Result<Vec<Event>, CliError> {
+        Ok(self.store.read_from(from)?)
     }
 
     /// Verify, fold and index the log.

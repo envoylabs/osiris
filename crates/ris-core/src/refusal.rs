@@ -13,6 +13,7 @@ use crate::transitions::CommandKind;
 
 /// Why a command was not applied.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Refusal {
     /// A free-text field failed the confidentiality scan. The match is
     /// never echoed: only the field and the category are named.
@@ -70,6 +71,11 @@ pub enum Refusal {
     AuditOwnWork(ItemId),
     /// This agent has already reviewed this item.
     AlreadyAudited { item: ItemId, by: AgentName },
+    /// Only the decision's raiser, or the person, explains it.
+    NotTheRaiser(DecisionId),
+    /// An explanation needs a summary, a reason for the recommendation,
+    /// and at least one pro or con for every option.
+    ThinExplanation(DecisionId),
 }
 
 impl Refusal {
@@ -128,6 +134,12 @@ impl Refusal {
                 "another seat audits it; take the next item in `ris audit`".into()
             }
             Self::AlreadyAudited { .. } => "take the next item in `ris audit`".into(),
+            Self::NotTheRaiser(d) => {
+                format!("ask its raiser to explain it: `ris show {d}` names them")
+            }
+            Self::ThinExplanation(_) => {
+                "give --summary, --why, and a --pro or --con for every option".into()
+            }
         }
     }
 }
@@ -201,6 +213,13 @@ impl fmt::Display for Refusal {
             Self::AlreadyAudited { item, by } => {
                 write!(f, "refused: {by} has already reviewed {item}")
             }
+            Self::NotTheRaiser(d) => {
+                write!(f, "refused: only {d}'s raiser or the person explains it")
+            }
+            Self::ThinExplanation(d) => write!(
+                f,
+                "refused: {d}'s explanation leaves an option without a pro or a con, or has no summary or reason"
+            ),
         }
     }
 }

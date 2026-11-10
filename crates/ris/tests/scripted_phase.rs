@@ -70,6 +70,18 @@ impl Sandbox {
         run
     }
 
+    /// Squash the last `n` commits into one, staging everything, with
+    /// `trailer` as the last message line.
+    fn squash(&self, n: usize, subject: &str, trailer: &str) {
+        let reset = Command::new("git")
+            .args(["reset", "-q", "--soft", &format!("HEAD~{n}")])
+            .current_dir(&self.dir)
+            .status()
+            .unwrap();
+        assert!(reset.success());
+        self.commit(subject, trailer);
+    }
+
     /// Stage everything and commit it (empty commits allowed) with
     /// `trailer` as the last message line.
     fn commit(&self, subject: &str, trailer: &str) {
@@ -200,7 +212,12 @@ fn scripted_phase_matches_the_golden_transcript() {
     fs::write(
         &config,
         c.replace("phase_branches = true", "phase_branches = false")
-            .replace("denylist = []", "denylist = [\"example client\"]"),
+            .replace("denylist = []", "denylist = [\"example client\"]")
+            // Two writers and a separate auditor.
+            .replace(
+                "[agents.wren]\nrole = \"auditor\"",
+                "[agents.wren]\nrole = \"builder\"\n\n[agents.rook]\nrole = \"auditor\"",
+            ),
     )
     .unwrap();
     // Checks the sandbox can run: one that passes, one that fails.
@@ -329,7 +346,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     assert_eq!(r.status, 3, "a failed check exits 3: {}", r.stderr);
     assert!(r.stderr.contains("check lint FAILED"));
     let r = sb.ok(None, &["--json", "report"]);
-    let v: serde_json::Value = serde_json::from_str(&r.stdout).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str::<serde_json::Value>(&r.stdout).unwrap()["data"].clone();
     let i4 = v["items"]
         .as_array()
         .unwrap()
@@ -393,6 +411,16 @@ fn scripted_phase_matches_the_golden_transcript() {
     fs::remove_file(sb.dir.join("notes.txt")).unwrap();
     sb.commit("docs: notes, without the path", "Item: I-3\nAgent: heron");
     sb.ok(None, &["scan"]);
+    // A fix stacked on the refused commit makes two: an item merges as
+    // exactly one commit beyond the last merge, so it is squashed.
+    let r = sb.ris(None, &["merge", "I-3"]);
+    assert_eq!(r.status, 1);
+    assert!(
+        r.stderr.contains("2 commits since the last merge"),
+        "{}",
+        r.stderr
+    );
+    sb.squash(2, "docs: notes", "Item: I-3\nAgent: heron");
     sb.ok(None, &["merge", "I-3"]);
 
     // I-2's dependency has merged.
@@ -442,12 +470,23 @@ fn scripted_phase_matches_the_golden_transcript() {
         ],
     );
     sb.ok(None, &["show", "D-3"]);
-    // The auditor's queue: wren reviews heron's merged I-1, not its own.
+    // The auditor's seat reads and never writes: it cannot take, finish
+    // or merge an item, and gets no worktree.
+    let rook = Some("rook");
+    sb.refused(rook, &["claim", "I-2"]);
+    sb.refused(rook, &["done", "I-2"]);
+    sb.refused(rook, &["merge", "I-2"]);
+    sb.refused(None, &["worktree", "rook"]);
+    // The auditor's queue: rook reviews heron's merged I-1. Its author
+    // cannot, and nobody reviews it twice. A builder may review another
+    // builder's work: wren audits I-1 too, but not its own I-2.
+    let q = sb.ok(rook, &["audit"]).stdout;
+    assert!(q.contains("I-1"), "{q}");
+    sb.refused(heron, &["audit", "I-1"]);
+    sb.ok(rook, &["audit", "I-1"]);
+    sb.refused(rook, &["audit", "I-1"]);
     let q = sb.ok(wren, &["audit"]).stdout;
     assert!(q.contains("I-1") && !q.contains("I-2 "), "{q}");
-    sb.refused(heron, &["audit", "I-1"]);
-    sb.ok(wren, &["audit", "I-1"]);
-    sb.refused(wren, &["audit", "I-1"]);
     sb.ok(None, &["show", "I-1"]);
     sb.ok(None, &["show", "I-2"]);
     sb.ok(None, &["show", "D-2"]);
@@ -464,7 +503,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.ok(None, &["phase", "close"]);
     sb.refused(None, &["phase", "close"]);
     let r = sb.ok(None, &["--json", "report"]);
-    let v: serde_json::Value = serde_json::from_str(&r.stdout).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str::<serde_json::Value>(&r.stdout).unwrap()["data"].clone();
     assert_eq!(v["phase"]["state"], "closed");
     assert_eq!(v["items"].as_array().unwrap().len(), 4);
     assert_eq!(v["substantive"].as_array().unwrap().len(), 2);
@@ -483,7 +523,7 @@ fn scripted_phase_matches_the_golden_transcript() {
     }
     let want = fs::read_to_string(&golden).unwrap();
     if got != want {
-        let actual = golden.with_extension("actual.txt");
+        let actual = actual_path();
         fs::write(&actual, &got).unwrap();
         panic!(
             "transcript differs from {}; actual written to {}",
@@ -537,4 +577,27 @@ fn every_help_fits_one_screen() {
             sub.join(" ")
         );
     }
+}
+
+/// Where a differing transcript is written for inspection: under the
+/// build directory, so a failed run never leaves a file in the source
+/// tree to be committed by accident.
+fn actual_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("scripted_phase.actual.txt")
+}
+
+#[test]
+fn a_differing_transcript_is_written_where_git_ignores_it() {
+    let path = actual_path();
+    let out = std::process::Command::new("git")
+        .args(["check-ignore", "-q", "--no-index"])
+        .arg(&path)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{} would be visible to git",
+        path.display()
+    );
 }

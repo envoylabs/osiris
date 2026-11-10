@@ -6,10 +6,12 @@
 //! exactly one of two concurrent appends after the same head succeeds.
 //! Event parts are stored as JSON so the `sqlite3` tool can read them.
 //!
-//! Schema history: version 1 stored format-version-1 events (no `at`).
-//! Opening such a file upgrades it in place: the log is rechained under
-//! the current format inside one transaction and the schema version is
-//! set to 2.
+//! Schema history: version 1 stored format-version-1 events (no `at`);
+//! version 2 stored format-version-2 events; version 3 stores format
+//! version 3, whose JSON is the shown form. Opening an older file
+//! upgrades it in place, inside one transaction: the old chain is
+//! verified from the stored bytes, the log is rechained under the
+//! current format, and the schema version is set to 3.
 
 use std::path::Path;
 
@@ -19,7 +21,7 @@ use ris_core::store::{Store, StoreError, check_follows};
 use rusqlite::{Connection, OptionalExtension, params};
 
 /// The schema this build writes. A file with another version is refused.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// A store backed by one SQLite file.
 pub struct SqliteStore {
@@ -84,7 +86,7 @@ impl SqliteStore {
                 .map_err(backend)?;
             }
             Some(v) if v == SCHEMA_VERSION.to_string() => {}
-            Some(v) if v == "1" => Self::upgrade_from_schema_1(&conn)?,
+            Some(v) if v == "1" || v == "2" => Self::upgrade_old(&conn)?,
             Some(v) => {
                 return Err(StoreError::Backend(format!(
                     "store has schema version {v}; this build reads {SCHEMA_VERSION}"
@@ -94,10 +96,11 @@ impl SqliteStore {
         Ok(Self { conn })
     }
 
-    /// Schema 1 held format-version-1 events without `at`. Add the
-    /// column, rechain the log under the current format, and bump the
-    /// schema, all in one transaction.
-    fn upgrade_from_schema_1(conn: &Connection) -> Result<(), StoreError> {
+    /// Schemas 1 and 2 held older event formats (schema 1 without
+    /// `at`). Add the column if missing, verify and rechain the log
+    /// under the current format, and bump the schema, in one
+    /// transaction.
+    fn upgrade_old(conn: &Connection) -> Result<(), StoreError> {
         conn.execute_batch("BEGIN IMMEDIATE").map_err(backend)?;
         let result = (|| {
             let has_at: i64 = conn
@@ -111,8 +114,8 @@ impl SqliteStore {
                 conn.execute_batch("ALTER TABLE events ADD COLUMN at INTEGER NOT NULL DEFAULT 0")
                     .map_err(backend)?;
             }
-            let old = Self::read_from_on(conn, 1)?;
-            let new = ris_core::event::upgrade_from_v1(&old)?;
+            let old = Self::read_raw_on(conn)?;
+            let new = ris_core::event::upgrade(&old)?;
             conn.execute_batch("DELETE FROM events").map_err(backend)?;
             Self::insert_on(conn, &new)?;
             conn.execute(
@@ -177,6 +180,59 @@ impl SqliteStore {
             events.push(row.map_err(backend)??);
         }
         Ok(events)
+    }
+
+    /// The log as stored, the structure kept as its stored text, for an
+    /// upgrade to verify against the old chain.
+    fn read_raw_on(conn: &Connection) -> Result<Vec<ris_core::RawEvent>, StoreError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT seq, version, prev, at, structure, text_hash, salt, text, hash
+                 FROM events ORDER BY seq",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, Vec<u8>>(5)?,
+                    r.get::<_, Option<Vec<u8>>>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                    r.get::<_, Vec<u8>>(8)?,
+                ))
+            })
+            .map_err(backend)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (seq, version, prev, at, structure, text_hash, salt, text, hash) =
+                row.map_err(backend)?;
+            let salt = match salt {
+                Some(s) => Some(Salt(s.as_slice().try_into().map_err(|_| {
+                    StoreError::Backend(format!("event {seq}: salt is not 16 bytes"))
+                })?)),
+                None => None,
+            };
+            let text: Option<TextPart> = match text {
+                Some(t) => Some(serde_json::from_str(&t).map_err(backend)?),
+                None => None,
+            };
+            out.push(ris_core::RawEvent {
+                seq: seq as u64,
+                version: version as u16,
+                prev: hash_from(&prev)?,
+                at: at as u64,
+                structure,
+                text_hash: hash_from(&text_hash)?,
+                salt,
+                text,
+                hash: hash_from(&hash)?,
+            });
+        }
+        Ok(out)
     }
 
     fn head_on(conn: &Connection) -> Result<(u64, Hash), StoreError> {
@@ -481,7 +537,6 @@ mod tests {
     /// column, format-version-1 events.
     #[test]
     fn a_schema_1_file_is_upgraded_in_place() {
-        use ris_core::ids::PhaseId;
         let path = temp_db("schema1");
         {
             let conn = Connection::open(&path).unwrap();
@@ -506,25 +561,21 @@ mod tests {
                 h.finalize().into()
             }
             let mut prev = [0u8; 32];
+            // The structure as format version 1 stored it: the old JSON
+            // form, written out, since the old types no longer exist.
             let steps = [
                 (
-                    Structure::PhaseOpened { phase: PhaseId(1) },
+                    r#"{"event":"PhaseOpened","phase":1}"#,
                     r#"{"goal":"old phase"}"#,
                 ),
                 (
-                    Structure::ItemAdded {
-                        item: ris_core::ids::ItemId(1),
-                        phase: PhaseId(1),
-                        checks: vec![],
-                        depends_on: vec![],
-                    },
+                    r#"{"event":"ItemAdded","item":1,"phase":1,"checks":[],"depends_on":[]}"#,
                     r#"{"goal":"old item"}"#,
                 ),
             ];
-            for (i, (structure, text)) in steps.iter().enumerate() {
+            for (i, (structure_json, text)) in steps.iter().enumerate() {
                 let salt = [i as u8 + 1; 16];
                 let text_hash = digest("ris-text-v1", &[&salt, text.as_bytes()]);
-                let structure_json = serde_json::to_string(structure).unwrap();
                 let hash = digest(
                     "ris-event-v1",
                     &[&prev, structure_json.as_bytes(), &text_hash],
@@ -548,7 +599,7 @@ mod tests {
         let store = SqliteStore::open(&path).unwrap();
         let log = store.read_all().unwrap();
         assert_eq!(log.len(), 2);
-        assert!(log.iter().all(|e| e.version == 2 && e.at == 0));
+        assert!(log.iter().all(|e| e.version == 3 && e.at == 0));
         ris_core::event::verify(&log).unwrap();
         let state = store.load().unwrap();
         assert_eq!(state.items.len(), 1);
@@ -560,7 +611,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, "2");
+        assert_eq!(version, "3");
         // Reopening is a no-op, and new events carry their time.
         drop(store);
         let mut store = SqliteStore::open(&path).unwrap();

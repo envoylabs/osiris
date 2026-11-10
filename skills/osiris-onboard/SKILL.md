@@ -28,8 +28,9 @@ rules hold throughout:
    command refuses while the denylist is empty, which is the check that
    it was done.
 4. Ask the person for the agents' seat names (pseudonyms, one lead and
-   one auditor at least) and add them under `[agents.<name>]` with
-   `role = "lead"`, `"builder"` or `"auditor"`.
+   one auditor at least) and the role of each, and give them the
+   commands to run: `ris seat add <name> --role lead` (or `builder`,
+   `auditor`). Seats are the person's to add; `ris` refuses an agent.
 
 ## 2. Checks
 
@@ -51,7 +52,24 @@ Read, in this order, and note file and line for everything you take:
   you at (an issue export, a planning document);
 - `git log --oneline -50` for the current direction.
 
-## 4. Draft the import file
+## 4. Read what is already recorded
+
+On a project that already uses `ris`, the log holds items and decisions
+from earlier phases. Read them before drafting, so nothing is recorded
+twice:
+
+- `ris --json report`: every decision ever recorded, and the current
+  phase's items plus every item not yet merged;
+- `ris show P-n` for each earlier phase: the items merged in it.
+
+Leave out any item or decision already there, however it is worded. If
+a recorded decision looks stale, do not record it again: draft an open
+question that names it (`Revisit D-2: ...`) and let the person decide.
+`ris import` refuses an item goal or decision question that matches
+one in the log exactly, but a reworded duplicate gets past it; reading
+the log is the real check.
+
+## 5. Draft the import file
 
 Write `.osiris/import.toml`:
 
@@ -67,6 +85,12 @@ question = "The question as it was decided"
 options = ["what was chosen", "the main alternative"]
 answer = 0                    # or: other = "..."
 rationale = "Why, citing the document: docs/adr/0003.md"
+
+[[decision]]                  # no answer: an open question
+question = "A question the documents leave open"
+options = ["one way", "another"]
+recommend = 0                 # your recommendation, required
+rationale = "Why it is open and why you recommend that option, citing the document"
 ```
 
 - Items: work the documents say is outstanding, one outcome each,
@@ -74,11 +98,16 @@ rationale = "Why, citing the document: docs/adr/0003.md"
 - Decisions: only ones the project has actually made and written down,
   or the person tells you. Never invent a standing decision; a guess
   recorded as decided is worse than none.
+- Open questions: a question the documents name as open, or that you
+  find undecided and that blocks or shapes outstanding work, goes in
+  without an answer. It is raised as a substantive decision and waits
+  for the person. When unsure whether something was decided, import it
+  open.
 - Paths are relative to the repository root. No names of people, no
   client or product names the denylist would refuse, no URLs to
   private systems.
 
-## 5. Check, show, import
+## 6. Check, show, import
 
 1. `ris import --dry-run .osiris/import.toml`. Fix every problem it
    names; it never echoes the text that tripped the scan, so look at
@@ -91,7 +120,7 @@ rationale = "Why, citing the document: docs/adr/0003.md"
    true.
 4. `ris summary` to show the result.
 
-## 6. Hand over
+## 7. Hand over
 
 For each builder seat, `ris worktree <seat>` creates its worktree beside
 the repository with the rules loaded. Tell the person the command to

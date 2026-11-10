@@ -17,6 +17,25 @@ use crate::style;
 pub struct Output {
     pub text: String,
     pub json: Value,
+    /// `json` is an array printed as one envelope per line, as a stream
+    /// is, rather than as one document.
+    pub stream: bool,
+}
+
+/// The version of the `--json` contract. Every document and every
+/// stream line is an envelope carrying it:
+///
+/// ```text
+/// {"format": 1, "ok": true,  "data": ...}
+/// {"format": 1, "ok": false, "error": {"kind": ..., "message": ..., "next": ...}}
+/// ```
+///
+/// A change to the shape of any `data` or `error` is a new format.
+pub const JSON_FORMAT: u32 = 1;
+
+/// A successful result in the envelope.
+pub fn envelope(data: &Value) -> Value {
+    json!({ "format": JSON_FORMAT, "ok": true, "data": data })
 }
 
 impl Output {
@@ -24,6 +43,16 @@ impl Output {
         Self {
             text: text.into(),
             json,
+            stream: false,
+        }
+    }
+
+    /// Lines of text, or with `--json` one envelope per item.
+    pub fn stream(text: impl Into<String>, items: Vec<Value>) -> Self {
+        Self {
+            text: text.into(),
+            json: Value::Array(items),
+            stream: true,
         }
     }
 }
@@ -91,15 +120,16 @@ fn decision_json(l: &Loaded, d: &Decision) -> Value {
     let mut v = json!({
         "id": d.id.to_string(),
         "class": match d.class { DecisionClass::Mechanical => "mechanical", DecisionClass::Substantive => "substantive" },
-        "by": d.by.to_string(),
+        "by": d.by,
         "about": d.about.map(|i| i.to_string()),
         "question": l.text(d.at, "question"),
         "options": options,
         "recommended": d.recommended,
         "state": match d.state { DecisionState::Open => "open", DecisionState::Taken { .. } => "taken", DecisionState::Superseded(_) => "superseded" },
+        "explained": d.explained.is_some(),
     });
     if let DecisionState::Taken { by, chosen, at } = &d.state {
-        v["taken_by"] = json!(by.to_string());
+        v["taken_by"] = json!(by);
         v["chosen"] = json!(chosen);
         v["rationale"] = json!(l.text(*at, "rationale"));
         if *chosen >= d.options {
@@ -107,6 +137,93 @@ fn decision_json(l: &Loaded, d: &Decision) -> Value {
         }
     }
     v
+}
+
+/// `ris eli5`: the full case for a decision. The question, then each
+/// option with its points for and against, the recommendation and why,
+/// and how to answer. Without an explanation, says so and who can give
+/// one.
+pub fn eli5(l: &Loaded, d: &Decision) -> Output {
+    let class = match d.class {
+        DecisionClass::Mechanical => "mechanical",
+        DecisionClass::Substantive => "substantive",
+    };
+    let mut s = format!("{} [{class}] {}\n", d.id, l.text(d.at, "question"));
+    if let Some(i) = d.about {
+        s.push_str(&format!("about {i}; raised by {}\n", d.by));
+    } else {
+        s.push_str(&format!("raised by {}\n", d.by));
+    }
+    let Some(e) = &d.explained else {
+        s.push('\n');
+        s.push_str(&decision_block(l, d));
+        s.push_str(&format!(
+            "\nno explanation recorded\n  next: ask {} for one (`ris decision explain {}`), or decide from the above\n",
+            match &d.by {
+                Actor::Person => "yourself".to_owned(),
+                Actor::Agent(a) => a.to_string(),
+            },
+            d.id
+        ));
+        return Output::new(
+            s,
+            json!({ "decision": decision_json(l, d), "explanation": null }),
+        );
+    };
+    s.push_str(&format!("\n{}\n", l.text(e.at, "summary")));
+    let mut options = Vec::new();
+    for n in 0..d.options {
+        let pros: Vec<&str> = (0..e.pros[n])
+            .map(|k| l.text(e.at, &format!("option.{n}.pro.{k}")))
+            .collect();
+        let cons: Vec<&str> = (0..e.cons[n])
+            .map(|k| l.text(e.at, &format!("option.{n}.con.{k}")))
+            .collect();
+        let mark = if n == d.recommended {
+            style::recommended("* recommended")
+        } else {
+            String::new()
+        };
+        s.push_str(&format!(
+            "\n{n}: {}  {mark}\n",
+            l.text(d.at, &format!("option.{n}"))
+        ));
+        for p in &pros {
+            s.push_str(&format!("   + {p}\n"));
+        }
+        for c in &cons {
+            s.push_str(&format!("   - {c}\n"));
+        }
+        options.push(json!({ "option": n, "text": l.text(d.at, &format!("option.{n}")), "pros": pros, "cons": cons }));
+    }
+    s.push_str(&format!(
+        "\nwhy {}: {}\n",
+        d.recommended,
+        l.text(e.at, "why")
+    ));
+    s.push_str(&format!("explained by {}\n", e.by));
+    match &d.state {
+        DecisionState::Open => s.push_str(&format!(
+            "--\nanswer:  ris decide {0} --choose <option number> --rationale \"...\"\n     or  ris decide {0} --other \"your own answer\" --rationale \"...\"",
+            d.id
+        )),
+        _ => {
+            s.push_str("--\n");
+            s.push_str(decision_block(l, d).lines().last().unwrap_or("").trim());
+        }
+    }
+    Output::new(
+        s,
+        json!({
+            "decision": decision_json(l, d),
+            "explanation": {
+                "by": e.by,
+                "summary": l.text(e.at, "summary"),
+                "options": options,
+                "why": l.text(e.at, "why"),
+            }
+        }),
+    )
 }
 
 /// A decision in full: question, options, recommendation, outcome.
@@ -135,6 +252,10 @@ fn decision_block(l: &Loaded, d: &Decision) -> String {
         ));
     }
     match &d.state {
+        DecisionState::Open if d.explained.is_some() => s.push_str(&format!(
+            "     open; * marks the recommendation; the full case: ris eli5 {}\n",
+            d.id
+        )),
         DecisionState::Open => s.push_str("     open; * marks the recommendation\n"),
         DecisionState::Taken { by, chosen, at } if *chosen >= d.options => {
             s.push_str(&format!(
@@ -173,8 +294,8 @@ fn decision_line(l: &Loaded, d: &Decision) -> String {
 fn message_json(l: &Loaded, m: &Message) -> Value {
     json!({
         "id": m.id.to_string(),
-        "from": m.from.to_string(),
-        "to": m.to.to_string(),
+        "from": m.from,
+        "to": m.to,
         "kind": format!("{:?}", m.kind).to_lowercase(),
         "about": m.about.map(|i| i.to_string()),
         "body": l.text(m.at, "body"),
@@ -204,7 +325,7 @@ const PERSON_FOOTER: &str = "\
 --
 answer:  ris decide D-n --choose <option number> --rationale \"...\"
      or  ris decide D-n --other \"your own answer\" --rationale \"...\"
-look:    ris show <id>    ris ready    ris report
+look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
 ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 ";
 
@@ -500,7 +621,7 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
         ));
     }
     Err(format!(
-        "`{id}` is not an id; use I-n (item), D-n (decision), P-n (phase) or M-n (message)"
+        "`{id}` is not an id; use I-n (item), D-n (decision), P-n (phase), M-n (message) or E-<hash> (evidence); the hyphen is optional"
     ))
 }
 

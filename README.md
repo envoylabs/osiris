@@ -18,3 +18,4 @@ ris phase close      # review; merges the phase branch into main
 ```
 
 A lead, a builder and an auditor, step by step: `docs/quickstart.md`.
+Building a client on `ris --json`: `docs/json.md`.

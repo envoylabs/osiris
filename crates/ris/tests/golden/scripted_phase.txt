@@ -78,6 +78,13 @@ The test is the cost of reversing, not whether reversal is possible.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```
+  Then attach the full case, which the person reads with `ris eli5`:
+  ```
+  ris decision explain D-4 --summary "what is being decided, plainly" \
+    --pro "0: ..." --con "0: ..." --pro "1: ..." --con "1: ..." \
+    --why "why the recommendation is the recommendation"
+  ```
+  Every option gets at least one point for or against.
   Adding a dependency is substantive. Prefer an existing library to
   writing the thing yourself; raise the dependency rather than working
   around it. Never take a substantive decision yourself; `ris` refuses.
@@ -106,7 +113,9 @@ Kinds: `handoff`, `interface-changed`, `question`, `finding`.
 
 ## An auditor's seat
 
-An auditor never writes to the tree. `ris audit` is its queue: done and
+An auditor never writes to the tree, and `ris` refuses an auditor seat
+that tries to claim, finish or merge an item, or to get a worktree.
+`ris audit` is its queue: done and
 merged items it did not write and has not reviewed. For each, it reads
 the diff and the evidence against the goal, the decisions that touch it
 and these rules, and checks the item's mechanical decisions for any
@@ -120,9 +129,11 @@ forward.
 
 To load an existing project's backlog and standing decisions, follow
 the osiris-onboard skill (in the osiris repository under
-`skills/osiris-onboard`): checks first, then an import file kept in
-`.osiris/`, checked with `ris import --dry-run`, approved by the person,
-then imported. Never record a decision the project has not made.
+`skills/osiris-onboard`): checks first, then what the log already
+holds, then an import file kept in `.osiris/`, checked with `ris import
+--dry-run`, approved by the person, then imported. Never record a
+decision the project has not made; import an undecided question open,
+for the person to answer.
 [exit 0]
 
 $ ris init
@@ -215,7 +226,7 @@ D-2 [substantive] daemon now or CLI-direct?  (about I-3)
 --
 answer:  ris decide D-n --choose <option number> --rationale "..."
      or  ris decide D-n --other "your own answer" --rationale "..."
-look:    ris show <id>    ris ready    ris report
+look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
 ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 [exit 0]
 
@@ -239,100 +250,117 @@ test: passed
 
 $ ris --json report
 {
-  "answered_outside_options": 0,
-  "items": [
-    {
-      "agent": "heron",
-      "audited_by": [],
-      "checks": [
-        "test"
-      ],
-      "depends_on": [],
-      "goal": "the event envelope",
-      "id": "I-1",
-      "phase": "P-1",
-      "state": "claimed"
+  "data": {
+    "answered_outside_options": 0,
+    "items": [
+      {
+        "agent": "heron",
+        "audited_by": [],
+        "checks": [
+          "test"
+        ],
+        "depends_on": [],
+        "goal": "the event envelope",
+        "id": "I-1",
+        "phase": "P-1",
+        "state": "claimed"
+      },
+      {
+        "audited_by": [],
+        "checks": [],
+        "depends_on": [
+          "I-1"
+        ],
+        "goal": "the fold",
+        "id": "I-2",
+        "phase": "P-1",
+        "state": "ready"
+      },
+      {
+        "audited_by": [],
+        "checks": [],
+        "depends_on": [],
+        "goal": "the cli",
+        "id": "I-3",
+        "phase": "P-1",
+        "state": "ready"
+      },
+      {
+        "audited_by": [],
+        "checks": [
+          "lint"
+        ],
+        "depends_on": [],
+        "goal": "a lint fix",
+        "id": "I-4",
+        "phase": "P-1",
+        "state": "ready"
+      }
+    ],
+    "log": {
+      "head": "<hash>",
+      "len": 13
     },
-    {
-      "audited_by": [],
-      "checks": [],
-      "depends_on": [
-        "I-1"
-      ],
-      "goal": "the fold",
-      "id": "I-2",
-      "phase": "P-1",
-      "state": "ready"
+    "mechanical": [
+      {
+        "about": "I-1",
+        "by": {
+          "kind": "agent",
+          "seat": "heron"
+        },
+        "chosen": 0,
+        "class": "mechanical",
+        "explained": false,
+        "id": "D-1",
+        "options": [
+          "sha2",
+          "blake3"
+        ],
+        "question": "sha2 or blake3?",
+        "rationale": "checkable with standard tools",
+        "recommended": 0,
+        "state": "taken",
+        "taken_by": {
+          "kind": "agent",
+          "seat": "heron"
+        }
+      }
+    ],
+    "messages": 0,
+    "phase": {
+      "goal": "first slice",
+      "id": "P-1",
+      "state": "open"
     },
-    {
-      "audited_by": [],
-      "checks": [],
-      "depends_on": [],
-      "goal": "the cli",
-      "id": "I-3",
-      "phase": "P-1",
-      "state": "ready"
-    },
-    {
-      "audited_by": [],
-      "checks": [
-        "lint"
-      ],
-      "depends_on": [],
-      "goal": "a lint fix",
-      "id": "I-4",
-      "phase": "P-1",
-      "state": "ready"
-    }
-  ],
-  "log": {
-    "head": "<hash>",
-    "len": 13
+    "previous_report": "<hash>",
+    "report": "<hash>",
+    "substantive": [
+      {
+        "about": "I-3",
+        "by": {
+          "kind": "agent",
+          "seat": "heron"
+        },
+        "chosen": 1,
+        "class": "substantive",
+        "explained": false,
+        "id": "D-2",
+        "options": [
+          "daemon",
+          "cli-direct"
+        ],
+        "question": "daemon now or CLI-direct?",
+        "rationale": "fewer failure modes for agents",
+        "recommended": 1,
+        "state": "taken",
+        "taken_by": {
+          "kind": "person"
+        }
+      }
+    ]
   },
-  "mechanical": [
-    {
-      "about": "I-1",
-      "by": "agent heron",
-      "chosen": 0,
-      "class": "mechanical",
-      "id": "D-1",
-      "options": [
-        "sha2",
-        "blake3"
-      ],
-      "question": "sha2 or blake3?",
-      "rationale": "checkable with standard tools",
-      "recommended": 0,
-      "state": "taken",
-      "taken_by": "agent heron"
-    }
-  ],
-  "messages": 0,
-  "phase": {
-    "goal": "first slice",
-    "id": "P-1",
-    "state": "open"
-  },
-  "previous_report": "<hash>",
-  "report": "<hash>",
-  "substantive": [
-    {
-      "about": "I-3",
-      "by": "agent heron",
-      "chosen": 1,
-      "class": "substantive",
-      "id": "D-2",
-      "options": [
-        "daemon",
-        "cli-direct"
-      ],
-      "question": "daemon now or CLI-direct?",
-      "rationale": "fewer failure modes for agents",
-      "recommended": 1,
-      "state": "taken",
-      "taken_by": "the person"
-    }
-  ]
+  "format": 1,
+  "ok": true
 }
 [exit 0]
 
@@ -344,100 +372,117 @@ test: passed
 
 $ ris --json report
 {
-  "answered_outside_options": 0,
-  "items": [
-    {
-      "agent": "heron",
-      "audited_by": [],
-      "checks": [
-        "test"
-      ],
-      "depends_on": [],
-      "goal": "the event envelope",
-      "id": "I-1",
-      "phase": "P-1",
-      "state": "claimed"
+  "data": {
+    "answered_outside_options": 0,
+    "items": [
+      {
+        "agent": "heron",
+        "audited_by": [],
+        "checks": [
+          "test"
+        ],
+        "depends_on": [],
+        "goal": "the event envelope",
+        "id": "I-1",
+        "phase": "P-1",
+        "state": "claimed"
+      },
+      {
+        "audited_by": [],
+        "checks": [],
+        "depends_on": [
+          "I-1"
+        ],
+        "goal": "the fold",
+        "id": "I-2",
+        "phase": "P-1",
+        "state": "ready"
+      },
+      {
+        "audited_by": [],
+        "checks": [],
+        "depends_on": [],
+        "goal": "the cli",
+        "id": "I-3",
+        "phase": "P-1",
+        "state": "ready"
+      },
+      {
+        "audited_by": [],
+        "checks": [
+          "lint"
+        ],
+        "depends_on": [],
+        "goal": "a lint fix",
+        "id": "I-4",
+        "phase": "P-1",
+        "state": "ready"
+      }
+    ],
+    "log": {
+      "head": "<hash>",
+      "len": 13
     },
-    {
-      "audited_by": [],
-      "checks": [],
-      "depends_on": [
-        "I-1"
-      ],
-      "goal": "the fold",
-      "id": "I-2",
-      "phase": "P-1",
-      "state": "ready"
+    "mechanical": [
+      {
+        "about": "I-1",
+        "by": {
+          "kind": "agent",
+          "seat": "heron"
+        },
+        "chosen": 0,
+        "class": "mechanical",
+        "explained": false,
+        "id": "D-1",
+        "options": [
+          "sha2",
+          "blake3"
+        ],
+        "question": "sha2 or blake3?",
+        "rationale": "checkable with standard tools",
+        "recommended": 0,
+        "state": "taken",
+        "taken_by": {
+          "kind": "agent",
+          "seat": "heron"
+        }
+      }
+    ],
+    "messages": 0,
+    "phase": {
+      "goal": "first slice",
+      "id": "P-1",
+      "state": "open"
     },
-    {
-      "audited_by": [],
-      "checks": [],
-      "depends_on": [],
-      "goal": "the cli",
-      "id": "I-3",
-      "phase": "P-1",
-      "state": "ready"
-    },
-    {
-      "audited_by": [],
-      "checks": [
-        "lint"
-      ],
-      "depends_on": [],
-      "goal": "a lint fix",
-      "id": "I-4",
-      "phase": "P-1",
-      "state": "ready"
-    }
-  ],
-  "log": {
-    "head": "<hash>",
-    "len": 13
+    "previous_report": "<hash>",
+    "report": "<hash>",
+    "substantive": [
+      {
+        "about": "I-3",
+        "by": {
+          "kind": "agent",
+          "seat": "heron"
+        },
+        "chosen": 1,
+        "class": "substantive",
+        "explained": false,
+        "id": "D-2",
+        "options": [
+          "daemon",
+          "cli-direct"
+        ],
+        "question": "daemon now or CLI-direct?",
+        "rationale": "fewer failure modes for agents",
+        "recommended": 1,
+        "state": "taken",
+        "taken_by": {
+          "kind": "person"
+        }
+      }
+    ]
   },
-  "mechanical": [
-    {
-      "about": "I-1",
-      "by": "agent heron",
-      "chosen": 0,
-      "class": "mechanical",
-      "id": "D-1",
-      "options": [
-        "sha2",
-        "blake3"
-      ],
-      "question": "sha2 or blake3?",
-      "rationale": "checkable with standard tools",
-      "recommended": 0,
-      "state": "taken",
-      "taken_by": "agent heron"
-    }
-  ],
-  "messages": 0,
-  "phase": {
-    "goal": "first slice",
-    "id": "P-1",
-    "state": "open"
-  },
-  "previous_report": "<hash>",
-  "report": "<hash>",
-  "substantive": [
-    {
-      "about": "I-3",
-      "by": "agent heron",
-      "chosen": 1,
-      "class": "substantive",
-      "id": "D-2",
-      "options": [
-        "daemon",
-        "cli-direct"
-      ],
-      "question": "daemon now or CLI-direct?",
-      "rationale": "fewer failure modes for agents",
-      "recommended": 1,
-      "state": "taken",
-      "taken_by": "the person"
-    }
-  ]
+  "format": 1,
+  "ok": true
 }
 [exit 0]
 
@@ -454,101 +499,118 @@ I-4 not done: 1 check(s) failed
 
 $ ris --json report
 {
-  "answered_outside_options": 0,
-  "items": [
-    {
-      "agent": "heron",
-      "audited_by": [],
-      "checks": [
-        "test"
-      ],
-      "depends_on": [],
-      "goal": "the event envelope",
-      "id": "I-1",
-      "phase": "P-1",
-      "state": "claimed"
+  "data": {
+    "answered_outside_options": 0,
+    "items": [
+      {
+        "agent": "heron",
+        "audited_by": [],
+        "checks": [
+          "test"
+        ],
+        "depends_on": [],
+        "goal": "the event envelope",
+        "id": "I-1",
+        "phase": "P-1",
+        "state": "claimed"
+      },
+      {
+        "audited_by": [],
+        "checks": [],
+        "depends_on": [
+          "I-1"
+        ],
+        "goal": "the fold",
+        "id": "I-2",
+        "phase": "P-1",
+        "state": "ready"
+      },
+      {
+        "audited_by": [],
+        "checks": [],
+        "depends_on": [],
+        "goal": "the cli",
+        "id": "I-3",
+        "phase": "P-1",
+        "state": "ready"
+      },
+      {
+        "agent": "wren",
+        "audited_by": [],
+        "checks": [
+          "lint"
+        ],
+        "depends_on": [],
+        "goal": "a lint fix",
+        "id": "I-4",
+        "phase": "P-1",
+        "state": "claimed"
+      }
+    ],
+    "log": {
+      "head": "<hash>",
+      "len": 15
     },
-    {
-      "audited_by": [],
-      "checks": [],
-      "depends_on": [
-        "I-1"
-      ],
-      "goal": "the fold",
-      "id": "I-2",
-      "phase": "P-1",
-      "state": "ready"
+    "mechanical": [
+      {
+        "about": "I-1",
+        "by": {
+          "kind": "agent",
+          "seat": "heron"
+        },
+        "chosen": 0,
+        "class": "mechanical",
+        "explained": false,
+        "id": "D-1",
+        "options": [
+          "sha2",
+          "blake3"
+        ],
+        "question": "sha2 or blake3?",
+        "rationale": "checkable with standard tools",
+        "recommended": 0,
+        "state": "taken",
+        "taken_by": {
+          "kind": "agent",
+          "seat": "heron"
+        }
+      }
+    ],
+    "messages": 0,
+    "phase": {
+      "goal": "first slice",
+      "id": "P-1",
+      "state": "open"
     },
-    {
-      "audited_by": [],
-      "checks": [],
-      "depends_on": [],
-      "goal": "the cli",
-      "id": "I-3",
-      "phase": "P-1",
-      "state": "ready"
-    },
-    {
-      "agent": "wren",
-      "audited_by": [],
-      "checks": [
-        "lint"
-      ],
-      "depends_on": [],
-      "goal": "a lint fix",
-      "id": "I-4",
-      "phase": "P-1",
-      "state": "claimed"
-    }
-  ],
-  "log": {
-    "head": "<hash>",
-    "len": 15
+    "previous_report": "<hash>",
+    "report": "<hash>",
+    "substantive": [
+      {
+        "about": "I-3",
+        "by": {
+          "kind": "agent",
+          "seat": "heron"
+        },
+        "chosen": 1,
+        "class": "substantive",
+        "explained": false,
+        "id": "D-2",
+        "options": [
+          "daemon",
+          "cli-direct"
+        ],
+        "question": "daemon now or CLI-direct?",
+        "rationale": "fewer failure modes for agents",
+        "recommended": 1,
+        "state": "taken",
+        "taken_by": {
+          "kind": "person"
+        }
+      }
+    ]
   },
-  "mechanical": [
-    {
-      "about": "I-1",
-      "by": "agent heron",
-      "chosen": 0,
-      "class": "mechanical",
-      "id": "D-1",
-      "options": [
-        "sha2",
-        "blake3"
-      ],
-      "question": "sha2 or blake3?",
-      "rationale": "checkable with standard tools",
-      "recommended": 0,
-      "state": "taken",
-      "taken_by": "agent heron"
-    }
-  ],
-  "messages": 0,
-  "phase": {
-    "goal": "first slice",
-    "id": "P-1",
-    "state": "open"
-  },
-  "previous_report": "<hash>",
-  "report": "<hash>",
-  "substantive": [
-    {
-      "about": "I-3",
-      "by": "agent heron",
-      "chosen": 1,
-      "class": "substantive",
-      "id": "D-2",
-      "options": [
-        "daemon",
-        "cli-direct"
-      ],
-      "question": "daemon now or CLI-direct?",
-      "rationale": "fewer failure modes for agents",
-      "recommended": 1,
-      "state": "taken",
-      "taken_by": "the person"
-    }
-  ]
+  "format": 1,
+  "ok": true
 }
 [exit 0]
 
@@ -637,6 +699,11 @@ clean: 3 file(s) scanned
 [exit 0]
 
 $ ris merge I-3
+[stderr] refused: 2 commits since the last merge (<hash>); I-3 merges as one commit
+  next: squash them (`git reset --soft` to that commit, then commit once with the trailers)
+[exit 1]
+
+$ ris merge I-3
 I-3: check lint passed (E-<hash>)
 I-3: check test passed (E-<hash>)
 I-3 merged at <hash>
@@ -683,7 +750,27 @@ D-3 [substantive] rocksdb or sqlite?  (about I-2)
      taken by the person: 2, outside the offered options. the plan's own answer
 [exit 0]
 
-$ RIS_AGENT=wren ris audit
+$ RIS_AGENT=rook ris claim I-2
+[stderr] refused: rook is an auditor, and an auditor does not claim items
+  next: `ris audit` for the review queue; a builder or lead seat does this
+[exit 2]
+
+$ RIS_AGENT=rook ris done I-2
+[stderr] refused: rook is an auditor, and an auditor does not finish items
+  next: `ris audit` for the review queue; a builder or lead seat does this
+[exit 2]
+
+$ RIS_AGENT=rook ris merge I-2
+[stderr] refused: rook is an auditor, and an auditor does not merge items
+  next: `ris audit` for the review queue; a builder or lead seat does this
+[exit 2]
+
+$ ris worktree rook
+[stderr] refused: rook is an auditor, and an auditor does not need a worktree: it reads the main checkout and never writes
+  next: `ris audit` for the review queue; a builder or lead seat does this
+[exit 2]
+
+$ RIS_AGENT=rook ris audit
 I-1   merged   the event envelope (<hash>)
 I-3   merged   the cli (<hash>)
 --
@@ -695,14 +782,21 @@ $ RIS_AGENT=heron ris audit I-1
   next: another seat audits it; take the next item in `ris audit`
 [exit 2]
 
-$ RIS_AGENT=wren ris audit I-1
-I-1 reviewed by wren
+$ RIS_AGENT=rook ris audit I-1
+I-1 reviewed by rook
 [exit 0]
 
-$ RIS_AGENT=wren ris audit I-1
-[stderr] refused: wren has already reviewed I-1
+$ RIS_AGENT=rook ris audit I-1
+[stderr] refused: rook has already reviewed I-1
   next: take the next item in `ris audit`
 [exit 2]
+
+$ RIS_AGENT=wren ris audit
+I-1   merged   the event envelope (<hash>)
+I-3   merged   the cli (<hash>)
+--
+review: ris show I-n, the diff, the evidence; findings: ris send <author> --kind finding --about I-n "..."; then ris audit I-n
+[exit 0]
 
 $ ris show I-1
 I-1 merged  (phase P-1)
@@ -710,7 +804,7 @@ I-1 merged  (phase P-1)
   checks: test
   evidence: E-<hash>
   commit: <hash>
-  audited by: wren
+  audited by: rook
   decisions:
     D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
   check runs:
@@ -756,7 +850,7 @@ $ ris show I-99
 [exit 1]
 
 $ ris show banana
-[stderr] `banana` is not an id; use I-n (item), D-n (decision), P-n (phase) or M-n (message)
+[stderr] `banana` is not an id; use I-n (item), D-n (decision), P-n (phase), M-n (message) or E-<hash> (evidence); the hyphen is optional
 [exit 1]
 
 $ ris report
@@ -794,7 +888,7 @@ no decisions waiting
 --
 answer:  ris decide D-n --choose <option number> --rationale "..."
      or  ris decide D-n --other "your own answer" --rationale "..."
-look:    ris show <id>    ris ready    ris report
+look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
 ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 
 == report ==
@@ -870,127 +964,150 @@ $ ris phase close
 
 $ ris --json report
 {
-  "answered_outside_options": 1,
-  "items": [
-    {
-      "audited_by": [
-        "wren"
-      ],
-      "checks": [
-        "test"
-      ],
-      "commit": "<hash>",
-      "depends_on": [],
-      "evidence": [
-        "E-<hash>"
-      ],
-      "goal": "the event envelope",
-      "id": "I-1",
-      "phase": "P-1",
-      "state": "merged"
+  "data": {
+    "answered_outside_options": 1,
+    "items": [
+      {
+        "audited_by": [
+          "rook"
+        ],
+        "checks": [
+          "test"
+        ],
+        "commit": "<hash>",
+        "depends_on": [],
+        "evidence": [
+          "E-<hash>"
+        ],
+        "goal": "the event envelope",
+        "id": "I-1",
+        "phase": "P-1",
+        "state": "merged"
+      },
+      {
+        "audited_by": [],
+        "checks": [],
+        "depends_on": [
+          "I-1"
+        ],
+        "goal": "the fold",
+        "id": "I-2",
+        "phase": "P-1",
+        "state": "ready"
+      },
+      {
+        "audited_by": [],
+        "checks": [],
+        "commit": "<hash>",
+        "depends_on": [],
+        "evidence": [
+          "E-<hash>"
+        ],
+        "goal": "the cli",
+        "id": "I-3",
+        "phase": "P-1",
+        "state": "merged"
+      },
+      {
+        "agent": "wren",
+        "audited_by": [],
+        "checks": [
+          "lint"
+        ],
+        "depends_on": [],
+        "goal": "a lint fix",
+        "id": "I-4",
+        "phase": "P-1",
+        "state": "claimed"
+      }
+    ],
+    "log": {
+      "head": "<hash>",
+      "len": 36
     },
-    {
-      "audited_by": [],
-      "checks": [],
-      "depends_on": [
-        "I-1"
-      ],
-      "goal": "the fold",
-      "id": "I-2",
-      "phase": "P-1",
-      "state": "ready"
+    "mechanical": [
+      {
+        "about": "I-1",
+        "by": {
+          "kind": "agent",
+          "seat": "heron"
+        },
+        "chosen": 0,
+        "class": "mechanical",
+        "explained": false,
+        "id": "D-1",
+        "options": [
+          "sha2",
+          "blake3"
+        ],
+        "question": "sha2 or blake3?",
+        "rationale": "checkable with standard tools",
+        "recommended": 0,
+        "state": "taken",
+        "taken_by": {
+          "kind": "agent",
+          "seat": "heron"
+        }
+      }
+    ],
+    "messages": 1,
+    "phase": {
+      "goal": "first slice",
+      "id": "P-1",
+      "state": "closed"
     },
-    {
-      "audited_by": [],
-      "checks": [],
-      "commit": "<hash>",
-      "depends_on": [],
-      "evidence": [
-        "E-<hash>"
-      ],
-      "goal": "the cli",
-      "id": "I-3",
-      "phase": "P-1",
-      "state": "merged"
-    },
-    {
-      "agent": "wren",
-      "audited_by": [],
-      "checks": [
-        "lint"
-      ],
-      "depends_on": [],
-      "goal": "a lint fix",
-      "id": "I-4",
-      "phase": "P-1",
-      "state": "claimed"
-    }
-  ],
-  "log": {
-    "head": "<hash>",
-    "len": 36
+    "previous_report": "<hash>",
+    "report": "<hash>",
+    "substantive": [
+      {
+        "about": "I-3",
+        "by": {
+          "kind": "agent",
+          "seat": "heron"
+        },
+        "chosen": 1,
+        "class": "substantive",
+        "explained": false,
+        "id": "D-2",
+        "options": [
+          "daemon",
+          "cli-direct"
+        ],
+        "question": "daemon now or CLI-direct?",
+        "rationale": "fewer failure modes for agents",
+        "recommended": 1,
+        "state": "taken",
+        "taken_by": {
+          "kind": "person"
+        }
+      },
+      {
+        "about": "I-2",
+        "by": {
+          "kind": "agent",
+          "seat": "wren"
+        },
+        "chosen": 2,
+        "class": "substantive",
+        "explained": false,
+        "id": "D-3",
+        "options": [
+          "rocksdb",
+          "sqlite"
+        ],
+        "other": "sqlite now, bench rocksdb later",
+        "question": "rocksdb or sqlite?",
+        "rationale": "the plan's own answer",
+        "recommended": 0,
+        "state": "taken",
+        "taken_by": {
+          "kind": "person"
+        }
+      }
+    ]
   },
-  "mechanical": [
-    {
-      "about": "I-1",
-      "by": "agent heron",
-      "chosen": 0,
-      "class": "mechanical",
-      "id": "D-1",
-      "options": [
-        "sha2",
-        "blake3"
-      ],
-      "question": "sha2 or blake3?",
-      "rationale": "checkable with standard tools",
-      "recommended": 0,
-      "state": "taken",
-      "taken_by": "agent heron"
-    }
-  ],
-  "messages": 1,
-  "phase": {
-    "goal": "first slice",
-    "id": "P-1",
-    "state": "closed"
-  },
-  "previous_report": "<hash>",
-  "report": "<hash>",
-  "substantive": [
-    {
-      "about": "I-3",
-      "by": "agent heron",
-      "chosen": 1,
-      "class": "substantive",
-      "id": "D-2",
-      "options": [
-        "daemon",
-        "cli-direct"
-      ],
-      "question": "daemon now or CLI-direct?",
-      "rationale": "fewer failure modes for agents",
-      "recommended": 1,
-      "state": "taken",
-      "taken_by": "the person"
-    },
-    {
-      "about": "I-2",
-      "by": "agent wren",
-      "chosen": 2,
-      "class": "substantive",
-      "id": "D-3",
-      "options": [
-        "rocksdb",
-        "sqlite"
-      ],
-      "other": "sqlite now, bench rocksdb later",
-      "question": "rocksdb or sqlite?",
-      "rationale": "the plan's own answer",
-      "recommended": 0,
-      "state": "taken",
-      "taken_by": "the person"
-    }
-  ]
+  "format": 1,
+  "ok": true
 }
 [exit 0]
 

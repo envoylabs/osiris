@@ -57,6 +57,13 @@ The test is the cost of reversing, not whether reversal is possible.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```
+  Then attach the full case, which the person reads with `ris eli5`:
+  ```
+  ris decision explain D-4 --summary "what is being decided, plainly" \
+    --pro "0: ..." --con "0: ..." --pro "1: ..." --con "1: ..." \
+    --why "why the recommendation is the recommendation"
+  ```
+  Every option gets at least one point for or against.
   Adding a crate is substantive. Prefer an existing crate to writing the
   thing yourself; raise the dependency rather than working around it.
 - Never take a substantive decision; `ris` refuses it. The person does,
@@ -112,7 +119,8 @@ inbox before starting an item and after a check runs, not mid-task.
 
 ## The auditor's seat
 
-An auditor never writes to the tree. For each done item it reads the
+An auditor never writes to the tree; `ris` refuses an auditor seat
+that tries to claim, finish or merge an item. For each done item it reads the
 diff and the evidence against the goal, the decisions that touch it and
 these rules, and reads the item's mechanical decisions for any that
 should have been substantive. Findings go to the author as messages; a

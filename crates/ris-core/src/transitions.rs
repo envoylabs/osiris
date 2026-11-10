@@ -30,6 +30,9 @@ pub enum CommandKind {
     Release,
     /// An auditor recording that it has reviewed an item.
     Audit,
+    /// Attaching the full case for an open decision: pros and cons per
+    /// option and why the recommendation holds.
+    Explain,
 }
 
 impl CommandKind {
@@ -48,6 +51,7 @@ impl CommandKind {
         Self::MessageSend,
         Self::Release,
         Self::Audit,
+        Self::Explain,
     ];
 }
 
@@ -150,6 +154,9 @@ pub const DECISION: &[(DecisionStateKind, CommandKind, Move<DecisionStateKind>)]
     use DecisionStateKind as S;
     &[
         (S::Open, C::Decide, Move::To(S::Taken)),
+        // An open decision can be explained, and explained again: the
+        // latest explanation is the one shown.
+        (S::Open, C::Explain, Move::Stay),
         // Taken and Superseded: nothing. A new decision supersedes.
     ]
 };
