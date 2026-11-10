@@ -51,7 +51,24 @@ Read, in this order, and note file and line for everything you take:
   you at (an issue export, a planning document);
 - `git log --oneline -50` for the current direction.
 
-## 4. Draft the import file
+## 4. Read what is already recorded
+
+On a project that already uses `ris`, the log holds items and decisions
+from earlier phases. Read them before drafting, so nothing is recorded
+twice:
+
+- `ris --json report`: every decision ever recorded, and the current
+  phase's items plus every item not yet merged;
+- `ris show P-n` for each earlier phase: the items merged in it.
+
+Leave out any item or decision already there, however it is worded. If
+a recorded decision looks stale, do not record it again: draft an open
+question that names it (`Revisit D-2: ...`) and let the person decide.
+`ris import` refuses an item goal or decision question that matches
+one in the log exactly, but a reworded duplicate gets past it; reading
+the log is the real check.
+
+## 5. Draft the import file
 
 Write `.osiris/import.toml`:
 
@@ -89,7 +106,7 @@ rationale = "Why it is open and why you recommend that option, citing the docume
   client or product names the denylist would refuse, no URLs to
   private systems.
 
-## 5. Check, show, import
+## 6. Check, show, import
 
 1. `ris import --dry-run .osiris/import.toml`. Fix every problem it
    names; it never echoes the text that tripped the scan, so look at
@@ -102,7 +119,7 @@ rationale = "Why it is open and why you recommend that option, citing the docume
    true.
 4. `ris summary` to show the result.
 
-## 6. Hand over
+## 7. Hand over
 
 For each builder seat, `ris worktree <seat>` creates its worktree beside
 the repository with the rules loaded. Tell the person the command to

@@ -28,17 +28,58 @@
 //! person. One with neither is an open question: it is raised as a
 //! substantive decision and waits in the person's queue, so a project's
 //! open questions come in without a guessed answer. Importing needs the
-//! person's seat either way.
+//! person's seat either way. An item or decision whose text matches
+//! one already in the log, or an earlier one in the file, is refused.
 
 use serde::Deserialize;
 
 use ris_core::command::{Choice, Command};
-use ris_core::ids::{Actor, CheckId, ItemId};
+use ris_core::ids::{Actor, CheckId, DecisionId, ItemId};
 use ris_core::primitives::DecisionClass;
 use ris_core::state::State;
 use ris_core::text::{Policy, Text};
 
 use crate::config::ChecksConfig;
+use crate::project::Loaded;
+
+/// What the log already holds, by normalised text, so an import cannot
+/// record the same item or decision twice. Exact matching after
+/// normalisation only: a reworded duplicate gets through, which is why
+/// the onboarding skill reads the log before drafting.
+#[derive(Default)]
+pub struct Recorded {
+    goals: Vec<(String, ItemId)>,
+    questions: Vec<(String, DecisionId)>,
+}
+
+/// Lowercase, whitespace collapsed, trailing punctuation dropped.
+fn normalise(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+        .trim_end_matches(['.', '?', '!', ';', ':'])
+        .to_owned()
+}
+
+impl Recorded {
+    pub fn from(l: &Loaded) -> Self {
+        Self {
+            goals: l
+                .state
+                .items
+                .values()
+                .map(|i| (normalise(l.text(i.at, "goal")), i.id))
+                .collect(),
+            questions: l
+                .state
+                .decisions
+                .values()
+                .map(|d| (normalise(l.text(d.at, "question")), d.id))
+                .collect(),
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -88,6 +129,7 @@ pub struct Plan {
 pub fn plan(
     source: &str,
     state: &State,
+    recorded: &Recorded,
     checks: &ChecksConfig,
     policy: &Policy,
 ) -> Result<Plan, Vec<String>> {
@@ -106,10 +148,22 @@ pub fn plan(
 
     let first = state.next_item_id().0;
     let mut keys: Vec<(String, ItemId)> = Vec::new();
+    let mut seen_goals: Vec<String> = Vec::new();
     for (n, it) in file.item.iter().enumerate() {
         let label = format!("item {}", n + 1);
         let id = ItemId(first + n as u32);
         let goal = text(label.clone(), "goal", &it.goal, &mut problems);
+        let norm = normalise(&it.goal);
+        if let Some((_, existing)) = recorded.goals.iter().find(|(g, _)| *g == norm) {
+            problems.push(format!(
+                "{label}: the same goal as {existing}, already recorded"
+            ));
+        } else if seen_goals.contains(&norm) {
+            problems.push(format!(
+                "{label}: the same goal as an earlier item in this file"
+            ));
+        }
+        seen_goals.push(norm);
         for c in &it.checks {
             if !checks.checks.contains_key(c) {
                 problems.push(format!(
@@ -148,9 +202,21 @@ pub fn plan(
 
     let first_decision = state.next_decision_id().0;
     let mut open = 0;
+    let mut seen_questions: Vec<String> = Vec::new();
     for (n, d) in file.decision.iter().enumerate() {
         let label = format!("decision {}", n + 1);
         let question = text(label.clone(), "question", &d.question, &mut problems);
+        let norm = normalise(&d.question);
+        if let Some((_, existing)) = recorded.questions.iter().find(|(q, _)| *q == norm) {
+            problems.push(format!(
+                "{label}: the same question as {existing}, already recorded; to revisit it, ask a new question that names {existing}"
+            ));
+        } else if seen_questions.contains(&norm) {
+            problems.push(format!(
+                "{label}: the same question as an earlier decision in this file"
+            ));
+        }
+        seen_questions.push(norm);
         let options: Vec<Option<Text>> = d
             .options
             .iter()

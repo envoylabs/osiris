@@ -114,6 +114,28 @@ rationale = "Open in the plan; runner-b has the simpler adapter"
         "{d2}"
     );
 
+    // The same file again: everything in it is already recorded, so
+    // nothing is written, and each duplicate names what it duplicates.
+    // A reworded goal differing only in case, spacing and a full stop
+    // still counts as the same.
+    let again = fs::read_to_string(&good)
+        .unwrap()
+        .replace("goal = \"A store\"", "goal = \"a   STORE.\"");
+    fs::write(&good, again).unwrap();
+    let r = ris(
+        &repo,
+        None,
+        &["import", "--dry-run", good.to_str().unwrap()],
+    );
+    assert_eq!(r.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("5 problem(s)"), "{err}");
+    assert!(
+        err.contains("item 1: the same goal as I-1")
+            && err.contains("decision 3: the same question as D-3"),
+        "{err}"
+    );
+
     // One bad entry anywhere: nothing is written, every problem is
     // named, and the offending text is not echoed. The canary is
     // assembled at runtime: the exit scan has no exceptions.

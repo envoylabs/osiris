@@ -746,14 +746,20 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 return Err(CliError::Refused(ris_core::Refusal::NoOpenPhase));
             }
             let source = std::fs::read_to_string(file)?;
-            let plan =
-                ris::import::plan(&source, &l.state, &p.checks, &p.policy).map_err(|problems| {
-                    CliError::Other(format!(
-                        "refused: nothing was imported; {} problem(s):\n  {}",
-                        problems.len(),
-                        problems.join("\n  ")
-                    ))
-                })?;
+            let plan = ris::import::plan(
+                &source,
+                &l.state,
+                &ris::import::Recorded::from(&l),
+                &p.checks,
+                &p.policy,
+            )
+            .map_err(|problems| {
+                CliError::Other(format!(
+                    "refused: nothing was imported; {} problem(s):\n  {}",
+                    problems.len(),
+                    problems.join("\n  ")
+                ))
+            })?;
             if *dry_run {
                 return Ok(Output::new(
                     format!(
