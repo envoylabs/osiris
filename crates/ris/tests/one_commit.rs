@@ -98,7 +98,8 @@ fn an_item_is_one_commit_from_the_phase_start_and_from_each_merge() {
     // Evidence is shown by id, with or without the hyphen, in full or
     // by a prefix of at least eight characters.
     let shown = ris(&dir, None, &["--json", "show", "I1"]);
-    let v: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice::<serde_json::Value>(&shown.stdout).unwrap()["data"].clone();
     let e = v["evidence"][0].as_str().unwrap().to_owned();
     let full = String::from_utf8(ris(&dir, None, &["show", &e]).stdout).unwrap();
     assert!(full.contains("command: true"), "{full}");

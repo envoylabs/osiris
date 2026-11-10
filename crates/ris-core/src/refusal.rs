@@ -13,6 +13,7 @@ use crate::transitions::CommandKind;
 
 /// Why a command was not applied.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Refusal {
     /// A free-text field failed the confidentiality scan. The match is
     /// never echoed: only the field and the category are named.

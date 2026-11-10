@@ -346,7 +346,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     assert_eq!(r.status, 3, "a failed check exits 3: {}", r.stderr);
     assert!(r.stderr.contains("check lint FAILED"));
     let r = sb.ok(None, &["--json", "report"]);
-    let v: serde_json::Value = serde_json::from_str(&r.stdout).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str::<serde_json::Value>(&r.stdout).unwrap()["data"].clone();
     let i4 = v["items"]
         .as_array()
         .unwrap()
@@ -502,7 +503,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.ok(None, &["phase", "close"]);
     sb.refused(None, &["phase", "close"]);
     let r = sb.ok(None, &["--json", "report"]);
-    let v: serde_json::Value = serde_json::from_str(&r.stdout).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str::<serde_json::Value>(&r.stdout).unwrap()["data"].clone();
     assert_eq!(v["phase"]["state"], "closed");
     assert_eq!(v["items"].as_array().unwrap().len(), 4);
     assert_eq!(v["substantive"].as_array().unwrap().len(), 2);

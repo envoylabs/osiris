@@ -97,7 +97,8 @@ rationale = "Open in the plan; runner-b has the simpler adapter"
     // The open question waits for the person, recommendation intact,
     // and can be decided like any other.
     let inbox = ok(&repo, &["--json", "inbox"]);
-    let v: serde_json::Value = serde_json::from_str(&inbox).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str::<serde_json::Value>(&inbox).unwrap()["data"].clone();
     let waiting = v["decisions"].as_array().unwrap();
     assert_eq!(waiting.len(), 1, "{inbox}");
     assert_eq!(waiting[0]["id"], "D-3", "{inbox}");
@@ -159,7 +160,8 @@ rationale = "Open in the plan; runner-b has the simpler adapter"
     assert!(err.contains("`nope`") && err.contains("`missing`"), "{err}");
     assert!(!err.contains(&canary[..10]), "{err}");
     let report = ok(&repo, &["--json", "report"]);
-    let v: serde_json::Value = serde_json::from_str(&report).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str::<serde_json::Value>(&report).unwrap()["data"].clone();
     assert_eq!(
         v["items"].as_array().unwrap().len(),
         2,

@@ -158,7 +158,9 @@ fn a_raiser_explains_and_the_person_drills_down() {
     );
 
     let v: serde_json::Value =
-        serde_json::from_str(&ok(&dir, None, &["--json", "eli5", "D-1"])).unwrap();
+        serde_json::from_str::<serde_json::Value>(&ok(&dir, None, &["--json", "eli5", "D-1"]))
+            .unwrap()["data"]
+            .clone();
     assert_eq!(
         v["explanation"]["options"][0]["pros"]
             .as_array()

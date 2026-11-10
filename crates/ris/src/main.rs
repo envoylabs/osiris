@@ -271,27 +271,108 @@ impl From<Kind> for MessageKind {
     }
 }
 
+/// Print a line to stdout. A reader that has gone (`ris log | head`)
+/// ends the program quietly rather than with a panic.
+fn emit(line: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    if let Err(e) = writeln!(out, "{line}").and_then(|()| out.flush()) {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        eprintln!("ris: writing output: {e}");
+        std::process::exit(1);
+    }
+}
+
+/// A failure in the `--json` envelope: its kind, the message, the next
+/// step when there is one, and the details a client can act on.
+fn error_envelope(e: &CliError) -> serde_json::Value {
+    let text = e.to_string();
+    let (mut message, mut next) = (Vec::new(), Vec::new());
+    for line in text.lines() {
+        match line.trim_start().strip_prefix("next:") {
+            Some(n) => next.push(n.trim().to_owned()),
+            None => message.push(line),
+        }
+    }
+    let mut error = json!({
+        "kind": match e {
+            CliError::Refused(_) => "refused",
+            CliError::Leak { .. } => "leak",
+            CliError::RoleForbids { .. } => "role_forbids",
+            CliError::CheckFailed { .. } => "check_failed",
+            CliError::ChecksFailed { .. } => "checks_failed",
+            CliError::NotAProject(_) => "not_a_project",
+            CliError::AlreadyAProject(_) => "already_a_project",
+            CliError::Config(_) => "config",
+            CliError::UnknownAgent(_) => "unknown_agent",
+            CliError::Contended => "contended",
+            CliError::Store(_) => "store",
+            CliError::Io(_) => "io",
+            CliError::Other(_) => "other",
+        },
+        "message": message.join("\n"),
+        "next": if next.is_empty() { serde_json::Value::Null } else { json!(next.join("; ")) },
+    });
+    match e {
+        CliError::Refused(r) => {
+            error["refusal"] = json!(r);
+            error["next"] = json!(r.next_step());
+        }
+        CliError::Leak { what, hits } => {
+            error["scanned"] = json!(what);
+            error["hits"] = hits
+                .iter()
+                .map(|h| json!({ "file": h.file, "line": h.line, "category": h.category.description() }))
+                .collect();
+        }
+        CliError::ChecksFailed {
+            item,
+            stage,
+            failed,
+            ..
+        } => {
+            error["item"] = json!(item);
+            error["stage"] = json!(stage);
+            error["failed"] = failed
+                .iter()
+                .map(|(check, evidence)| json!({ "check": check, "evidence": evidence }))
+                .collect();
+        }
+        CliError::RoleForbids { seat, role, .. } => {
+            error["seat"] = json!(seat);
+            error["role"] = json!(role);
+        }
+        _ => {}
+    }
+    json!({ "format": render::JSON_FORMAT, "ok": false, "error": error })
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     ris::style::init(cli.json);
     match run(&cli) {
         Ok(out) => {
-            if cli.json {
-                println!("{}", serde_json::to_string_pretty(&out.json).unwrap());
-            } else {
-                println!("{}", out.text);
+            match (cli.json, out.stream) {
+                (true, true) => {
+                    for item in out.json.as_array().into_iter().flatten() {
+                        emit(&render::envelope(item).to_string());
+                    }
+                }
+                (true, false) => {
+                    emit(&serde_json::to_string_pretty(&render::envelope(&out.json)).unwrap())
+                }
+                (false, _) if out.text.is_empty() => {}
+                (false, _) => emit(&out.text),
             }
             ExitCode::SUCCESS
         }
         Err(e) => {
             if cli.json {
-                let (kind, detail) = match &e {
-                    CliError::Refused(r) => {
-                        ("refused", json!({ "refusal": r, "next": r.next_step() }))
-                    }
-                    other => ("error", json!({ "message": other.to_string() })),
-                };
-                eprintln!("{}", json!({ kind: detail }));
+                // Failures go to stdout too, so a client reads one
+                // stream; the exit status still says what kind it was.
+                emit(&serde_json::to_string_pretty(&error_envelope(&e)).unwrap());
             } else {
                 let text = e.to_string();
                 // Colour the leading "refused:" when styling is on.
@@ -989,7 +1070,6 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             once,
             interval_ms,
         } => {
-            use std::io::Write;
             // Verify what is there once; after that only what is new.
             let l = p.load()?;
             let start = from.unwrap_or(l.state.len + 1).max(1);
@@ -1024,13 +1104,18 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         .collect();
                     (len, head) = (v.len, v.head);
                     if *once {
-                        return Ok(Output::new(lines.join("\n"), json!(new)));
+                        return Ok(Output::stream(
+                            lines.join("\n"),
+                            new.iter().map(|e| json!(e)).collect(),
+                        ));
                     }
-                    let mut out = std::io::stdout().lock();
-                    for line in &lines {
-                        writeln!(out, "{line}")?;
+                    for (line, e) in lines.iter().zip(&new) {
+                        if cli.json {
+                            emit(&render::envelope(&json!(e)).to_string());
+                        } else {
+                            emit(line);
+                        }
                     }
-                    out.flush()?;
                 }
                 std::thread::sleep(interval);
             }
@@ -1043,7 +1128,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 .iter()
                 .map(|e| serde_json::to_string(e).unwrap())
                 .collect();
-            Ok(Output::new(lines.join("\n"), json!(events)))
+            Ok(Output::stream(
+                lines.join("\n"),
+                events.iter().map(|e| json!(e)).collect(),
+            ))
         }
     }
 }

@@ -75,7 +75,7 @@ fn status_shows_where_each_seat_is() {
         !out.contains(base.to_str().unwrap()),
         "no absolute path: {out}"
     );
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let v = serde_json::from_str::<serde_json::Value>(&out).unwrap()["data"].clone();
     let seat = |name: &str| {
         v["seats"]
             .as_array()

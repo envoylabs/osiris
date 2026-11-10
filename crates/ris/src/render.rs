@@ -17,6 +17,25 @@ use crate::style;
 pub struct Output {
     pub text: String,
     pub json: Value,
+    /// `json` is an array printed as one envelope per line, as a stream
+    /// is, rather than as one document.
+    pub stream: bool,
+}
+
+/// The version of the `--json` contract. Every document and every
+/// stream line is an envelope carrying it:
+///
+/// ```text
+/// {"format": 1, "ok": true,  "data": ...}
+/// {"format": 1, "ok": false, "error": {"kind": ..., "message": ..., "next": ...}}
+/// ```
+///
+/// A change to the shape of any `data` or `error` is a new format.
+pub const JSON_FORMAT: u32 = 1;
+
+/// A successful result in the envelope.
+pub fn envelope(data: &Value) -> Value {
+    json!({ "format": JSON_FORMAT, "ok": true, "data": data })
 }
 
 impl Output {
@@ -24,6 +43,16 @@ impl Output {
         Self {
             text: text.into(),
             json,
+            stream: false,
+        }
+    }
+
+    /// Lines of text, or with `--json` one envelope per item.
+    pub fn stream(text: impl Into<String>, items: Vec<Value>) -> Self {
+        Self {
+            text: text.into(),
+            json: Value::Array(items),
+            stream: true,
         }
     }
 }
@@ -91,7 +120,7 @@ fn decision_json(l: &Loaded, d: &Decision) -> Value {
     let mut v = json!({
         "id": d.id.to_string(),
         "class": match d.class { DecisionClass::Mechanical => "mechanical", DecisionClass::Substantive => "substantive" },
-        "by": d.by.to_string(),
+        "by": d.by,
         "about": d.about.map(|i| i.to_string()),
         "question": l.text(d.at, "question"),
         "options": options,
@@ -100,7 +129,7 @@ fn decision_json(l: &Loaded, d: &Decision) -> Value {
         "explained": d.explained.is_some(),
     });
     if let DecisionState::Taken { by, chosen, at } = &d.state {
-        v["taken_by"] = json!(by.to_string());
+        v["taken_by"] = json!(by);
         v["chosen"] = json!(chosen);
         v["rationale"] = json!(l.text(*at, "rationale"));
         if *chosen >= d.options {
@@ -188,7 +217,7 @@ pub fn eli5(l: &Loaded, d: &Decision) -> Output {
         json!({
             "decision": decision_json(l, d),
             "explanation": {
-                "by": e.by.to_string(),
+                "by": e.by,
                 "summary": l.text(e.at, "summary"),
                 "options": options,
                 "why": l.text(e.at, "why"),
@@ -265,8 +294,8 @@ fn decision_line(l: &Loaded, d: &Decision) -> String {
 fn message_json(l: &Loaded, m: &Message) -> Value {
     json!({
         "id": m.id.to_string(),
-        "from": m.from.to_string(),
-        "to": m.to.to_string(),
+        "from": m.from,
+        "to": m.to,
         "kind": format!("{:?}", m.kind).to_lowercase(),
         "about": m.about.map(|i| i.to_string()),
         "body": l.text(m.at, "body"),
