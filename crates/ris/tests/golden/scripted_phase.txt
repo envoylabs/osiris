@@ -78,6 +78,13 @@ The test is the cost of reversing, not whether reversal is possible.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```
+  Then attach the full case, which the person reads with `ris eli5`:
+  ```
+  ris decision explain D-4 --summary "what is being decided, plainly" \
+    --pro "0: ..." --con "0: ..." --pro "1: ..." --con "1: ..." \
+    --why "why the recommendation is the recommendation"
+  ```
+  Every option gets at least one point for or against.
   Adding a dependency is substantive. Prefer an existing library to
   writing the thing yourself; raise the dependency rather than working
   around it. Never take a substantive decision yourself; `ris` refuses.
@@ -219,7 +226,7 @@ D-2 [substantive] daemon now or CLI-direct?  (about I-3)
 --
 answer:  ris decide D-n --choose <option number> --rationale "..."
      or  ris decide D-n --other "your own answer" --rationale "..."
-look:    ris show <id>    ris ready    ris report
+look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
 ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 [exit 0]
 
@@ -299,6 +306,7 @@ $ ris --json report
       "by": "agent heron",
       "chosen": 0,
       "class": "mechanical",
+      "explained": false,
       "id": "D-1",
       "options": [
         "sha2",
@@ -325,6 +333,7 @@ $ ris --json report
       "by": "agent heron",
       "chosen": 1,
       "class": "substantive",
+      "explained": false,
       "id": "D-2",
       "options": [
         "daemon",
@@ -404,6 +413,7 @@ $ ris --json report
       "by": "agent heron",
       "chosen": 0,
       "class": "mechanical",
+      "explained": false,
       "id": "D-1",
       "options": [
         "sha2",
@@ -430,6 +440,7 @@ $ ris --json report
       "by": "agent heron",
       "chosen": 1,
       "class": "substantive",
+      "explained": false,
       "id": "D-2",
       "options": [
         "daemon",
@@ -515,6 +526,7 @@ $ ris --json report
       "by": "agent heron",
       "chosen": 0,
       "class": "mechanical",
+      "explained": false,
       "id": "D-1",
       "options": [
         "sha2",
@@ -541,6 +553,7 @@ $ ris --json report
       "by": "agent heron",
       "chosen": 1,
       "class": "substantive",
+      "explained": false,
       "id": "D-2",
       "options": [
         "daemon",
@@ -830,7 +843,7 @@ no decisions waiting
 --
 answer:  ris decide D-n --choose <option number> --rationale "..."
      or  ris decide D-n --other "your own answer" --rationale "..."
-look:    ris show <id>    ris ready    ris report
+look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
 ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
 
 == report ==
@@ -972,6 +985,7 @@ $ ris --json report
       "by": "agent heron",
       "chosen": 0,
       "class": "mechanical",
+      "explained": false,
       "id": "D-1",
       "options": [
         "sha2",
@@ -998,6 +1012,7 @@ $ ris --json report
       "by": "agent heron",
       "chosen": 1,
       "class": "substantive",
+      "explained": false,
       "id": "D-2",
       "options": [
         "daemon",
@@ -1014,6 +1029,7 @@ $ ris --json report
       "by": "agent wren",
       "chosen": 2,
       "class": "substantive",
+      "explained": false,
       "id": "D-3",
       "options": [
         "rocksdb",

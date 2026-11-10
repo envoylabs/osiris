@@ -103,6 +103,15 @@ pub enum Structure {
         by: Actor,
         chosen: usize,
     },
+    /// The full case for an open decision. The text part carries
+    /// `summary`, `why`, and `option.{n}.pro.{k}` and `option.{n}.con.{k}`
+    /// for the counts given here, one entry per option.
+    DecisionExplained {
+        decision: DecisionId,
+        by: Actor,
+        pros: Vec<usize>,
+        cons: Vec<usize>,
+    },
     CheckRan {
         item: ItemId,
         check: CheckId,

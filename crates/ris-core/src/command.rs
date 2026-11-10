@@ -51,6 +51,17 @@ pub enum Command {
         chosen: Choice,
         rationale: Text,
     },
+    /// The full case for an open decision, for the person to read
+    /// before deciding: what it is about, pros and cons per option as
+    /// `(option, text)`, and why the recommendation holds.
+    Explain {
+        decision: DecisionId,
+        by: Actor,
+        summary: Text,
+        pros: Vec<(usize, Text)>,
+        cons: Vec<(usize, Text)>,
+        why: Text,
+    },
     /// Record a check's run against an item. Any state but Merged.
     CheckRan {
         item: ItemId,
@@ -104,6 +115,7 @@ impl Command {
                 ..
             } => CommandKind::RaiseSubstantive,
             Self::Decide { .. } => CommandKind::Decide,
+            Self::Explain { .. } => CommandKind::Explain,
             Self::CheckRan { .. } => CommandKind::CheckRan,
             Self::Done { .. } => CommandKind::Done,
             Self::Merge { .. } => CommandKind::Merge,
@@ -339,6 +351,56 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                 }
             }
             Ok(effects)
+        }
+
+        Command::Explain {
+            decision,
+            by,
+            summary,
+            pros,
+            cons,
+            why,
+        } => {
+            decision_move(state, *decision, kind)?;
+            let d = &state.decisions[decision];
+            if *by != Actor::Person && *by != d.by {
+                return Err(Refusal::NotTheRaiser(*decision));
+            }
+            for (n, _) in pros.iter().chain(cons) {
+                if *n >= d.options {
+                    return Err(Refusal::NoSuchOption {
+                        decision: *decision,
+                        chosen: *n,
+                        options: d.options,
+                    });
+                }
+            }
+            let count =
+                |list: &[(usize, Text)], n: usize| list.iter().filter(|(o, _)| *o == n).count();
+            let pro_counts: Vec<usize> = (0..d.options).map(|n| count(pros, n)).collect();
+            let con_counts: Vec<usize> = (0..d.options).map(|n| count(cons, n)).collect();
+            let thin = summary.as_str().trim().is_empty()
+                || why.as_str().trim().is_empty()
+                || (0..d.options).any(|n| pro_counts[n] + con_counts[n] == 0);
+            if thin {
+                return Err(Refusal::ThinExplanation(*decision));
+            }
+            let mut effect = Effect::new(Structure::DecisionExplained {
+                decision: *decision,
+                by: by.clone(),
+                pros: pro_counts,
+                cons: con_counts,
+            })
+            .with("summary", summary)
+            .with("why", why);
+            for (label, list) in [("pro", pros), ("con", cons)] {
+                for n in 0..d.options {
+                    for (k, (_, text)) in list.iter().filter(|(o, _)| *o == n).enumerate() {
+                        effect = effect.with(&format!("option.{n}.{label}.{k}"), text);
+                    }
+                }
+            }
+            Ok(vec![effect])
         }
 
         Command::Decide {
@@ -674,6 +736,7 @@ mod tests {
             // the blocker; covered by the decision table and a test
             // below.
             CommandKind::Decide
+            | CommandKind::Explain
             | CommandKind::PhaseOpen
             | CommandKind::PhaseClose
             | CommandKind::ItemAdd
@@ -745,6 +808,68 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn an_open_decision_is_explained_by_its_raiser_or_the_person() {
+        // D-1 is heron's substantive decision on I-1, with two options.
+        let mut h = item_in(ItemStateKind::Blocked);
+        let explain =
+            |by: Actor, pros: Vec<(usize, Text)>, cons: Vec<(usize, Text)>| Command::Explain {
+                decision: DecisionId(1),
+                by,
+                summary: t("which way"),
+                pros,
+                cons,
+                why: t("a is cheaper to reverse"),
+            };
+        let full = || (vec![(0, t("simple")), (0, t("fast"))], vec![(1, t("slow"))]);
+        let (p, c) = full();
+        assert_eq!(
+            h.run(explain(Actor::Agent(agent("wren")), p, c)),
+            Err(Refusal::NotTheRaiser(DecisionId(1)))
+        );
+        assert_eq!(
+            h.run(explain(
+                Actor::Agent(agent("heron")),
+                vec![(0, t("simple"))],
+                vec![]
+            )),
+            Err(Refusal::ThinExplanation(DecisionId(1))),
+            "option 1 has neither a pro nor a con"
+        );
+        assert!(matches!(
+            h.run(explain(
+                Actor::Agent(agent("heron")),
+                vec![(2, t("x"))],
+                vec![(0, t("y")), (1, t("z"))]
+            )),
+            Err(Refusal::NoSuchOption { chosen: 2, .. })
+        ));
+        let (p, c) = full();
+        h.must(explain(Actor::Agent(agent("heron")), p, c));
+        let e = h.state.decisions[&DecisionId(1)].explained.clone().unwrap();
+        assert_eq!((e.pros, e.cons), (vec![2, 0], vec![0, 1]));
+        let (p, c) = full();
+        h.must(explain(Actor::Person, p, c));
+        // Explaining changes nothing about the decision or its item.
+        assert_eq!(h.state.decisions[&DecisionId(1)].state, DecisionState::Open);
+        assert!(matches!(
+            h.state.items[&ItemId(1)].state,
+            ItemState::Blocked { .. }
+        ));
+        // Once taken, it is history: no more explaining.
+        h.must(Command::Decide {
+            decision: DecisionId(1),
+            by: Actor::Person,
+            chosen: Choice::Option(0),
+            rationale: t("ok"),
+        });
+        let (p, c) = full();
+        assert!(matches!(
+            h.run(explain(Actor::Person, p, c)),
+            Err(Refusal::IllegalDecisionTransition { state: "taken", .. })
+        ));
     }
 
     #[test]

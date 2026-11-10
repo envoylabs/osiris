@@ -111,6 +111,19 @@ pub struct Decision {
     /// The item that raised it, if one did.
     pub about: Option<ItemId>,
     pub state: DecisionState,
+    /// The latest explanation: its event, and how many pros and cons
+    /// it gives each option.
+    pub explained: Option<Explanation>,
+}
+
+/// Where a decision's explanation is: the event whose text part holds
+/// it, and the shape of that text part.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Explanation {
+    pub at: u64,
+    pub by: Actor,
+    pub pros: Vec<usize>,
+    pub cons: Vec<usize>,
 }
 
 /// The decision rule: the test is the cost of reversing.

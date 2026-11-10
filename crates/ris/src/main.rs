@@ -23,6 +23,7 @@ use ris::render::{self, Output};
 #[command(
     name = "ris",
     version,
+    disable_help_subcommand = true,
     about = "osiris: decide at the boundaries, build in between",
     after_help = "Ids: I-n item (a unit of work, one commit), D-n decision, P-n phase, \
                   M-n message, E-<hash> evidence. `ris show <id>` prints any of them."
@@ -78,6 +79,9 @@ enum Cmd {
         #[command(subcommand)]
         action: DecisionCmd,
     },
+    /// A decision's full case: what it is about, the pros and cons of
+    /// each option, and why the recommendation is what it is.
+    Eli5 { decision: DecisionId },
     /// Take a queued decision: one of its options, or your own answer.
     Decide {
         decision: DecisionId,
@@ -204,6 +208,27 @@ struct ItemAdd {
 #[derive(Subcommand)]
 enum DecisionCmd {
     Raise(DecisionRaise),
+    /// Attach the full case to an open decision, for `ris eli5`: what it
+    /// is about, pros and cons per option, and why the recommendation
+    /// holds. Its raiser or the person; again to replace it.
+    Explain(DecisionExplain),
+}
+
+#[derive(Args)]
+struct DecisionExplain {
+    decision: DecisionId,
+    /// What is being decided and what it touches, in plain words.
+    #[arg(long)]
+    summary: String,
+    /// A point for an option, as "<option number>: <text>". Repeatable.
+    #[arg(long = "pro")]
+    pros: Vec<String>,
+    /// A point against an option, as "<option number>: <text>". Repeatable.
+    #[arg(long = "con")]
+    cons: Vec<String>,
+    /// Why the recommended option is the recommendation.
+    #[arg(long)]
+    why: String,
 }
 
 #[derive(Args)]
@@ -502,46 +527,92 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Decision { action } => match action {
-            DecisionCmd::Raise(d) => {
-                let class = if d.substantive {
-                    DecisionClass::Substantive
-                } else {
-                    DecisionClass::Mechanical
+        Cmd::Eli5 { decision } => {
+            let l = p.load()?;
+            let d = l.state.decisions.get(decision).ok_or(CliError::Refused(
+                ris_core::Refusal::UnknownDecision(*decision),
+            ))?;
+            Ok(render::eli5(&l, d))
+        }
+
+        Cmd::Decision { action } => {
+            match action {
+                DecisionCmd::Explain(e) => {
+                    let points = |field: &str, list: &[String]| -> Result<Vec<(usize, ris_core::text::Text)>, CliError> {
+                    list.iter()
+                        .map(|raw| {
+                            let (n, text) = raw
+                                .split_once(':')
+                                .and_then(|(n, t)| Some((n.trim().parse::<usize>().ok()?, t.trim())))
+                                .ok_or_else(|| {
+                                    CliError::Other(format!(
+                                        "--{field} takes \"<option number>: <text>\", as in --{field} \"0: cheaper to reverse\""
+                                    ))
+                                })?;
+                            Ok((n, p.text(&format!("option.{n}.{field}"), text)?))
+                        })
+                        .collect()
                 };
-                if class == DecisionClass::Mechanical && d.rationale.trim().is_empty() {
-                    return Err(CliError::Other(
-                        "a mechanical decision needs --rationale: it is taken at once".into(),
-                    ));
+                    let pros = points("pro", &e.pros)?;
+                    let cons = points("con", &e.cons)?;
+                    let summary = p.text("summary", &e.summary)?;
+                    let why = p.text("why", &e.why)?;
+                    p.run(&Command::Explain {
+                        decision: e.decision,
+                        by: actor.clone(),
+                        summary,
+                        pros,
+                        cons,
+                        why,
+                    })?;
+                    Ok(Output::new(
+                        format!(
+                            "{} explained\n  next: `ris eli5 {}` shows it",
+                            e.decision, e.decision
+                        ),
+                        json!({ "decision": e.decision.to_string() }),
+                    ))
                 }
-                let question = p.text("question", &d.question)?;
-                let mut options = Vec::new();
-                for (n, o) in d.options.iter().enumerate() {
-                    options.push(p.text(&format!("option.{n}"), o)?);
+                DecisionCmd::Raise(d) => {
+                    let class = if d.substantive {
+                        DecisionClass::Substantive
+                    } else {
+                        DecisionClass::Mechanical
+                    };
+                    if class == DecisionClass::Mechanical && d.rationale.trim().is_empty() {
+                        return Err(CliError::Other(
+                            "a mechanical decision needs --rationale: it is taken at once".into(),
+                        ));
+                    }
+                    let question = p.text("question", &d.question)?;
+                    let mut options = Vec::new();
+                    for (n, o) in d.options.iter().enumerate() {
+                        options.push(p.text(&format!("option.{n}"), o)?);
+                    }
+                    let rationale = p.text("rationale", &d.rationale)?;
+                    let (l, _) = p.run(&Command::DecisionRaise {
+                        by: actor.clone(),
+                        about: d.about,
+                        class,
+                        question,
+                        options,
+                        recommended: d.recommend,
+                        rationale,
+                    })?;
+                    let id = l.state.decisions.keys().last().expect("just raised");
+                    let text = match class {
+                        DecisionClass::Mechanical => format!("{id} taken: option {}", d.recommend),
+                        DecisionClass::Substantive => format!(
+                            "{id} queued for the person{}",
+                            d.about
+                                .map(|i| format!("; {i} is set aside, take another"))
+                                .unwrap_or_default()
+                        ),
+                    };
+                    Ok(Output::new(text, json!({ "decision": id.to_string() })))
                 }
-                let rationale = p.text("rationale", &d.rationale)?;
-                let (l, _) = p.run(&Command::DecisionRaise {
-                    by: actor.clone(),
-                    about: d.about,
-                    class,
-                    question,
-                    options,
-                    recommended: d.recommend,
-                    rationale,
-                })?;
-                let id = l.state.decisions.keys().last().expect("just raised");
-                let text = match class {
-                    DecisionClass::Mechanical => format!("{id} taken: option {}", d.recommend),
-                    DecisionClass::Substantive => format!(
-                        "{id} queued for the person{}",
-                        d.about
-                            .map(|i| format!("; {i} is set aside, take another"))
-                            .unwrap_or_default()
-                    ),
-                };
-                Ok(Output::new(text, json!({ "decision": id.to_string() })))
             }
-        },
+        }
 
         Cmd::Decide {
             decision,
