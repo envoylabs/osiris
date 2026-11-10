@@ -1,6 +1,10 @@
 # Osiris: a harness for parallel agent work
 
-**Status:** draft, 2026-11-03; amended 2026-11-05. Nothing built yet.
+**Status:** draft, 2026-11-03; amended 2026-11-05; brought in line
+with the built system 2026-11-10. The first slice is built and osiris
+is developed with itself. This document is the design; the work still
+to do is in the harness's own log (`ris ready`, `ris report`), not
+here.
 
 ## Goal
 
@@ -370,8 +374,8 @@ The harness's concepts are types, and illegal transitions are
 unrepresentable in them.
 
 - **Phase:** a set of items with an exit review.
-- **Item:** goal, checks, dependencies, a claim (agent and lease) and,
-  at width above one, a working ref.
+- **Item:** goal, checks, dependencies, a claim (agent, and later a
+  lease) and, at width above one, a working ref.
 - **Decision:** question, options, a recommendation, class (mechanical
   or substantive), state, rationale, who decided.
 - **Evidence:** an artefact attached to an item or decision, stored by
@@ -394,40 +398,55 @@ unrepresentable in them.
   A final claim is reopened only by its falsifier failing or by a
   decision that supersedes it.
 
-Sketch:
+Sketch, as built (`crates/ris-core/src/primitives.rs`,
+`crates/ris-core/src/event.rs`):
 
 ```rust
 enum DecisionClass { Mechanical, Substantive }   // substantive = expensive to reverse
-enum DecisionState { Open, Taken { by: Actor, rationale: String }, Superseded(DecisionId) }
+enum DecisionState { Open, Taken { by: Actor, chosen: usize, at: u64 }, Superseded(DecisionId) }
 
 enum ItemState {
     Ready,
-    Claimed { agent: AgentId, lease_until: Instant },
-    Blocked { on: Vec<Blocker> },            // a decision, another item
-    Done { evidence: Vec<EvidenceId> },      // checks passed
+    Claimed { agent: AgentName },             // no lease yet: leases come with the daemon
+    Blocked { on: Vec<Blocker> },             // a decision, another item
+    Done { evidence: Vec<EvidenceId> },       // checks passed
+    Merged { evidence: Vec<EvidenceId>, commit: CommitHash },
 }
 
-enum ClaimState {
-    Asserted,                                         // trusted in the moment
-    Final { evidence: Vec<EvidenceId>, at: Commit },  // settled at review, falsifier passing
-    Falsified { by: EvidenceId },                     // its check failed; reopened as an item
-    Superseded(DecisionId),                           // replaced by an explicit decision
+enum ClaimState {                             // the type exists; no events yet
+    Asserted,
+    Final { evidence: Vec<EvidenceId>, at: CommitHash },
+    Falsified { by: EvidenceId },
+    Superseded(DecisionId),
 }
 
-enum Event {
-    ItemClaimed { item: ItemId, agent: AgentId, lease_until: Instant },
-    ClaimAsserted { id: ClaimId, statement: String, source: Provenance, falsifier: CheckId },
-    ClaimFinalised { id: ClaimId, evidence: Vec<EvidenceId>, at: Commit },
-    ClaimFalsified { id: ClaimId, by: EvidenceId },
-    DecisionRaised { id: DecisionId, class: DecisionClass, question: String, options: Vec<Choice>, recommended: usize },
-    DecisionTaken { id: DecisionId, by: Actor, chosen: usize, rationale: String },
-    CheckRan { item: ItemId, check: CheckId, passed: bool, evidence: EvidenceId },
-    PhaseClosed { phase: PhaseId, report: ReportId },
+enum Structure {                              // an event's structural part
+    PhaseOpened { phase }, PhaseClosed { phase, report: Hash },
+    ItemAdded { item, phase, checks, depends_on }, ItemClaimed { item, agent },
+    ItemBlocked { item, on }, ItemReady { item }, ItemDone { item, evidence },
+    ItemMerged { item, commit }, ItemAudited { item, by },
+    DecisionRaised { decision, class, by, about, options, recommended },
+    DecisionTaken { decision, by, chosen },
+    DecisionExplained { decision, by, pros, cons },
+    CheckRan { item, check, passed, evidence },
+    MessageSent { message, from, to, kind, about },
 }
 ```
 
-Events are versioned from the first release, with an upgrade step for
-old versions.
+Free text (a goal, a question, a rationale) is never in the structural
+part: it sits in the event's text part, which enters the chain by salted
+hash (Confidentiality), and the fold never reads it. Records point at
+the event that carries their text (`at`).
+
+- **Event format 3:** the stored form is the shown form, snake_case
+  event names, ids as `I-1`, hashes as hex, actors as
+  `{"kind": "agent", "seat": "heron"}`, with a timestamp per event.
+  Events are versioned from the first release; older logs are verified
+  from their stored bytes and upgraded in place.
+- **The report hash:** a phase report's hash is
+  `H(previous report hash, log head at close)`, so the reports form a
+  chain of their own over the log, and removing text later does not
+  change it.
 
 ## Architecture
 
@@ -768,7 +787,15 @@ What follows for the design:
 
 ## First slice
 
-The aim is something minimal in the dev flow as soon as possible, then
+**Done.** Steps 1 to 3 are built, and osiris is developed with itself;
+steps 4 to 6 are items in its log. Built beyond the slice: width above
+one with a worktree per seat, phase branches, roles enforced (an
+auditor cannot write), the exit scan on every merge, `ris import` with
+open decisions, `ris status` and `ris watch`, `ris eli5` for a
+decision's full case, and one versioned `--json` envelope for every
+command (`docs/json.md`).
+
+The aim was something minimal in the dev flow as soon as possible, then
 dogfood it from there.
 
 1. The primitives as types, the pure core, and the event log behind the
