@@ -32,6 +32,9 @@ pub struct State {
     /// Seats the person has paused.
     pub paused: std::collections::BTreeSet<crate::ids::AgentName>,
     pub actions: BTreeMap<crate::ids::ActionId, crate::primitives::Action>,
+    /// Seats whose agent the runner started and has not seen stop, with
+    /// the event that started it.
+    pub running: BTreeMap<crate::ids::AgentName, u64>,
 }
 
 /// The reverse index: links that events record in one direction, read
@@ -375,6 +378,12 @@ impl State {
                         on.retain(|b| *b != Blocker::Action(*action));
                     }
                 }
+            }
+            Structure::RunStarted { seat } => {
+                self.running.insert(seat.clone(), seq);
+            }
+            Structure::RunStopped { seat, .. } => {
+                self.running.remove(seat);
             }
             Structure::SeatPaused { seat } => {
                 self.paused.insert(seat.clone());

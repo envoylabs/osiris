@@ -114,6 +114,32 @@ The builders loop on `ris ready`, `ris claim`, `ris done`, a commit and
 `ris merge`. The auditor works through `ris audit`. The rules file
 (`ris rules` prints it) tells each seat what its role does.
 
+Or let the runner start them unattended, one terminal each:
+
+```sh
+ris seat start rook                    # in its worktree, as rook, until it stops
+ris seat start wren                    # the auditor, in the main checkout
+```
+
+An unattended agent may do only what its role allows: reading, `ris`,
+and for a writing seat edits, `git` and the project's check commands.
+Anything else is refused rather than asked, and the agent tool's sandbox
+keeps it to its own directory and the shared store, with no network.
+Add what your project needs in `.osiris/config.toml`:
+
+```toml
+[runner]
+write = ["~/.cargo"]                   # a build tool's cache
+network = []                           # hosts agents may reach
+
+[runner.allow]
+builder = ["Bash(cargo *)"]            # in the agent tool's syntax
+lead = ["Bash(cargo *)"]
+```
+
+Each run's output is kept under `.osiris/runs/`, and its start and stop
+are in the log. `ris status` marks a seat that is running.
+
 ## 6. Check in and close
 
 ```sh

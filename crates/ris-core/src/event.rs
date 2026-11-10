@@ -130,6 +130,17 @@ pub enum Structure {
         action: ActionId,
         evidence: Vec<EvidenceId>,
     },
+    /// The runner started a seat's agent. The text part carries
+    /// `runner` and, when configured, `model`: the binding behind the
+    /// seat's name for this run.
+    RunStarted {
+        seat: AgentName,
+    },
+    /// The seat's agent stopped, with its exit status when it had one.
+    RunStopped {
+        seat: AgentName,
+        status: Option<i32>,
+    },
     /// The person paused a seat: its next claim or audit is refused
     /// until it is resumed. What it holds now it finishes.
     SeatPaused {

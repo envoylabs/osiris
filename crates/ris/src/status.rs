@@ -48,6 +48,8 @@ pub struct Seat {
     pub uncommitted: Option<u32>,
     /// Paused by the person: takes nothing new until resumed.
     pub paused: bool,
+    /// Started by the runner and not yet seen to stop.
+    pub running: bool,
 }
 
 /// `(path, branch)` for every worktree of the repository at `root`.
@@ -123,6 +125,7 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 behind,
                 uncommitted,
                 paused: l.state.paused.contains(&AgentName(name.clone())),
+                running: l.state.running.contains_key(&AgentName(name.clone())),
             }
         })
         .collect()
@@ -173,6 +176,9 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
             Some(c) => format!("  holds {c}"),
             None => "  idle".into(),
         });
+        if s.running {
+            line.push_str("  running");
+        }
         if s.paused {
             line.push_str("  paused");
         }
@@ -196,6 +202,7 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
                 "behind": s.behind,
                 "uncommitted": s.uncommitted,
                 "paused": s.paused,
+                "running": s.running,
             })
         })
         .collect();

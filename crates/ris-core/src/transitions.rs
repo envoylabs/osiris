@@ -39,6 +39,9 @@ pub enum CommandKind {
     /// The person pausing seats, or resuming them.
     Pause,
     Resume,
+    /// The runner recording that a seat's agent started or stopped.
+    RunStart,
+    RunStop,
     /// Raising a person action; it sets aside the items it blocks.
     RaiseAction,
     /// The person recording an action done; items blocked only on it
@@ -68,6 +71,8 @@ impl CommandKind {
         Self::Resume,
         Self::RaiseAction,
         Self::ActionDone,
+        Self::RunStart,
+        Self::RunStop,
     ];
 }
 

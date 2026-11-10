@@ -236,6 +236,17 @@ enum SeatCmd {
         #[arg(long, value_parser = ["lead", "builder", "auditor"])]
         role: String,
     },
+    /// Start a seat's agent unattended through the runner, in its own
+    /// directory, and wait for it to stop. The person's only.
+    Start {
+        seat: String,
+        /// Copy the agent's output to its log only, not to the screen.
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Record that a seat's agent stopped when its process is gone
+    /// without ris seeing it end.
+    Stopped { seat: String },
     /// Pause a seat, or every seat: each finishes what it holds and
     /// takes nothing new until resumed. The person's only.
     Pause(SeatSet),
@@ -579,6 +590,24 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(
                 format!("seat {name} added\n  next: {next}"),
                 json!({ "seat": name, "role": role }),
+            ))
+        }
+
+        Cmd::Seat {
+            action: SeatCmd::Start { seat, quiet },
+        } => start_seat(&mut p, &actor, seat, *quiet || cli.json),
+
+        Cmd::Seat {
+            action: SeatCmd::Stopped { seat },
+        } => {
+            p.run(&Command::RunStop {
+                seat: AgentName(seat.clone()),
+                actor: actor.clone(),
+                status: None,
+            })?;
+            Ok(Output::new(
+                format!("{seat} recorded as stopped"),
+                json!({ "seat": seat }),
             ))
         }
 
@@ -1593,6 +1622,94 @@ fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), Cl
 /// merge from a worktree requires. Skipped only when there is no base
 /// to count from: work committed straight onto the main line with no
 /// merge yet recorded in the phase, or no main line to fork from.
+/// `ris seat start`: run a seat's agent through the runner and record
+/// its start and stop around it.
+fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result<Output, CliError> {
+    let cfg = p
+        .config
+        .agents
+        .get(seat)
+        .cloned()
+        .ok_or_else(|| CliError::UnknownAgent(seat.to_owned()))?;
+    if let Some(r) = cfg.runner.as_deref().filter(|r| *r != "claude") {
+        return Err(CliError::Config(format!(
+            "seat {seat} names runner `{r}`; the only runner adapter is `claude`"
+        )));
+    }
+    let l = p.load()?;
+    let dir = ris::status::seats(p, &l)
+        .into_iter()
+        .find(|s| s.seat == seat)
+        .and_then(|s| s.worktree)
+        .ok_or_else(|| {
+            CliError::Other(format!(
+                "{seat} has nowhere to work yet\n  next: `ris worktree {seat}`"
+            ))
+        })?;
+    let git_dir = git(&p.root, &["rev-parse", "--git-common-dir"])
+        .ok()
+        .map(|g| p.root.join(g));
+    let mut write: Vec<String> = ris::runner::writable(&p.root, cfg.role, git_dir)
+        .iter()
+        .map(|w| w.display().to_string())
+        .collect();
+    write.extend(p.config.runner.write.iter().cloned());
+    let extra = p
+        .config
+        .runner
+        .allow
+        .get(&cfg.role.to_string())
+        .cloned()
+        .unwrap_or_default();
+    let allow = ris::runner::allowlist(cfg.role, &p.checks, &extra);
+    let settings = ris::runner::sandbox_settings(&write, &p.config.runner.network);
+    let prompt = ris::runner::prompt(seat, cfg.role);
+    let args = ris::runner::claude_args(&prompt, &allow, &settings, cfg.model.as_deref());
+
+    let name = AgentName(seat.to_owned());
+    let (l, _) = p.run(&Command::RunStart {
+        seat: name.clone(),
+        actor: actor.clone(),
+        runner: p.text("runner", "claude")?,
+        model: cfg
+            .model
+            .as_deref()
+            .map(|m| p.text("model", m))
+            .transpose()?,
+    })?;
+    let at = l.state.running[&name];
+    let log = p
+        .root
+        .join(ris::project::DIR)
+        .join("runs")
+        .join(format!("{seat}-{at}.jsonl"));
+    let shown_log = log
+        .strip_prefix(&p.root)
+        .unwrap_or(&log)
+        .display()
+        .to_string();
+    let program = p.config.runner.program.clone();
+    let result = ris::runner::run(&program, &args, &dir, seat, &p.root, &log, quiet);
+    let status = result.as_ref().ok().copied().flatten();
+    p.run(&Command::RunStop {
+        seat: name,
+        actor: actor.clone(),
+        status,
+    })?;
+    let status = result.map_err(|e| {
+        CliError::Other(format!(
+            "could not run `{program}` for {seat}: {e}\n  next: install it, or set [runner] program in .osiris/config.toml"
+        ))
+    })?;
+    Ok(Output::new(
+        format!(
+            "{seat} stopped ({}); its output is in {shown_log}",
+            status.map_or("ended by a signal".to_owned(), |c| format!("exit {c}"))
+        ),
+        json!({ "seat": seat, "status": status, "log": shown_log }),
+    ))
+}
+
 fn require_one_commit(
     p: &Project,
     l: &ris::project::Loaded,

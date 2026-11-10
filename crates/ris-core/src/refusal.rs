@@ -98,6 +98,10 @@ pub enum Refusal {
     MalformedAction,
     /// A merged or superseded item is settled; nothing new attaches to it.
     SettledItem(ItemId),
+    /// The seat's agent is already running, since the given event.
+    AlreadyRunning { seat: AgentName, since: u64 },
+    /// No run of the seat's agent is recorded as running.
+    NotRunning(AgentName),
     /// An item is replaced by another item that is not itself replaced.
     NotAReplacement { item: ItemId, by: ItemId },
 }
@@ -178,6 +182,10 @@ impl Refusal {
             Self::ActionNeedsResult(_) => "attach --evidence <file>, or give --note".into(),
             Self::MalformedAction => "give what to do and --done-when".into(),
             Self::SettledItem(_) => "link the action to an item still in motion".into(),
+            Self::AlreadyRunning { seat, .. } => format!(
+                "it is working; if its process is gone, record that with `ris seat stopped {seat}`"
+            ),
+            Self::NotRunning(_) => "nothing to record; `ris status` shows what runs".into(),
             Self::SupersedeIsForThePerson(_) => {
                 "raise it with the person, who runs `ris item supersede`".into()
             }
@@ -286,6 +294,13 @@ impl fmt::Display for Refusal {
                 f.write_str("refused: an action needs what to do and how to tell it is done")
             }
             Self::SettledItem(i) => write!(f, "refused: {i} is settled"),
+            Self::AlreadyRunning { seat, since } => {
+                write!(
+                    f,
+                    "refused: {seat} is already running (since event {since})"
+                )
+            }
+            Self::NotRunning(seat) => write!(f, "refused: {seat} is not running"),
             Self::SupersedeIsForThePerson(item) => {
                 write!(f, "refused: only the person supersedes {item}")
             }

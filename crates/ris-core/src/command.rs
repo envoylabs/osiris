@@ -119,6 +119,20 @@ pub enum Command {
         evidence: Vec<EvidenceId>,
         note: Option<Text>,
     },
+    /// The runner started a seat's agent, on the person's command. A
+    /// paused seat, or one already running, is refused.
+    RunStart {
+        seat: AgentName,
+        actor: Actor,
+        runner: Text,
+        model: Option<Text>,
+    },
+    /// The seat's agent stopped.
+    RunStop {
+        seat: AgentName,
+        actor: Actor,
+        status: Option<i32>,
+    },
     /// Pause seats: each finishes what it holds, and its next claim or
     /// audit is refused until it is resumed. The person's only.
     Pause {
@@ -163,6 +177,8 @@ impl Command {
             Self::Release { .. } => CommandKind::Release,
             Self::Audit { .. } => CommandKind::Audit,
             Self::Supersede { .. } => CommandKind::Supersede,
+            Self::RunStart { .. } => CommandKind::RunStart,
+            Self::RunStop { .. } => CommandKind::RunStop,
             Self::RaiseAction { .. } => CommandKind::RaiseAction,
             Self::ActionDone { .. } => CommandKind::ActionDone,
             Self::Pause { .. } => CommandKind::Pause,
@@ -564,6 +580,49 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             Ok(vec![Effect::new(Structure::ItemReady { item: *item })])
         }
 
+        Command::RunStart {
+            seat,
+            actor,
+            runner,
+            model,
+        } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::SeatControlIsForThePerson);
+            }
+            if state.paused.contains(seat) {
+                return Err(Refusal::SeatPaused(seat.clone()));
+            }
+            if let Some(at) = state.running.get(seat) {
+                return Err(Refusal::AlreadyRunning {
+                    seat: seat.clone(),
+                    since: *at,
+                });
+            }
+            let mut e =
+                Effect::new(Structure::RunStarted { seat: seat.clone() }).with("runner", runner);
+            if let Some(m) = model {
+                e = e.with("model", m);
+            }
+            Ok(vec![e])
+        }
+
+        Command::RunStop {
+            seat,
+            actor,
+            status,
+        } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::SeatControlIsForThePerson);
+            }
+            if !state.running.contains_key(seat) {
+                return Err(Refusal::NotRunning(seat.clone()));
+            }
+            Ok(vec![Effect::new(Structure::RunStopped {
+                seat: seat.clone(),
+                status: *status,
+            })])
+        }
+
         Command::RaiseAction {
             by,
             what,
@@ -945,6 +1004,8 @@ mod tests {
             | CommandKind::Pause
             | CommandKind::Resume
             | CommandKind::ActionDone
+            | CommandKind::RunStart
+            | CommandKind::RunStop
             | CommandKind::MessageSend => return None,
         })
     }
@@ -1517,6 +1578,42 @@ mod tests {
         h.must(done(crate::ids::ActionId(2), Actor::Person, Some("ran it")));
         assert_eq!(h.state.items[&ItemId(1)].state, ItemState::Ready);
         assert_eq!(h.state.check_index(), Ok(()));
+        assert_eq!(State::fold(&h.log).unwrap(), h.state);
+    }
+
+    #[test]
+    fn a_run_is_started_and_stopped_by_the_person_once_at_a_time() {
+        let mut h = with_phase_and_item();
+        let start = |actor| Command::RunStart {
+            seat: agent("rook"),
+            actor,
+            runner: t("claude"),
+            model: None,
+        };
+        assert_eq!(
+            h.run(start(Actor::Agent(agent("heron")))),
+            Err(Refusal::SeatControlIsForThePerson)
+        );
+        h.must(start(Actor::Person));
+        assert!(matches!(
+            h.run(start(Actor::Person)),
+            Err(Refusal::AlreadyRunning { .. })
+        ));
+        let stop = Command::RunStop {
+            seat: agent("rook"),
+            actor: Actor::Person,
+            status: Some(0),
+        };
+        h.must(stop.clone());
+        assert_eq!(h.run(stop), Err(Refusal::NotRunning(agent("rook"))));
+        h.must(Command::Pause {
+            seats: vec![agent("rook")],
+            actor: Actor::Person,
+        });
+        assert_eq!(
+            h.run(start(Actor::Person)),
+            Err(Refusal::SeatPaused(agent("rook")))
+        );
         assert_eq!(State::fold(&h.log).unwrap(), h.state);
     }
 

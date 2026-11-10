@@ -49,6 +49,48 @@ pub struct Config {
     /// to be pushed and merged on the git server.
     #[serde(default = "default_true")]
     pub merge_on_close: bool,
+    /// How `ris seat start` runs agents unattended.
+    #[serde(default)]
+    pub runner: RunnerConfig,
+}
+
+/// The runner: which agent tool starts a seat's agent, and the line an
+/// unattended agent may not cross. Each role has a built-in allowlist
+/// (`crate::runner`); this adds to it and never removes from it.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerConfig {
+    /// The agent tool's program, found on PATH. Its adapter is chosen
+    /// by this name; `claude` is the only adapter so far.
+    #[serde(default = "default_program")]
+    pub program: String,
+    /// More tool permissions per role, in the agent tool's own syntax,
+    /// for example `builder = ["Bash(cargo *)"]`.
+    #[serde(default)]
+    pub allow: BTreeMap<String, Vec<String>>,
+    /// Network hosts the sandbox lets an agent reach. Empty: none.
+    #[serde(default)]
+    pub network: Vec<String>,
+    /// More paths the sandbox lets an agent write, in the agent tool's
+    /// syntax (`~/` is the home directory), for example a build tool's
+    /// cache: `write = ["~/.cargo"]`.
+    #[serde(default)]
+    pub write: Vec<String>,
+}
+
+impl Default for RunnerConfig {
+    fn default() -> Self {
+        Self {
+            program: default_program(),
+            allow: BTreeMap::new(),
+            network: Vec::new(),
+            write: Vec::new(),
+        }
+    }
+}
+
+fn default_program() -> String {
+    "claude".to_owned()
 }
 
 fn default_true() -> bool {
@@ -69,6 +111,7 @@ impl Default for Config {
             confirm_empty_denylist: false,
             trailers: true,
             merge_on_close: true,
+            runner: RunnerConfig::default(),
         }
     }
 }
@@ -81,6 +124,10 @@ pub struct AgentConfig {
     /// The runner adapter that drives this seat, when runners exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<String>,
+    /// The model the runner asks for, in the agent tool's own naming.
+    /// Unset: the tool's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// What a seat does.

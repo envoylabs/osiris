@@ -11,5 +11,6 @@ pub mod graph;
 pub mod import;
 pub mod project;
 pub mod render;
+pub mod runner;
 pub mod status;
 pub mod style;
