@@ -591,20 +591,39 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Claim { item } => {
             let agent = agent_only(&actor)?;
-            let (l, _) = p.run(&Command::Claim { item: *item, agent })?;
-            let i = &l.state.items[item];
-            let checks: Vec<String> = i.checks.iter().map(ToString::to_string).collect();
+            let (l, _) = p.run(&Command::Claim {
+                item: *item,
+                agent: agent.clone(),
+            })?;
+            let role = p
+                .config
+                .agents
+                .get(&agent.0)
+                .map(|a| a.role.to_string())
+                .unwrap_or_default();
+            let rules_path = p.rules_path();
+            let found = std::fs::read_to_string(&rules_path).ok();
+            let shown = rules_path
+                .strip_prefix(&p.root)
+                .unwrap_or(&rules_path)
+                .display()
+                .to_string();
+            let content = found.as_deref().unwrap_or(ris::project::RULES);
+            let (text, data) = ris::brief::brief(
+                &l,
+                *item,
+                &role,
+                &ris::brief::Rules {
+                    path: found.as_ref().map(|_| shown.as_str()),
+                    content,
+                },
+            );
             Ok(Output::new(
                 format!(
-                    "claimed {item}: {}\n  checks: {}",
-                    l.text(i.at, "goal"),
-                    if checks.is_empty() {
-                        "none".to_owned()
-                    } else {
-                        checks.join(", ")
-                    }
+                    "claimed {item}
+{text}"
                 ),
-                json!({ "item": item.to_string(), "goal": l.text(i.at, "goal"), "checks": checks }),
+                data,
             ))
         }
 

@@ -92,6 +92,16 @@ pub enum Role {
     Auditor,
 }
 
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Lead => "lead",
+            Self::Builder => "builder",
+            Self::Auditor => "auditor",
+        })
+    }
+}
+
 impl Config {
     pub fn parse(text: &str) -> Result<Self, String> {
         toml::from_str(text).map_err(|e| format!("config.toml: {e}"))
@@ -149,11 +159,6 @@ impl Config {
                 "{name} was a seat before and is in the log; a name is never given to another seat"
             ));
         }
-        let role = match role {
-            Role::Lead => "lead",
-            Role::Builder => "builder",
-            Role::Auditor => "auditor",
-        };
         let mut out = text.trim_end().to_owned();
         out.push_str(&format!("\n\n[agents.{name}]\nrole = \"{role}\"\n"));
         let parsed = Self::parse(&out)?;
