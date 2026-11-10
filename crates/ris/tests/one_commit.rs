@@ -1,5 +1,6 @@
 //! At width one, as from a worktree, an item merges as exactly one
-//! commit: counted from the phase's last recorded merge, or from where
+//! commit: counted from the last merge recorded in the phase (whichever
+//! phase the merged item was added in), or from where
 //! the phase branch left the main line before the first.
 
 use std::fs;
@@ -56,7 +57,9 @@ fn commit(dir: &Path, file: &str, item: &str) {
 }
 
 fn setup() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ris-one-commit-{}", std::process::id()));
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("ris-one-commit-{}-{n}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);
@@ -133,4 +136,31 @@ fn an_item_is_one_commit_from_the_phase_start_and_from_each_merge() {
     git(&dir, &["reset", "-q", "--soft", "HEAD~2"]);
     commit(&dir, "c.txt", "I-2");
     ok(&dir, None, &["merge", "I-2"]);
+}
+
+/// An item carried over from an earlier phase and merged in this one
+/// counts as this phase's merge: the next item is one commit from it,
+/// not from where the phase left the main line.
+#[test]
+fn a_carried_over_items_merge_counts_for_the_next_item() {
+    let dir = setup();
+    let heron = Some("heron");
+    ok(&dir, heron, &["claim", "I-1"]);
+    ok(&dir, heron, &["done", "I-1"]);
+    commit(&dir, "a.txt", "I-1");
+    ok(&dir, None, &["merge", "I-1"]);
+    // I-2 is left ready and carries over.
+    ok(&dir, None, &["phase", "close"]);
+    ok(&dir, None, &["phase", "open", "the next phase"]);
+    ok(&dir, None, &["item", "add", "third", "--check", "ok"]);
+
+    ok(&dir, heron, &["claim", "I-2"]);
+    ok(&dir, heron, &["done", "I-2"]);
+    commit(&dir, "b.txt", "I-2");
+    ok(&dir, None, &["merge", "I-2"]);
+
+    ok(&dir, heron, &["claim", "I-3"]);
+    ok(&dir, heron, &["done", "I-3"]);
+    commit(&dir, "c.txt", "I-3");
+    ok(&dir, None, &["merge", "I-3"]);
 }

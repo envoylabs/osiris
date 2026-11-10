@@ -1498,14 +1498,15 @@ fn require_one_commit(
     };
     let is_ancestor =
         |base: &str| git(&p.work, &["merge-base", "--is-ancestor", base, commit]).is_ok();
-    // The nearest merge recorded in this phase that the commit builds on.
+    // The nearest merge recorded since the phase opened that the commit
+    // builds on, whichever phase the merged item was added in: items
+    // carry over from phase to phase.
     let merged = l
-        .state
-        .items
-        .values()
-        .filter(|i| i.phase == phase.id)
-        .filter_map(|i| match &i.state {
-            ris_core::primitives::ItemState::Merged { commit: c, .. } => Some(c.0.clone()),
+        .log
+        .iter()
+        .filter(|e| e.seq > phase.at)
+        .filter_map(|e| match &e.structure {
+            ris_core::event::Structure::ItemMerged { commit: c, .. } => Some(c.0.clone()),
             _ => None,
         })
         .filter(|c| c != commit && is_ancestor(c))
