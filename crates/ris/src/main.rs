@@ -49,6 +49,11 @@ enum Cmd {
     Worktree { seat: String },
     /// Print the agents' rules (what OSIRIS.md holds).
     Rules,
+    /// Add an agent seat to .osiris/config.toml. The person's command.
+    Seat {
+        #[command(subcommand)]
+        action: SeatCmd,
+    },
     /// Open or close a phase.
     Phase {
         #[command(subcommand)]
@@ -156,6 +161,16 @@ enum PhaseCmd {
 #[derive(Subcommand)]
 enum ItemCmd {
     Add(ItemAdd),
+}
+
+#[derive(Subcommand)]
+enum SeatCmd {
+    /// Add a seat: a durable pseudonym, never a real person's name.
+    Add {
+        name: String,
+        #[arg(long, value_parser = ["lead", "builder", "auditor"])]
+        role: String,
+    },
 }
 
 #[derive(Args)]
@@ -342,6 +357,37 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     path.display()
                 ),
                 json!({ "seat": seat, "path": path }),
+            ))
+        }
+
+        Cmd::Seat {
+            action: SeatCmd::Add { name, role },
+        } => {
+            if actor != Actor::Person {
+                return Err(CliError::Other(
+                    "seats are the person's to add; run ris seat add without RIS_AGENT".into(),
+                ));
+            }
+            let role = match role.as_str() {
+                "lead" => ris::config::Role::Lead,
+                "builder" => ris::config::Role::Builder,
+                _ => ris::config::Role::Auditor,
+            };
+            let l = p.load()?;
+            let retired = names_in_log(&l.state);
+            let path = p.root.join(ris::project::DIR).join("config.toml");
+            let text = std::fs::read_to_string(&path)?;
+            let out = ris::config::Config::with_seat(&text, name, role, &retired)
+                .map_err(|e| CliError::Other(format!("refused: {e}")))?;
+            std::fs::write(&path, out)?;
+            let next = if role == ris::config::Role::Auditor {
+                format!("start it in the main checkout with RIS_AGENT={name}")
+            } else {
+                format!("`ris worktree {name}`, then start it there with RIS_AGENT={name}")
+            };
+            Ok(Output::new(
+                format!("seat {name} added\n  next: {next}"),
+                json!({ "seat": name, "role": role }),
             ))
         }
 
@@ -964,6 +1010,36 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
     }
+}
+
+/// Every agent name the log has seen: claimants, authors, auditors,
+/// deciders and message parties. A name in the log is never reused.
+fn names_in_log(state: &ris_core::state::State) -> Vec<String> {
+    use ris_core::primitives::{DecisionState, ItemState};
+    let mut actors: Vec<&Actor> = Vec::new();
+    for d in state.decisions.values() {
+        actors.push(&d.by);
+        if let DecisionState::Taken { by, .. } = &d.state {
+            actors.push(by);
+        }
+    }
+    actors.extend(state.messages.iter().map(|m| &m.from));
+    let mut names: std::collections::BTreeSet<String> = actors
+        .into_iter()
+        .filter_map(|a| match a {
+            Actor::Agent(n) => Some(n.0.clone()),
+            Actor::Person => None,
+        })
+        .collect();
+    names.extend(state.messages.iter().map(|m| m.to.0.clone()));
+    for i in state.items.values() {
+        names.extend(i.author.iter().map(|a| a.0.clone()));
+        names.extend(i.audited_by.iter().map(|a| a.0.clone()));
+        if let ItemState::Claimed { agent } = &i.state {
+            names.insert(agent.0.clone());
+        }
+    }
+    names.into_iter().collect()
 }
 
 /// What a seat's role rules out, checked before anything runs. An

@@ -28,8 +28,9 @@ rules hold throughout:
    command refuses while the denylist is empty, which is the check that
    it was done.
 4. Ask the person for the agents' seat names (pseudonyms, one lead and
-   one auditor at least) and add them under `[agents.<name>]` with
-   `role = "lead"`, `"builder"` or `"auditor"`.
+   one auditor at least) and the role of each, and give them the
+   commands to run: `ris seat add <name> --role lead` (or `builder`,
+   `auditor`). Seats are the person's to add; `ris` refuses an agent.
 
 ## 2. Checks
 

@@ -25,22 +25,23 @@ the agents read go in `.osiris/OSIRIS.md`. `git status` is unchanged.
 ## 2. Configure
 
 `.osiris/config.toml` holds the denylist and the seats. It stays on this
-machine and is never exported.
+machine and is never exported. Fill the denylist first:
 
 ```toml
 # Words that must never appear in harness state or commits: your name,
 # the client's name, your machine's hostname. Case-insensitive.
 denylist = ["your surname", "client name"]
-
-[agents.heron]
-role = "lead"
-
-[agents.rook]
-role = "builder"
-
-[agents.wren]
-role = "auditor"
 ```
+
+The template comes with two seats, heron (lead) and wren (auditor).
+Add the builder:
+
+```sh
+ris seat add rook --role builder
+```
+
+A seat name is a pseudonym, refused if the scan or the denylist would
+refuse it, and never reused once it is in the log.
 
 Top-level keys such as `denylist` go above the first `[agents.*]` table.
 `ris phase open` refuses while the denylist is empty, because text is

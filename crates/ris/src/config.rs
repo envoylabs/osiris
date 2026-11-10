@@ -117,6 +117,50 @@ impl Config {
         Ok(())
     }
 
+    /// `text` (the file as it stands) with a seat added, comments and
+    /// layout untouched: the seat is appended as its own table, after
+    /// every top-level key. Refused when the name is not a plain
+    /// lowercase word, is already a seat, was a seat once (`retired`:
+    /// names in the log, since a name is never given to another seat),
+    /// or fails the scan or the denylist.
+    pub fn with_seat(
+        text: &str,
+        name: &str,
+        role: Role,
+        retired: &[String],
+    ) -> Result<String, String> {
+        let plain = name.len() <= 32
+            && name.starts_with(|c: char| c.is_ascii_lowercase())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !plain {
+            return Err(
+                "a seat name is a lowercase word of letters, digits and hyphens, at most 32 long"
+                    .into(),
+            );
+        }
+        let current = Self::parse(text)?;
+        if current.agents.contains_key(name) {
+            return Err(format!("{name} is already a seat"));
+        }
+        if retired.iter().any(|r| r == name) {
+            return Err(format!(
+                "{name} was a seat before and is in the log; a name is never given to another seat"
+            ));
+        }
+        let role = match role {
+            Role::Lead => "lead",
+            Role::Builder => "builder",
+            Role::Auditor => "auditor",
+        };
+        let mut out = text.trim_end().to_owned();
+        out.push_str(&format!("\n\n[agents.{name}]\nrole = \"{role}\"\n"));
+        let parsed = Self::parse(&out)?;
+        parsed.check_agent_names()?;
+        Ok(out)
+    }
+
     /// The template `ris init` writes.
     pub const TEMPLATE: &'static str = "\
 # osiris configuration. Local to this machine; never exported.
@@ -210,6 +254,33 @@ mod tests {
     fn a_key_in_the_wrong_table_is_an_error() {
         let misplaced = "[agents.wren]\nrole = \"auditor\"\ndenylist = [\"acme\"]\n";
         assert!(Config::parse(misplaced).is_err());
+    }
+
+    #[test]
+    fn a_seat_is_appended_with_comments_kept_and_bad_names_refused() {
+        let out = Config::with_seat(Config::TEMPLATE, "rook", Role::Builder, &[]).unwrap();
+        assert!(
+            out.starts_with(Config::TEMPLATE.trim_end()),
+            "nothing above is rewritten"
+        );
+        let c = Config::parse(&out).unwrap();
+        assert_eq!(c.agents["rook"].role, Role::Builder);
+        assert_eq!(c.agents.len(), 3);
+
+        let refused = |name: &str, retired: &[String]| {
+            Config::with_seat(Config::TEMPLATE, name, Role::Lead, retired).is_err()
+        };
+        assert!(refused("heron", &[]), "taken");
+        assert!(refused("kite", &["kite".to_owned()]), "retired");
+        for bad in ["", "Rook", "two words", "x]\ndenylist = []\n[y", "9lives"] {
+            assert!(refused(bad, &[]), "{bad:?}");
+        }
+        let with_denylist =
+            Config::TEMPLATE.replace("denylist = []", "denylist = [\"examplename\"]");
+        assert!(
+            Config::with_seat(&with_denylist, "examplename", Role::Lead, &[]).is_err(),
+            "denylisted"
+        );
     }
 
     #[test]
