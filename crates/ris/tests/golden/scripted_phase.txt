@@ -106,7 +106,9 @@ Kinds: `handoff`, `interface-changed`, `question`, `finding`.
 
 ## An auditor's seat
 
-An auditor never writes to the tree. `ris audit` is its queue: done and
+An auditor never writes to the tree, and `ris` refuses an auditor seat
+that tries to claim, finish or merge an item, or to get a worktree.
+`ris audit` is its queue: done and
 merged items it did not write and has not reviewed. For each, it reads
 the diff and the evidence against the goal, the decisions that touch it
 and these rules, and checks the item's mechanical decisions for any
@@ -690,7 +692,27 @@ D-3 [substantive] rocksdb or sqlite?  (about I-2)
      taken by the person: 2, outside the offered options. the plan's own answer
 [exit 0]
 
-$ RIS_AGENT=wren ris audit
+$ RIS_AGENT=rook ris claim I-2
+[stderr] refused: rook is an auditor, and an auditor does not claim items
+  next: `ris audit` for the review queue; a builder or lead seat does this
+[exit 2]
+
+$ RIS_AGENT=rook ris done I-2
+[stderr] refused: rook is an auditor, and an auditor does not finish items
+  next: `ris audit` for the review queue; a builder or lead seat does this
+[exit 2]
+
+$ RIS_AGENT=rook ris merge I-2
+[stderr] refused: rook is an auditor, and an auditor does not merge items
+  next: `ris audit` for the review queue; a builder or lead seat does this
+[exit 2]
+
+$ ris worktree rook
+[stderr] refused: rook is an auditor, and an auditor does not need a worktree: it reads the main checkout and never writes
+  next: `ris audit` for the review queue; a builder or lead seat does this
+[exit 2]
+
+$ RIS_AGENT=rook ris audit
 I-1   merged   the event envelope (<hash>)
 I-3   merged   the cli (<hash>)
 --
@@ -702,14 +724,21 @@ $ RIS_AGENT=heron ris audit I-1
   next: another seat audits it; take the next item in `ris audit`
 [exit 2]
 
-$ RIS_AGENT=wren ris audit I-1
-I-1 reviewed by wren
+$ RIS_AGENT=rook ris audit I-1
+I-1 reviewed by rook
 [exit 0]
 
-$ RIS_AGENT=wren ris audit I-1
-[stderr] refused: wren has already reviewed I-1
+$ RIS_AGENT=rook ris audit I-1
+[stderr] refused: rook has already reviewed I-1
   next: take the next item in `ris audit`
 [exit 2]
+
+$ RIS_AGENT=wren ris audit
+I-1   merged   the event envelope (<hash>)
+I-3   merged   the cli (<hash>)
+--
+review: ris show I-n, the diff, the evidence; findings: ris send <author> --kind finding --about I-n "..."; then ris audit I-n
+[exit 0]
 
 $ ris show I-1
 I-1 merged  (phase P-1)
@@ -717,7 +746,7 @@ I-1 merged  (phase P-1)
   checks: test
   evidence: E-<hash>
   commit: <hash>
-  audited by: wren
+  audited by: rook
   decisions:
     D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
   check runs:
@@ -881,7 +910,7 @@ $ ris --json report
   "items": [
     {
       "audited_by": [
-        "wren"
+        "rook"
       ],
       "checks": [
         "test"

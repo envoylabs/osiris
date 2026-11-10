@@ -93,7 +93,9 @@ Kinds: `handoff`, `interface-changed`, `question`, `finding`.
 
 ## An auditor's seat
 
-An auditor never writes to the tree. `ris audit` is its queue: done and
+An auditor never writes to the tree, and `ris` refuses an auditor seat
+that tries to claim, finish or merge an item, or to get a worktree.
+`ris audit` is its queue: done and
 merged items it did not write and has not reviewed. For each, it reads
 the diff and the evidence against the goal, the decisions that touch it
 and these rules, and checks the item's mechanical decisions for any

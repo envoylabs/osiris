@@ -112,7 +112,8 @@ inbox before starting an item and after a check runs, not mid-task.
 
 ## The auditor's seat
 
-An auditor never writes to the tree. For each done item it reads the
+An auditor never writes to the tree; `ris` refuses an auditor seat
+that tries to claim, finish or merge an item. For each done item it reads the
 diff and the evidence against the goal, the decisions that touch it and
 these rules, and reads the item's mechanical decisions for any that
 should have been substantive. Findings go to the author as messages; a

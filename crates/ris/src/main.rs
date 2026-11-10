@@ -246,7 +246,7 @@ fn main() -> ExitCode {
                 }
             }
             ExitCode::from(match e {
-                CliError::Refused(_) | CliError::Leak { .. } => 2,
+                CliError::Refused(_) | CliError::Leak { .. } | CliError::RoleForbids { .. } => 2,
                 CliError::ChecksFailed { .. } | CliError::CheckFailed { .. } => 3,
                 _ => 1,
             })
@@ -289,6 +289,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     }
     let mut p = Project::find(&cwd)?;
     let actor = p.actor()?;
+    forbidden_by_role(&p, &actor, &cli.command)?;
 
     match &cli.command {
         Cmd::Init { .. } | Cmd::Rules => unreachable!(),
@@ -962,6 +963,47 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+    }
+}
+
+/// What a seat's role rules out, checked before anything runs. An
+/// auditor reviews and never writes to the tree, so it cannot take,
+/// finish or merge an item, and has no worktree. Every other role may
+/// do everything; the core separately refuses anyone auditing an item
+/// they authored.
+fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), CliError> {
+    let is_auditor = |seat: &str| {
+        p.config
+            .agents
+            .get(seat)
+            .is_some_and(|a| a.role == ris::config::Role::Auditor)
+    };
+    let refuse = |seat: &str, what: &'static str| {
+        Err(CliError::RoleForbids {
+            seat: seat.to_owned(),
+            role: "auditor",
+            what,
+        })
+    };
+    if let Cmd::Worktree { seat } = command
+        && is_auditor(seat)
+    {
+        return refuse(
+            seat,
+            "need a worktree: it reads the main checkout and never writes",
+        );
+    }
+    let Actor::Agent(name) = actor else {
+        return Ok(());
+    };
+    if !is_auditor(&name.0) {
+        return Ok(());
+    }
+    match command {
+        Cmd::Claim { .. } => refuse(&name.0, "claim items"),
+        Cmd::Done { .. } => refuse(&name.0, "finish items"),
+        Cmd::Merge { .. } => refuse(&name.0, "merge items"),
+        _ => Ok(()),
     }
 }
 

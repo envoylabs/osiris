@@ -212,7 +212,12 @@ fn scripted_phase_matches_the_golden_transcript() {
     fs::write(
         &config,
         c.replace("phase_branches = true", "phase_branches = false")
-            .replace("denylist = []", "denylist = [\"example client\"]"),
+            .replace("denylist = []", "denylist = [\"example client\"]")
+            // Two writers and a separate auditor.
+            .replace(
+                "[agents.wren]\nrole = \"auditor\"",
+                "[agents.wren]\nrole = \"builder\"\n\n[agents.rook]\nrole = \"auditor\"",
+            ),
     )
     .unwrap();
     // Checks the sandbox can run: one that passes, one that fails.
@@ -464,12 +469,23 @@ fn scripted_phase_matches_the_golden_transcript() {
         ],
     );
     sb.ok(None, &["show", "D-3"]);
-    // The auditor's queue: wren reviews heron's merged I-1, not its own.
+    // The auditor's seat reads and never writes: it cannot take, finish
+    // or merge an item, and gets no worktree.
+    let rook = Some("rook");
+    sb.refused(rook, &["claim", "I-2"]);
+    sb.refused(rook, &["done", "I-2"]);
+    sb.refused(rook, &["merge", "I-2"]);
+    sb.refused(None, &["worktree", "rook"]);
+    // The auditor's queue: rook reviews heron's merged I-1. Its author
+    // cannot, and nobody reviews it twice. A builder may review another
+    // builder's work: wren audits I-1 too, but not its own I-2.
+    let q = sb.ok(rook, &["audit"]).stdout;
+    assert!(q.contains("I-1"), "{q}");
+    sb.refused(heron, &["audit", "I-1"]);
+    sb.ok(rook, &["audit", "I-1"]);
+    sb.refused(rook, &["audit", "I-1"]);
     let q = sb.ok(wren, &["audit"]).stdout;
     assert!(q.contains("I-1") && !q.contains("I-2 "), "{q}");
-    sb.refused(heron, &["audit", "I-1"]);
-    sb.ok(wren, &["audit", "I-1"]);
-    sb.refused(wren, &["audit", "I-1"]);
     sb.ok(None, &["show", "I-1"]);
     sb.ok(None, &["show", "I-2"]);
     sb.ok(None, &["show", "D-2"]);
