@@ -121,8 +121,10 @@ enum Cmd {
     Summary,
     /// The phase report.
     Report,
-    /// Scan tracked files (or the given paths) as `ris merge` scans a
-    /// commit: exit 2 on a hit, naming the place and never the text.
+    /// Scan the files git tracks or would pick up (or the given paths,
+    /// tracked or not) as `ris merge` scans a commit: exit 2 on a hit,
+    /// naming the place and never the text. Scanning no files is an
+    /// error, not a clean result.
     Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
@@ -712,7 +714,14 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Report => Ok(render::report(&p.load()?)),
 
         Cmd::Scan { paths } => {
-            let files = ris::exits::tracked_files(&p.work, paths)?;
+            let files = ris::exits::files_to_scan(&p.work, paths)?;
+            if files.is_empty() {
+                return Err(CliError::Other(
+                    "nothing scanned: no files matched, so there is nothing to call clean\n  \
+                     next: name the files or directories to scan"
+                        .into(),
+                ));
+            }
             let hits = ris::exits::scan_files(&p.work, &files, &p.policy)?;
             if !hits.is_empty() {
                 return Err(CliError::Leak {
