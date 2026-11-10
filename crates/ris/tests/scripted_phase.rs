@@ -483,7 +483,7 @@ fn scripted_phase_matches_the_golden_transcript() {
     }
     let want = fs::read_to_string(&golden).unwrap();
     if got != want {
-        let actual = golden.with_extension("actual.txt");
+        let actual = actual_path();
         fs::write(&actual, &got).unwrap();
         panic!(
             "transcript differs from {}; actual written to {}",
@@ -537,4 +537,27 @@ fn every_help_fits_one_screen() {
             sub.join(" ")
         );
     }
+}
+
+/// Where a differing transcript is written for inspection: under the
+/// build directory, so a failed run never leaves a file in the source
+/// tree to be committed by accident.
+fn actual_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("scripted_phase.actual.txt")
+}
+
+#[test]
+fn a_differing_transcript_is_written_where_git_ignores_it() {
+    let path = actual_path();
+    let out = std::process::Command::new("git")
+        .args(["check-ignore", "-q", "--no-index"])
+        .arg(&path)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{} would be visible to git",
+        path.display()
+    );
 }
