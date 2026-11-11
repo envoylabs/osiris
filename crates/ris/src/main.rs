@@ -1028,6 +1028,16 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             let author = last_claimant(&l, *item)
                 .ok_or_else(|| CliError::Other(format!("{item} has no claim in the log")))?;
             let (commit, lines) = if same_dir(&p.work, &p.root) {
+                if let Some(phase) = ris::status::phase_branch(&p, &l) {
+                    let here =
+                        git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+                    if here != phase {
+                        return Err(CliError::Other(format!(
+                            "refused: the main checkout is not on {phase}, so a commit here is not on the phase\n  \
+                             next: work in a seat's worktree (`ris up` makes one for each writing seat) and merge from there"
+                        )));
+                    }
+                }
                 // Width one: the commit is already on the phase branch.
                 let commit = match commit {
                     Some(c) => c.clone(),
@@ -1733,11 +1743,17 @@ fn make_worktree(p: &Project, seat: &str) -> Result<PathBuf, CliError> {
     )
     .is_ok();
     let target = path.to_string_lossy().into_owned();
-    let args: Vec<&str> = if has_branch {
+    // A new seat branch starts from the phase's work, not from whatever
+    // the main checkout is on.
+    let base = ris::status::phase_branch(p, &p.load()?);
+    let mut args: Vec<&str> = if has_branch {
         vec!["worktree", "add", "--quiet", &target, seat]
     } else {
         vec!["worktree", "add", "--quiet", "-b", seat, &target]
     };
+    if let (false, Some(b)) = (has_branch, base.as_deref()) {
+        args.push(b);
+    }
     git(&p.root, &args).map_err(|e| CliError::Other(format!("git worktree add: {e}")))?;
     ris::project::exclude_locally(&p.root, &[ris::project::LOCAL_IMPORT_FILE])?;
     let import = path.join(ris::project::LOCAL_IMPORT_FILE);
@@ -1773,11 +1789,42 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
         .filter(|c| c.contains("closed itself"))
         .collect();
     let l = p.load()?;
+    // D-43: the phase branch is checked out nowhere. A main checkout
+    // still on it, from the layout before, goes back to the main line
+    // when that loses nothing.
+    if let Some(phase) = ris::status::phase_branch(p, &l)
+        && git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .ok()
+            .as_deref()
+            == Some(&phase)
+    {
+        let main = p.config.main_line.clone();
+        let dirty = git(&p.root, &["status", "--porcelain", "--untracked-files=no"])
+            .map_err(CliError::Other)?;
+        if dirty.is_empty() && git(&p.root, &["switch", "--quiet", &main]).is_ok() {
+            changed.push(format!(
+                "main checkout: on {main}; {phase} is checked out nowhere and moves only by merges"
+            ));
+        } else {
+            changed.push(format!(
+                "main checkout: left on {phase}, which has uncommitted changes; \
+                 seats' merges move it there until it is on {main}"
+            ));
+        }
+    }
+    // Every writing seat works in its own worktree: a builder always,
+    // and the lead too with phase branches on, since the main checkout
+    // then holds no phase work.
     let places = ris::status::seats(p, &l);
     for seat in &seats {
         let role = p.config.agents[seat].role;
-        let place = places.iter().find(|s| &s.seat == seat);
-        if role == ris::config::Role::Builder && place.and_then(|s| s.worktree.as_ref()).is_none() {
+        let place = places
+            .iter()
+            .find(|s| &s.seat == seat)
+            .filter(|s| s.branch.as_deref() == Some(seat.as_str()));
+        let writes = role == ris::config::Role::Builder
+            || (role == ris::config::Role::Lead && p.config.phase_branches);
+        if writes && place.and_then(|s| s.worktree.as_ref()).is_none() {
             let path = make_worktree(p, seat)?;
             changed.push(format!("{seat}: worktree at {}", shown_beside(p, &path)));
         }
@@ -2183,12 +2230,23 @@ fn merge_from_worktree(
         &p.root.join(ris::project::DIR).join("merge.lock"),
         std::time::Duration::from_secs(30 * 60),
     )?;
-    let phase = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
-    if phase == "HEAD" {
-        return Err(CliError::Other(
-            "the main worktree is detached; check out the phase branch there".into(),
-        ));
-    }
+    let l = p.load()?;
+    let phase = match ris::status::phase_branch(p, &l) {
+        Some(b) => b,
+        None => {
+            let here =
+                git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
+            if here == "HEAD" {
+                return Err(CliError::Other(
+                    "the main worktree is detached; check out the branch merges land on there"
+                        .into(),
+                ));
+            }
+            here
+        }
+    };
+    let old =
+        git(&p.root, &["rev-parse", &format!("refs/heads/{phase}")]).map_err(CliError::Other)?;
     if let Err(e) = git(&p.work, &["rebase", "--quiet", &phase]) {
         let _ = git(&p.work, &["rebase", "--abort"]);
         return Err(CliError::Other(format!(
@@ -2215,11 +2273,41 @@ fn merge_from_worktree(
     }
     let commit = checks::git_head(&p.work)?;
     let lines = vet_and_check(p, item, author, &commit)?;
-    git(&p.root, &["merge", "--quiet", "--ff-only", &commit]).map_err(|e| {
-        CliError::Other(format!(
-            "could not move {phase} to {commit}: {e}\n  next: the main worktree may have uncommitted changes in the way"
-        ))
-    })?;
+    match ris::status::checked_out(&p.root, &phase) {
+        // Checked out somewhere (the layout before D-43): move it there,
+        // files and all.
+        Some(dir) => {
+            git(&dir, &["merge", "--quiet", "--ff-only", &commit]).map_err(|e| {
+                CliError::Other(format!(
+                    "could not move {phase} to {commit}: {e}\n  \
+                     next: {phase} is checked out in {}; switch that checkout to {}, \
+                     or clear the changes in the way",
+                    shown_beside(p, &dir),
+                    p.config.main_line
+                ))
+            })?;
+        }
+        // Checked out nowhere: a ref update, which writes only the git
+        // directory, and refuses if the branch moved since `old`.
+        None => {
+            git(
+                &p.root,
+                &[
+                    "update-ref",
+                    "-m",
+                    &format!("ris merge {item}"),
+                    &format!("refs/heads/{phase}"),
+                    &commit,
+                    &old,
+                ],
+            )
+            .map_err(|e| {
+                CliError::Other(format!(
+                    "could not move {phase} to {commit}: {e}\n  next: run `ris merge {item}` again"
+                ))
+            })?;
+        }
+    }
     Ok((commit, lines))
 }
 
@@ -2242,16 +2330,36 @@ fn closing_merge(
         return Ok("closing merge: none; the project is not a git repository".to_owned());
     }
     let main = p.config.main_line.clone();
-    let branch = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
+    let here = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
+    // The phase's branch, checked out nowhere since D-43; without one,
+    // whatever the main checkout is on (phase branches off, or a layout
+    // from before).
+    let named = phase_branch_name(phase);
+    let branch = if p.config.phase_branches
+        && git(
+            &p.root,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{named}"),
+            ],
+        )
+        .is_ok()
+    {
+        named
+    } else {
+        here.clone()
+    };
     if branch == main {
         return Ok(format!(
             "closing merge: none needed; the phase's work is already on {main}"
         ));
     }
-    if branch == "HEAD" {
-        return Err(CliError::Other(
-            "the main worktree is detached; check out the phase branch there".into(),
-        ));
+    if here == "HEAD" {
+        return Err(CliError::Other(format!(
+            "the main worktree is detached; check out {main} there"
+        )));
     }
     if !p.config.merge_on_close {
         return Ok(format!(
@@ -2267,12 +2375,20 @@ fn closing_merge(
              next: the phase stays open until {branch} can merge into {main}"
         )));
     }
-    git(&p.root, &["switch", "--quiet", &main])
-        .map_err(|e| CliError::Other(format!("cannot switch to the main line {main}: {e}")))?;
+    let switched = here != main;
+    if switched {
+        git(&p.root, &["switch", "--quiet", &main])
+            .map_err(|e| CliError::Other(format!("cannot switch to the main line {main}: {e}")))?;
+    }
+    let back = |p: &Project| {
+        if switched {
+            let _ = git(&p.root, &["switch", "--quiet", &here]);
+        }
+    };
     let undo = |p: &Project| {
         let _ = git(&p.root, &["merge", "--abort"]);
         let _ = git(&p.root, &["reset", "--quiet", "--hard", "ORIG_HEAD"]);
-        let _ = git(&p.root, &["switch", "--quiet", &branch]);
+        back(p);
     };
     let message = format!("chore: close {phase}: {goal}");
     if let Err(e) = git(
@@ -2280,7 +2396,7 @@ fn closing_merge(
         &["merge", "--quiet", "--no-ff", "-m", &message, &branch],
     ) {
         let _ = git(&p.root, &["merge", "--abort"]);
-        let _ = git(&p.root, &["switch", "--quiet", &branch]);
+        back(p);
         return Err(CliError::Other(format!(
             "refused: {branch} conflicts with {main}, which moved during the phase ({})\n  \
              next: merge {main} into {branch}, resolve, merge that as an item, and close again",
@@ -2327,8 +2443,9 @@ fn phase_branch_name(phase: ris_core::ids::PhaseId) -> String {
     format!("phase/{phase}")
 }
 
-/// With phase branches on, create `phase/P-n` from the main line and
-/// switch the main worktree to it. Returns the branch, or `None` when
+/// With phase branches on, create `phase/P-n` from the main line. It is
+/// checked out nowhere: seats work in their own worktrees and merges move
+/// it by a ref update (D-43), and the main checkout stays where it is. Returns the branch, or `None` when
 /// branches are off or the project is not a git repository.
 fn open_phase_branch(
     p: &Project,
@@ -2356,15 +2473,7 @@ fn open_phase_branch(
              or set phase_branches = false"
         )));
     }
-    let dirty = git(&p.root, &["status", "--porcelain", "--untracked-files=no"])
-        .map_err(CliError::Other)?;
-    if !dirty.is_empty() {
-        return Err(CliError::Other(format!(
-            "the main worktree has uncommitted changes; commit or stash them before opening a phase\n  \
-             next: {name} would be created from {main} and checked out there"
-        )));
-    }
-    git(&p.root, &["switch", "--quiet", "-c", &name, main])
+    git(&p.root, &["branch", &name, main])
         .map_err(|e| CliError::Other(format!("could not create {name} from {main}: {e}")))?;
     Ok(Some(name))
 }

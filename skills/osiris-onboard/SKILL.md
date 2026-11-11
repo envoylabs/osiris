@@ -127,8 +127,9 @@ rationale = "Why it is open and why you recommend that option, citing the docume
 
 ## 7. Hand over
 
-`ris up` brings the harness up: a worktree for each builder, then every
-seat's agent started unattended within its role. The lead works in the
-repository itself on the phase branch, and the auditor reads it and
-never writes. Tell the person that `ris summary` is where they check in
+`ris up` brings the harness up: a worktree for each writing seat, the
+lead's included, then every seat's agent started unattended within its
+role. The main checkout is the person's and stays on the main line; the
+phase branch is checked out nowhere and moves only by merges. The
+auditor reads merged work from the phase branch and never writes. Tell the person that `ris summary` is where they check in
 and `ris down` stops the seats.

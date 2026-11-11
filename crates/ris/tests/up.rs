@@ -191,9 +191,13 @@ fn up_does_only_the_difference_and_down_stops_without_losing_work() {
     // An agent cannot bring the harness up.
     assert_eq!(rig.ris(Some("heron"), &["up"]).status.code(), Some(2));
 
-    // First up: rook gets its worktree; all three start.
+    // First up: each writing seat, the lead included, gets its own
+    // worktree (D-43); the auditor reads the main checkout. All three
+    // start.
     let out = rig.ok(None, &["up"]);
     assert!(out.contains("rook: worktree at ../repo-rook"), "{out}");
+    assert!(out.contains("heron: worktree at ../repo-heron"), "{out}");
+    assert!(!out.contains("wren: worktree"), "{out}");
     for seat in ["heron", "rook", "wren"] {
         assert!(out.contains(&format!("{seat}: started")), "{out}");
     }
@@ -277,4 +281,33 @@ fn up_does_only_the_difference_and_down_stops_without_losing_work() {
     );
     fs::write(rig.repo.join(".osiris/stop-wren"), "").unwrap();
     rig.until("wren stopped", |r| running(r).is_empty());
+}
+
+fn head_branch(dir: &std::path::Path) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// A main checkout left on the phase branch by the layout before D-43
+/// goes back to the main line at `ris up`, so seats' merges can move the
+/// phase branch by a ref update; one with uncommitted changes is left
+/// where it is, and up says so.
+#[test]
+fn up_takes_the_main_checkout_off_the_phase_branch() {
+    let rig = Rig::new("up-layout", WAITING_AGENT);
+    rig.git(&["switch", "-q", "phase/P-1"]);
+    fs::write(rig.repo.join("README"), "changed\n").unwrap();
+    let out = rig.ok(None, &["up", "wren"]);
+    assert!(out.contains("left on phase/P-1"), "{out}");
+    assert_eq!(head_branch(&rig.repo), "phase/P-1");
+    rig.stop_all();
+
+    rig.git(&["checkout", "-q", "--", "README"]);
+    let out = rig.ok(None, &["up", "wren"]);
+    assert!(out.contains("main checkout: on main"), "{out}");
+    assert_eq!(head_branch(&rig.repo), "main");
 }

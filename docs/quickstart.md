@@ -6,9 +6,16 @@ git repository:
 
 | seat  | role      | works in                    |
 |-------|-----------|-----------------------------|
-| heron | `lead`    | the main checkout           |
+| heron | `lead`    | its own worktree            |
 | rook  | `builder` | its own worktree            |
 | wren  | `auditor` | the main checkout, read-only |
+
+The main checkout is yours and stays on the main line. Each phase's
+work goes onto its branch, `phase/P-n`, which is checked out nowhere:
+a seat's `ris merge` moves it by a ref update, which needs only the git
+directory, so a seat in its sandbox can merge without writing your
+checkout. `git log phase/P-1` and `git diff main...phase/P-1` show the
+phase's work; `ris phase close` merges it into the main line.
 
 The person runs `ris` with `RIS_AGENT=person`. `ris` refuses every
 command when `RIS_AGENT` is unset, so an agent that loses its seat's

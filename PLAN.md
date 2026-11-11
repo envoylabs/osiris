@@ -224,7 +224,11 @@ The item is the unit of change in git, as it is in the harness. Each
 phase has one branch, and every item of the phase merges onto it.
 
 - **One branch per phase.** It starts from the main line when the phase
-  opens. Nothing is reconciled at the end of the window: reconciling
+  opens, and is checked out nowhere: every writer, the lead included,
+  works in a worktree of its own, and a merge moves the phase branch by
+  a compare-and-swap ref update, which needs only the git directory, so
+  a sandboxed seat can merge without writing the person's checkout. The
+  main checkout is the person's and stays on the main line. Nothing is reconciled at the end of the window: reconciling
   happens at each merge. Provided nothing else writes to the main
   line during the phase, the closing merge has no conflicts.
 - **Merging is a command, and the daemon takes one at a time.**
@@ -244,12 +248,11 @@ phase has one branch, and every item of the phase merges onto it.
 - **Only finished items merge.** Half-done work on the shared branch
   would leave other agents building on a tree whose failures are not
   theirs.
-- **At width one there are no item branches.** The one writer commits
-  straight onto the phase's branch. At width above one each builder
-  needs its own working tree, and git will not check one branch out in
-  two; so each has a working ref that lives for one item, on which it
-  commits, amends and rebases as it likes. The claim keeps other
-  writers off.
+- **Each writer has a working ref.** A writer's worktree is on a branch
+  of its own, on which it commits, amends and rebases as it likes, one
+  item at a time; the claim keeps other writers off. Only with phase
+  branches off does a single writer commit straight onto the main line
+  in the main checkout.
 - **One commit per item.** A finished item merges as a single commit
   with the item's id in its message, so `why <file>` can go from a line
   to its commit, its item, the decisions that touched it and its

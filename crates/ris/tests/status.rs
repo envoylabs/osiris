@@ -98,10 +98,12 @@ fn status_shows_where_each_seat_is() {
 
     let k = seat("kite");
     assert!(k["worktree"].is_null() && k["claim"].is_null(), "{k}");
+    // Without a worktree of its own, a seat is shown in the main
+    // checkout, which stays on the main line (D-43).
     for name in ["heron", "wren"] {
         let s = seat(name);
         assert_eq!(s["worktree"], "main checkout", "{s}");
-        assert_eq!(s["branch"], "phase/P-1", "{s}");
+        assert_eq!(s["branch"], "main", "{s}");
     }
 
     let text = ok(&main, None, &["status"]);

@@ -63,7 +63,7 @@ fn an_action_blocks_and_informs_and_only_the_person_does_it() {
     .unwrap();
     fs::write(
         dir.join(".osiris/config.toml"),
-        "denylist = [\"example client\"]\ndocs_item = false\n[agents.heron]\nrole = \"lead\"\n",
+        "denylist = [\"example client\"]\ndocs_item = false\nphase_branches = false\n[agents.heron]\nrole = \"lead\"\n",
     )
     .unwrap();
     ok(&dir, None, &["phase", "open", "actions"]);

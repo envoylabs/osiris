@@ -53,7 +53,7 @@ pub struct Seat {
 }
 
 /// `(path, branch)` for every worktree of the repository at `root`.
-fn worktrees(root: &Path) -> Vec<(PathBuf, String)> {
+pub fn worktrees(root: &Path) -> Vec<(PathBuf, String)> {
     let Some(list) = git(root, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
@@ -71,9 +71,40 @@ fn worktrees(root: &Path) -> Vec<(PathBuf, String)> {
     out
 }
 
+/// The open phase's branch, when phase branches are on and it exists.
+/// Merges land there. It is checked out in no worktree, and a merge
+/// moves it by a compare-and-swap ref update, which needs only the git
+/// directory; a project whose main checkout still has it checked out
+/// is moved there by a fast-forward instead.
+pub fn phase_branch(p: &Project, l: &Loaded) -> Option<String> {
+    if !p.config.phase_branches {
+        return None;
+    }
+    let name = format!("phase/{}", l.state.open_phase()?.id);
+    git(
+        &p.root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{name}"),
+        ],
+    )?;
+    Some(name)
+}
+
+/// The worktree that has `branch` checked out, if any.
+pub fn checked_out(root: &Path, branch: &str) -> Option<PathBuf> {
+    worktrees(root)
+        .into_iter()
+        .find(|(_, b)| b == branch)
+        .map(|(p, _)| p)
+}
+
 pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
     let trees = worktrees(&p.root);
-    let phase_branch = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    let here = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    let phase_branch = phase_branch(p, l).or_else(|| here.clone());
     p.config
         .agents
         .iter()
@@ -91,7 +122,7 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 Some((path, b)) if cfg.role != Role::Auditor => {
                     (Some(path.clone()), Some(b.clone()))
                 }
-                _ if cfg.role != Role::Builder => (Some(p.root.clone()), phase_branch.clone()),
+                _ if cfg.role != Role::Builder => (Some(p.root.clone()), here.clone()),
                 _ => (None, None),
             };
             let (ahead, behind) = match (&branch, &phase_branch) {

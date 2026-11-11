@@ -1,6 +1,7 @@
 //! Several builders, each in its own git worktree, sharing one store.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -45,7 +46,9 @@ fn ok(dir: &Path, agent: Option<&str>, args: &[&str]) -> String {
 }
 
 /// A repository with a phase open, `checks` as its checks file, and
-/// one worktree per agent on its own branch, outside the main tree.
+/// one worktree per agent on its own branch from the phase branch,
+/// outside the main tree. The main checkout stays on the main line: the
+/// phase branch is checked out nowhere (D-43).
 fn setup(name: &str, checks: &str, agents: &[&str]) -> (PathBuf, Vec<PathBuf>) {
     let base = std::env::temp_dir().join(format!("ris-width-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
@@ -73,7 +76,15 @@ fn setup(name: &str, checks: &str, agents: &[&str]) -> (PathBuf, Vec<PathBuf>) {
             let wt = base.join(a);
             git(
                 &main,
-                &["worktree", "add", "-q", "-b", a, wt.to_str().unwrap()],
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    a,
+                    wt.to_str().unwrap(),
+                    "phase/P-1",
+                ],
             );
             wt
         })
@@ -157,13 +168,29 @@ fn a_merge_that_breaks_the_combined_tree_is_refused() {
     ok(w, Some("wren"), &["done", "I-2"]);
     commit(w, "I-2", "wren");
 
-    ok(h, Some("heron"), &["merge", "I-1"]);
+    // The main checkout's own directory is read-only during the merge,
+    // as a seat's sandbox leaves it: no file can be added or replaced
+    // there, while .git and .osiris inside it stay writable.
+    let perms = |mode| fs::set_permissions(&main, fs::Permissions::from_mode(mode)).unwrap();
+    perms(0o555);
+    let out = ris(h, Some("heron"), &["merge", "I-1"]);
+    perms(0o755);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
-        head(&main),
+        rev(&main, "phase/P-1"),
         head(h),
         "the phase branch moved to heron's commit"
     );
-    let after_first = head(&main);
+    // It moved by a ref update: the main checkout is still on the main
+    // line with its files untouched, so a builder that cannot write
+    // the main checkout can merge.
+    assert_eq!(branch(&main), "main");
+    assert!(!main.join("a.flag").exists());
+    let after_first = rev(&main, "phase/P-1");
 
     let out = ris(w, Some("wren"), &["merge", "I-2"]);
     assert_eq!(
@@ -172,7 +199,11 @@ fn a_merge_that_breaks_the_combined_tree_is_refused() {
         "a failing combined check exits 3"
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("check flags FAILED"));
-    assert_eq!(head(&main), after_first, "the phase branch did not move");
+    assert_eq!(
+        rev(&main, "phase/P-1"),
+        after_first,
+        "the phase branch did not move"
+    );
     let report = ok(&main, None, &["report"]);
     assert!(
         report.contains("I-1   merged") && report.contains("I-2   done"),
@@ -206,25 +237,23 @@ fn a_conflicting_merge_is_refused_and_a_clean_one_goes_through() {
     }
 
     ok(h, Some("heron"), &["merge", "I-1"]);
-    let after_first = head(&main);
+    let after_first = rev(&main, "phase/P-1");
     let wren_before = head(w);
     let out = ris(w, Some("wren"), &["merge", "I-2"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("conflicts with work merged"));
-    assert_eq!(head(&main), after_first, "the phase branch did not move");
+    assert_eq!(
+        rev(&main, "phase/P-1"),
+        after_first,
+        "the phase branch did not move"
+    );
     assert_eq!(head(w), wren_before, "the failed rebase was undone");
 
     // A change that touches nothing merged before it goes through, on
     // top of heron's.
     ok(k, Some("kite"), &["merge", "I-3"]);
-    assert_eq!(
-        fs::read_to_string(main.join("README")).unwrap(),
-        "heron's line\n"
-    );
-    assert_eq!(
-        fs::read_to_string(main.join("NEW")).unwrap(),
-        "kite's file\n"
-    );
+    assert_eq!(show(&main, "phase/P-1:README"), "heron's line\n");
+    assert_eq!(show(&main, "phase/P-1:NEW"), "kite's file\n");
 }
 
 /// Two merges submitted at the same moment land in one order: the
@@ -255,9 +284,10 @@ fn simultaneous_merges_are_serialised() {
     let (a, b) = (a.join().unwrap(), b.join().unwrap());
     assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
     assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
-    assert!(main.join("one").exists() && main.join("two").exists());
+    assert_eq!(show(&main, "phase/P-1:one"), "1\n");
+    assert_eq!(show(&main, "phase/P-1:two"), "2\n");
     let log = Command::new("git")
-        .args(["log", "--format=%s", "-3"])
+        .args(["log", "--format=%s", "-3", "phase/P-1"])
         .current_dir(&main)
         .output()
         .unwrap();
@@ -276,6 +306,15 @@ fn rev(dir: &Path, what: &str) -> String {
         .output()
         .unwrap();
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+fn show(dir: &Path, what: &str) -> String {
+    let out = Command::new("git")
+        .args(["show", what])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap()
 }
 
 fn branch(dir: &Path) -> String {
@@ -299,7 +338,7 @@ fn closing_a_phase_merges_its_branch_into_the_main_line() {
     ok(h, Some("heron"), &["done", "I-1"]);
     commit(h, "I-1", "heron");
     ok(h, Some("heron"), &["merge", "I-1"]);
-    let phase_tip = head(&main);
+    let phase_tip = rev(&main, "phase/P-1");
 
     let out = ok(&main, None, &["phase", "close"]);
     assert!(out.contains("closing merge: phase/P-1 into main"), "{out}");
@@ -315,8 +354,7 @@ fn closing_a_phase_merges_its_branch_into_the_main_line() {
 
 /// When the main line moved during the phase and the merged result
 /// fails a check, nothing changes: the main line stays where it was,
-/// the main worktree goes back to the phase branch, and the phase stays
-/// open.
+/// the main checkout stays on it, and the phase stays open.
 #[test]
 fn a_closing_merge_that_fails_the_checks_changes_nothing() {
     let (main, trees) = setup(
@@ -332,16 +370,10 @@ fn a_closing_merge_that_fails_the_checks_changes_nothing() {
     commit(h, "I-1", "heron");
     ok(h, Some("heron"), &["merge", "I-1"]);
 
-    // Someone else commits to the main line during the phase.
-    let other = main.parent().unwrap().join("other");
-    git(
-        &main,
-        &["worktree", "add", "-q", other.to_str().unwrap(), "main"],
-    );
-    fs::write(other.join("b.flag"), "b\n").unwrap();
-    git(&other, &["add", "-A"]);
-    git(&other, &["commit", "-q", "-m", "elsewhere"]);
-    git(&main, &["worktree", "remove", other.to_str().unwrap()]);
+    // Someone commits to the main line during the phase.
+    fs::write(main.join("b.flag"), "b\n").unwrap();
+    git(&main, &["add", "b.flag"]);
+    git(&main, &["commit", "-q", "-m", "elsewhere"]);
     let main_before = rev(&main, "main");
 
     let r = ris(&main, None, &["phase", "close"]);
@@ -356,11 +388,7 @@ fn a_closing_merge_that_fails_the_checks_changes_nothing() {
         main_before,
         "the main line did not move"
     );
-    assert_eq!(
-        branch(&main),
-        "phase/P-1",
-        "the main worktree is back on the phase branch"
-    );
+    assert_eq!(branch(&main), "main", "the main checkout is still on main");
     let report = ok(&main, None, &["report"]);
     assert!(report.starts_with("P-1 open"), "{report}");
 }
@@ -371,16 +399,16 @@ fn a_closing_merge_that_fails_the_checks_changes_nothing() {
 #[test]
 fn phase_branches_follow_the_phase_and_can_be_turned_off() {
     let (main, _) = setup("branches", "[checks.ok]\ncommand = \"true\"\n", &[]);
-    assert_eq!(
-        branch(&main),
-        "phase/P-1",
+    assert!(
+        !rev(&main, "phase/P-1").is_empty(),
         "setup's phase open created the branch"
     );
+    assert_eq!(branch(&main), "main", "and left the main checkout alone");
     ok(&main, None, &["phase", "close"]);
     assert_eq!(branch(&main), "main");
     let out = ok(&main, None, &["phase", "open", "second"]);
     assert!(out.contains("on branch phase/P-2"), "{out}");
-    assert_eq!(branch(&main), "phase/P-2");
+    assert_eq!(branch(&main), "main");
     ok(&main, None, &["phase", "close"]);
 
     let config = main.join(".osiris/config.toml");
@@ -476,10 +504,10 @@ fn trailers_and_the_closing_merge_can_be_left_to_the_git_server() {
     let out = ok(&main, None, &["phase", "close"]);
     assert!(out.contains("left to the git server"), "{out}");
     assert_eq!(rev(&main, "main"), main_before, "main did not move");
-    assert_eq!(
-        branch(&main),
-        "phase/P-1",
-        "the phase branch is still checked out"
+    assert_eq!(branch(&main), "main");
+    assert!(
+        !rev(&main, "phase/P-1").is_empty(),
+        "the phase branch is kept"
     );
     assert!(ok(&main, None, &["report"]).starts_with("P-1 closed"));
 }

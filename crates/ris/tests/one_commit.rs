@@ -80,6 +80,9 @@ fn setup() -> PathBuf {
     // A commit on the main line before the phase opens is not counted.
     commit(&dir, "before.txt", "none");
     ok(&dir, None, &["phase", "open", "one commit each"]);
+    // Work at width one in the main checkout, on the phase branch: the
+    // layout before D-43, which a merge still accepts as it is.
+    git(&dir, &["switch", "-q", "phase/P-1"]);
     ok(&dir, None, &["item", "add", "first", "--check", "ok"]);
     ok(&dir, None, &["item", "add", "second", "--check", "ok"]);
     dir
@@ -152,6 +155,7 @@ fn a_carried_over_items_merge_counts_for_the_next_item() {
     // I-2 is left ready and carries over.
     ok(&dir, None, &["phase", "close"]);
     ok(&dir, None, &["phase", "open", "the next phase"]);
+    git(&dir, &["switch", "-q", "phase/P-2"]);
     ok(&dir, None, &["item", "add", "third", "--check", "ok"]);
 
     ok(&dir, heron, &["claim", "I-2"]);

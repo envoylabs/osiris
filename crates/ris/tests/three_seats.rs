@@ -109,9 +109,13 @@ fn a_lead_a_builder_and_an_auditor_finish_a_phase_together() {
         "person",
         &["item", "add", "the report", "--depends", "I-1"],
     );
+    // Each writing seat works in its own worktree, the lead included;
+    // the main checkout stays on the main line and the auditor reads.
+    ok(&main, "person", &["worktree", "heron"]);
     ok(&main, "person", &["worktree", "rook"]);
     let rook = base.join("repo-rook");
-    let (heron, wren) = (main.as_path(), main.as_path());
+    let heron_dir = base.join("repo-heron");
+    let (heron, wren) = (heron_dir.as_path(), main.as_path());
 
     // Lead and builder hold items at once, in their own places.
     ok(heron, "heron", &["claim", "I-1"]);
@@ -216,6 +220,12 @@ fn a_lead_a_builder_and_an_auditor_finish_a_phase_together() {
     assert!(report.contains("audited: 3 of 3"), "{report}");
     ok(&main, "person", &["verify"]);
     for f in ["store.txt", "cli.txt", "report.txt"] {
-        assert!(main.join(f).exists(), "{f} is on the phase branch");
+        let on = Command::new("git")
+            .args(["cat-file", "-e", &format!("phase/P-1:{f}")])
+            .current_dir(&main)
+            .status()
+            .unwrap();
+        assert!(on.success(), "{f} is on the phase branch");
+        assert!(!main.join(f).exists(), "the main checkout is untouched");
     }
 }

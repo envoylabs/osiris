@@ -58,15 +58,16 @@ ris inbox                       # messages to you; read between items
 
 ## Working beside other builders
 
-When more than one builder works at once, each has its own git worktree
-on its own branch; the store is shared. Commit your item on your branch
-and run `ris merge` from your worktree: it rebases your one commit onto
-the phase branch, runs every check on the result, and moves the phase
-branch forward, one merge at a time. If your change conflicts with work
-merged before it, or the combined tree fails a check, the merge is
-refused and nothing moves: rebase onto the phase branch yourself, fix,
-and run `ris merge` again. That is how a later item is kept from undoing
-an earlier one.
+Each writing seat, the lead included, has its own git worktree on its
+own branch; the store is shared. The phase branch is checked out
+nowhere, and the main checkout is the person's. Commit your item on
+your branch and run `ris merge` from your worktree: it rebases your one
+commit onto the phase branch, runs every check on the result, and moves
+the phase branch forward by a ref update, one merge at a time. If your
+change conflicts with work merged before it, or the combined tree fails
+a check, the merge is refused and nothing moves: rebase onto the phase
+branch yourself, fix, and run `ris merge` again. That is how a later
+item is kept from undoing an earlier one.
 
 ## Decisions
 
