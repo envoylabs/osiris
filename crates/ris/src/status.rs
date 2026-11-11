@@ -115,13 +115,12 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 .values()
                 .find(|i| matches!(&i.state, ItemState::Claimed { agent } if agent.0 == *name))
                 .map(|i| i.id.to_string());
-            // Its own worktree if it has one. Otherwise an auditor, and
-            // a lead working at width one, use the main checkout; a
-            // builder without one has nowhere to work yet.
+            // Its own worktree if it writes and has one. Otherwise an
+            // auditor, an advisor, and a lead working at width one, use
+            // the main checkout; a builder without one has nowhere to
+            // work yet.
             let (worktree, branch) = match trees.iter().find(|(_, b)| b == name) {
-                Some((path, b)) if cfg.role != Role::Auditor => {
-                    (Some(path.clone()), Some(b.clone()))
-                }
+                Some((path, b)) if cfg.role.writes() => (Some(path.clone()), Some(b.clone())),
                 _ if cfg.role != Role::Builder => (Some(p.root.clone()), here.clone()),
                 _ => (None, None),
             };
@@ -163,11 +162,7 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
 }
 
 fn role_word(r: Role) -> &'static str {
-    match r {
-        Role::Lead => "lead",
-        Role::Builder => "builder",
-        Role::Auditor => "auditor",
-    }
+    r.as_str()
 }
 
 /// Paths are shown relative to the main checkout, wherever `worktrees`

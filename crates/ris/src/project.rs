@@ -83,7 +83,9 @@ pub enum CliError {
     /// rather than given the person's powers. Holds the seat names.
     NoActor(Vec<String>),
     /// The seat's role does not do this: an auditor reads and never
-    /// writes to the tree. Exit status 2, like any refusal.
+    /// writes to the tree; an advisor adds items, sends messages and
+    /// raises decisions for the person, and nothing else. Exit status
+    /// 2, like any refusal.
     RoleForbids {
         seat: String,
         role: &'static str,
@@ -144,10 +146,18 @@ impl std::fmt::Display for CliError {
                     format!(" ({})", seats.join(", "))
                 }
             ),
-            Self::RoleForbids { seat, role, what } => write!(
-                f,
-                "refused: {seat} is an {role}, and an {role} does not {what}\n  next: `ris audit` for the review queue; a builder or lead seat does this"
-            ),
+            Self::RoleForbids { seat, role, what } => {
+                let next = if *role == "advisor" {
+                    "`ris item add`, `ris send` or `ris decision raise --substantive`; \
+                     the person or a writing seat does this"
+                } else {
+                    "`ris audit` for the review queue; a builder or lead seat does this"
+                };
+                write!(
+                    f,
+                    "refused: {seat} is an {role}, and an {role} does not {what}\n  next: {next}"
+                )
+            }
             Self::Contended => write!(f, "the log kept moving under this command; try again"),
             Self::Leak { what, hits } => {
                 writeln!(

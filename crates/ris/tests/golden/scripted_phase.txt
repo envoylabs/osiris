@@ -150,6 +150,16 @@ author disputes is raised as a substantive decision. `ris audit I-n`
 records the review. Merges never wait for it: findings are fixed
 forward.
 
+## An advisor's seat
+
+An advisor works beside the person and never writes to the tree. It
+reads, adds items (`ris item add`), sends messages (`ris send`), and
+puts judgements to the person (`ris decision raise --substantive`, then
+`ris decision explain`). `ris` refuses it everything else: claiming,
+finishing, merging, releasing, deciding, a mechanical decision (which
+is taken as it is raised), recording a review, running checks, and any
+command that changes the harness.
+
 ## Onboarding a project
 
 To load an existing project's backlog and standing decisions, follow

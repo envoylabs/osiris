@@ -272,7 +272,7 @@ enum SeatCmd {
     /// Add a seat: a durable pseudonym, never a real person's name.
     Add {
         name: String,
-        #[arg(long, value_parser = ["lead", "builder", "auditor"])]
+        #[arg(long, value_parser = ["lead", "builder", "auditor", "advisor"])]
         role: String,
     },
     /// Start a seat's agent unattended through the runner, in its own
@@ -575,11 +575,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     "seats are the person's to add; run ris seat add with RIS_AGENT=person".into(),
                 ));
             }
-            let role = match role.as_str() {
-                "lead" => ris::config::Role::Lead,
-                "builder" => ris::config::Role::Builder,
-                _ => ris::config::Role::Auditor,
-            };
+            let role = ris::config::Role::parse(role).expect("clap admits only role names");
             let l = p.load()?;
             let retired = names_in_log(&l.state);
             let path = p.root.join(ris::project::DIR).join("config.toml");
@@ -587,7 +583,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             let out = ris::config::Config::with_seat(&text, name, role, &retired)
                 .map_err(|e| CliError::Other(format!("refused: {e}")))?;
             std::fs::write(&path, out)?;
-            let next = if role == ris::config::Role::Auditor {
+            let next = if !role.writes() {
                 format!("start it in the main checkout with RIS_AGENT={name}")
             } else {
                 format!("`ris worktree {name}`, then start it there with RIS_AGENT={name}")
@@ -1665,42 +1661,90 @@ fn names_in_log(state: &ris_core::state::State) -> Vec<String> {
 
 /// What a seat's role rules out, checked before anything runs. An
 /// auditor reviews and never writes to the tree, so it cannot take,
-/// finish or merge an item, and has no worktree. Every other role may
+/// finish or merge an item, and has no worktree. An advisor works
+/// beside the person: it reads, adds items, sends messages and raises
+/// decisions for the person, and is refused everything else, by a list
+/// of what it may do rather than of what it may not, so a command added
+/// later is refused to it until it is listed. A lead and a builder may
 /// do everything; the core separately refuses anyone auditing an item
 /// they authored.
 fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), CliError> {
-    let is_auditor = |seat: &str| {
-        p.config
-            .agents
-            .get(seat)
-            .is_some_and(|a| a.role == ris::config::Role::Auditor)
-    };
-    let refuse = |seat: &str, what: &'static str| {
+    use ris::config::Role;
+    let role_of = |seat: &str| p.config.agents.get(seat).map(|a| a.role);
+    let refuse = |seat: &str, role: Role, what: &'static str| {
         Err(CliError::RoleForbids {
             seat: seat.to_owned(),
-            role: "auditor",
+            role: role.as_str(),
             what,
         })
     };
     if let Cmd::Worktree { seat } = command
-        && is_auditor(seat)
+        && let Some(role) = role_of(seat)
+        && !role.writes()
     {
         return refuse(
             seat,
+            role,
             "need a worktree: it reads the main checkout and never writes",
         );
     }
     let Actor::Agent(name) = actor else {
         return Ok(());
     };
-    if !is_auditor(&name.0) {
-        return Ok(());
-    }
-    match command {
-        Cmd::Claim { .. } => refuse(&name.0, "claim items"),
-        Cmd::Done { .. } => refuse(&name.0, "finish items"),
-        Cmd::Merge { .. } => refuse(&name.0, "merge items"),
+    match role_of(&name.0) {
+        Some(Role::Auditor) => match command {
+            Cmd::Claim { .. } => refuse(&name.0, Role::Auditor, "claim items"),
+            Cmd::Done { .. } => refuse(&name.0, Role::Auditor, "finish items"),
+            Cmd::Merge { .. } => refuse(&name.0, Role::Auditor, "merge items"),
+            _ => Ok(()),
+        },
+        Some(Role::Advisor) => match advisor_forbids(command) {
+            Some(what) => refuse(&name.0, Role::Advisor, what),
+            None => Ok(()),
+        },
         _ => Ok(()),
+    }
+}
+
+/// What an advisor may not do with `command`, or `None` when it may:
+/// read, add an item, send a message, raise a substantive decision and
+/// explain it. A mechanical decision is taken as it is raised, which is
+/// deciding, so an advisor raises only substantive ones.
+fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
+    match command {
+        Cmd::Ready
+        | Cmd::Inbox
+        | Cmd::Show { .. }
+        | Cmd::Summary
+        | Cmd::Report
+        | Cmd::Status
+        | Cmd::Verify
+        | Cmd::Eli5 { .. }
+        | Cmd::Rules
+        | Cmd::Logs { .. }
+        | Cmd::Log { .. }
+        | Cmd::Watch { .. }
+        | Cmd::Scan { .. }
+        | Cmd::Audit { item: None }
+        | Cmd::Send { .. }
+        | Cmd::Item {
+            action: ItemCmd::Add(_),
+        }
+        | Cmd::Decision {
+            action: DecisionCmd::Explain(_),
+        } => None,
+        Cmd::Decision {
+            action: DecisionCmd::Raise(d),
+        } => (!d.substantive)
+            .then_some("take a decision: raise it with --substantive, for the person to take"),
+        Cmd::Claim { .. } => Some("claim items"),
+        Cmd::Done { .. } => Some("finish items"),
+        Cmd::Merge { .. } => Some("merge items"),
+        Cmd::Decide { .. } => Some("take decisions"),
+        Cmd::Release { .. } => Some("release items"),
+        Cmd::Audit { item: Some(_) } => Some("record reviews"),
+        Cmd::Check { .. } => Some("run checks"),
+        _ => Some("change the harness"),
     }
 }
 
@@ -1896,7 +1940,7 @@ fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) ->
     };
     let mut lines = Vec::new();
     for s in ris::status::seats(p, l) {
-        if !named.contains(&s.seat) || s.role == ris::config::Role::Auditor {
+        if !named.contains(&s.seat) || !s.role.writes() {
             continue;
         }
         // Only a seat on its own branch in its own worktree: a lead at

@@ -156,3 +156,13 @@ diff and the evidence against the goal, the decisions that touch it and
 these rules, and reads the item's mechanical decisions for any that
 should have been substantive. Findings go to the author as messages; a
 finding the author disputes is raised as a substantive decision.
+
+## The advisor's seat
+
+An advisor works beside the person and never writes to the tree. It
+reads, adds items (`ris item add`), sends messages (`ris send`), and
+puts judgements to the person (`ris decision raise --substantive`, then
+`ris decision explain`). `ris` refuses it everything else: claiming,
+finishing, merging, releasing, deciding, a mechanical decision (which
+is taken as it is raised), recording a review, running checks, and any
+command that changes the harness.

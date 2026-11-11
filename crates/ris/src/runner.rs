@@ -48,6 +48,8 @@ pub fn allowlist(role: Role, checks: &ChecksConfig, extra: &[String]) -> Vec<Str
             );
         }
         Role::Auditor => out.extend(AUDIT.iter().map(|s| (*s).to_owned())),
+        // Reading and `ris` only: everything it does goes through ris.
+        Role::Advisor => {}
     }
     for e in extra {
         if !out.contains(e) {
@@ -71,8 +73,15 @@ pub fn prompt(seat: &str, role: Role) -> String {
             "Work the loop: read `ris inbox`, take the next item from `ris ready` \
              with `ris claim` (its output is your brief), do it, run `ris done`, \
              commit once with the Item and Agent trailers, then `ris merge`. \
-             Repeat. Raise decisions and person actions as the rules say, and \
-             never take a substantive decision. "
+             Repeat. Raise decisions and items as the rules say, and never \
+             take a substantive decision. "
+        }
+        Role::Advisor => {
+            "Work beside the person: read `ris summary` and `ris inbox`; add \
+             what needs doing with `ris item add`, send what a seat should \
+             know with `ris send`, and put judgements to the person with \
+             `ris decision raise --substantive` and `ris decision explain`. \
+             Never claim, finish, merge or decide, and never write to the tree. "
         }
         Role::Auditor => {
             "Work through `ris audit`: for each item, read its diff and its \
@@ -258,7 +267,7 @@ pub fn render_line(line: &str) -> Option<String> {
 /// for a writing seat (a worktree's commits are stored there).
 pub fn writable(root: &Path, role: Role, git_dir: Option<PathBuf>) -> Vec<PathBuf> {
     let mut out = vec![root.join(crate::project::DIR)];
-    if role != Role::Auditor
+    if role.writes()
         && let Some(g) = git_dir
     {
         out.push(g);
@@ -367,11 +376,28 @@ mod tests {
 
     #[test]
     fn each_role_is_told_when_to_stop() {
-        for role in [Role::Lead, Role::Builder, Role::Auditor] {
+        for role in Role::ALL.iter().copied() {
             let p = prompt("rook", role);
             assert!(p.contains("RIS_AGENT is set to rook"), "{p}");
             assert!(p.contains("refused because you are paused"), "{p}");
+            assert!(!p.contains("person action"), "{p}");
         }
         assert!(prompt("wren", Role::Auditor).contains("Never write to the tree"));
+        assert!(prompt("kite", Role::Advisor).contains("never write to the tree"));
+    }
+
+    #[test]
+    fn an_advisor_reads_and_runs_ris_and_nothing_more() {
+        let a = allowlist(Role::Advisor, &checks(), &[]);
+        assert_eq!(a, READ.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        let w = writable(
+            Path::new("/r"),
+            Role::Advisor,
+            Some(PathBuf::from("/r/.git")),
+        );
+        assert_eq!(w, vec![PathBuf::from("/r/.osiris")]);
+        for role in Role::ALL.iter().copied() {
+            assert_eq!(Role::parse(role.as_str()), Some(role));
+        }
     }
 }

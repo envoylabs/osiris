@@ -157,15 +157,39 @@ pub enum Role {
     Lead,
     Builder,
     Auditor,
+    /// Works beside the person: adds items, sends messages and raises
+    /// decisions for the person, and nothing else.
+    Advisor,
+}
+
+impl Role {
+    pub const ALL: &[Role] = &[Self::Lead, Self::Builder, Self::Auditor, Self::Advisor];
+
+    /// The role's name, as configuration and output spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lead => "lead",
+            Self::Builder => "builder",
+            Self::Auditor => "auditor",
+            Self::Advisor => "advisor",
+        }
+    }
+
+    /// The role by its name.
+    pub fn parse(name: &str) -> Option<Role> {
+        Self::ALL.iter().copied().find(|r| r.as_str() == name)
+    }
+
+    /// Whether the seat writes to the tree: takes, finishes and merges
+    /// items, and so has a worktree and the git directory to commit to.
+    pub fn writes(self) -> bool {
+        matches!(self, Self::Lead | Self::Builder)
+    }
 }
 
 impl std::fmt::Display for Role {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Lead => "lead",
-            Self::Builder => "builder",
-            Self::Auditor => "auditor",
-        })
+        f.write_str(self.as_str())
     }
 }
 
