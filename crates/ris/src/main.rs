@@ -2248,10 +2248,18 @@ fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result
                 "{seat} has nowhere to work yet\n  next: `ris worktree {seat}`"
             ))
         })?;
-    let git_dir = git(&p.root, &["rev-parse", "--git-common-dir"])
-        .ok()
-        .map(|g| p.root.join(g));
-    let mut write: Vec<String> = ris::runner::writable(&p.root, cfg.role, git_dir)
+    let abs = |dir: &std::path::Path, what: &str| {
+        git(dir, &["rev-parse", "--path-format=absolute", what])
+            .ok()
+            .map(PathBuf::from)
+    };
+    let git_dirs = abs(&dir, "--git-common-dir").map(|common| {
+        // The seat's own entry under worktrees/, when its directory is
+        // a linked worktree rather than the main checkout.
+        let own = abs(&dir, "--git-dir").filter(|g| *g != common);
+        ris::runner::GitDirs { common, own }
+    });
+    let mut write: Vec<String> = ris::runner::writable(&p.root, cfg.role, git_dirs.as_ref())
         .iter()
         .map(|w| w.display().to_string())
         .collect();
@@ -2264,7 +2272,10 @@ fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result
         .cloned()
         .unwrap_or_default();
     let allow = ris::runner::allowlist(cfg.role, &p.checks, &extra);
-    let protected = ris::runner::protected(&p.root, &p.rules_path(), &dir);
+    let mut protected = ris::runner::protected(&p.root, &p.rules_path(), &dir);
+    if let Some(g) = &git_dirs {
+        protected.extend(ris::runner::git_protected(g, &dir));
+    }
     let deny = ris::runner::deny_edits(&protected);
     let protected: Vec<String> = protected.iter().map(|w| w.display().to_string()).collect();
     let settings = ris::runner::sandbox_settings(&write, &protected, &p.config.runner.network);

@@ -281,15 +281,85 @@ pub fn render_line(line: &str) -> Option<String> {
     }
 }
 
+/// Where a seat's git data lives: the repository's common git
+/// directory, and the seat's own entry under its `worktrees/` when the
+/// seat works in a linked worktree (`None` in the main checkout).
+pub struct GitDirs {
+    pub common: PathBuf,
+    pub own: Option<PathBuf>,
+}
+
+/// What a commit, a rebase and a merge write in the common git
+/// directory, besides its `objects/`, `refs/` and `logs/`: the main
+/// checkout's state files and their lock files, and automatic garbage
+/// collection's own files. None of them is run or read as
+/// configuration. `hooks/`, `config` and `info/` are not among them.
+const GIT_STATE: &[&str] = &[
+    "packed-refs",
+    "index",
+    "HEAD",
+    "ORIG_HEAD",
+    "FETCH_HEAD",
+    "COMMIT_EDITMSG",
+    "MERGE_HEAD",
+    "MERGE_MSG",
+    "MERGE_MODE",
+    "AUTO_MERGE",
+    "REBASE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "gc.pid",
+    "gc.log",
+];
+
+/// Directories in the common git directory a writing seat needs whole.
+const GIT_TREES: &[&str] = &[
+    "objects",
+    "refs",
+    "logs",
+    "rebase-merge",
+    "rebase-apply",
+    "sequencer",
+];
+
 /// The paths a seat's agent must be able to write besides its own
-/// directory: the shared store, and the repository's git directory
-/// for a writing seat (a worktree's commits are stored there).
-pub fn writable(root: &Path, role: Role, git_dir: Option<PathBuf>) -> Vec<PathBuf> {
+/// directory: the shared store, and for a writing seat what git writes
+/// to commit, rebase and merge: objects, refs, logs, the state files
+/// and the seat's own worktree entry. Never the git directory whole,
+/// whose `hooks/` and `config` run outside the sandbox the next time
+/// git runs as the person.
+pub fn writable(root: &Path, role: Role, git: Option<&GitDirs>) -> Vec<PathBuf> {
     let mut out = vec![root.join(crate::project::DIR)];
     if role.writes()
-        && let Some(g) = git_dir
+        && let Some(g) = git
     {
-        out.push(g);
+        out.extend(GIT_TREES.iter().map(|d| g.common.join(d)));
+        for f in GIT_STATE {
+            out.push(g.common.join(f));
+            out.push(g.common.join(format!("{f}.lock")));
+        }
+        out.extend(g.own.clone());
+    }
+    out
+}
+
+/// What in the git directories a seat must never write, though it may
+/// write around them: what git runs or reads as configuration (`hooks/`,
+/// `config`, `config.worktree`, `info/`, submodules' git directories),
+/// the links that say where a worktree's git directory is (its entry's
+/// `commondir` and `gitdir`, and the `.git` file in the seat's own
+/// directory), so a seat cannot point git at a directory of its own.
+pub fn git_protected(git: &GitDirs, dir: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = ["hooks", "config", "config.worktree", "info", "modules"]
+        .iter()
+        .map(|f| git.common.join(f))
+        .collect();
+    if let Some(own) = &git.own {
+        out.extend(
+            ["config.worktree", "commondir", "gitdir"]
+                .iter()
+                .map(|f| own.join(f)),
+        );
+        out.push(dir.join(".git"));
     }
     out
 }
@@ -426,14 +496,64 @@ mod tests {
     fn an_advisor_reads_and_runs_ris_and_nothing_more() {
         let a = allowlist(Role::Advisor, &checks(), &[]);
         assert_eq!(a, READ.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
-        let w = writable(
-            Path::new("/r"),
-            Role::Advisor,
-            Some(PathBuf::from("/r/.git")),
-        );
+        let g = GitDirs {
+            common: PathBuf::from("/r/.git"),
+            own: None,
+        };
+        let w = writable(Path::new("/r"), Role::Advisor, Some(&g));
         assert_eq!(w, vec![PathBuf::from("/r/.osiris")]);
         for role in Role::ALL.iter().copied() {
             assert_eq!(Role::parse(role.as_str()), Some(role));
         }
+    }
+
+    #[test]
+    fn a_writing_seat_writes_what_git_commits_need_and_never_hooks_or_config() {
+        let g = GitDirs {
+            common: PathBuf::from("/r/.git"),
+            own: Some(PathBuf::from("/r/.git/worktrees/r-rook")),
+        };
+        let w = writable(Path::new("/r"), Role::Builder, Some(&g));
+        for want in [
+            "/r/.git/objects",
+            "/r/.git/refs",
+            "/r/.git/logs",
+            "/r/.git/packed-refs.lock",
+            "/r/.git/worktrees/r-rook",
+        ] {
+            assert!(w.contains(&PathBuf::from(want)), "{want} in {w:?}");
+        }
+        assert!(
+            !w.contains(&g.common),
+            "never the git directory whole: {w:?}"
+        );
+        for w in &w {
+            assert!(
+                !w.starts_with("/r/.git/hooks")
+                    && !w.starts_with("/r/.git/config")
+                    && !w.starts_with("/r/.git/info")
+                    && !w.starts_with("/r/.git/worktrees/r-heron"),
+                "{} is writable",
+                w.display()
+            );
+        }
+        let d = git_protected(&g, Path::new("/r-rook"));
+        for want in [
+            "/r/.git/hooks",
+            "/r/.git/config",
+            "/r/.git/info",
+            "/r/.git/worktrees/r-rook/commondir",
+            "/r/.git/worktrees/r-rook/gitdir",
+            "/r/.git/worktrees/r-rook/config.worktree",
+            "/r-rook/.git",
+        ] {
+            assert!(d.contains(&PathBuf::from(want)), "{want} in {d:?}");
+        }
+        // In the main checkout there is no worktree entry to protect.
+        let main = GitDirs {
+            common: PathBuf::from("/r/.git"),
+            own: None,
+        };
+        assert!(!git_protected(&main, Path::new("/r")).contains(&PathBuf::from("/r/.git")));
     }
 }

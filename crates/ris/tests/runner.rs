@@ -151,7 +151,24 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
         .map(|v| v.as_str().unwrap())
         .collect();
     assert!(write.iter().any(|w| w.ends_with("/.osiris")), "{write:?}");
-    assert!(write.iter().any(|w| w.ends_with(".git")), "{write:?}");
+    // What a commit needs in the git directory, never the directory
+    // whole: its hooks and config run outside the sandbox the next time
+    // git runs as the person.
+    assert!(!write.iter().any(|w| w.ends_with(".git")), "{write:?}");
+    for w in [
+        ".git/objects",
+        ".git/refs",
+        ".git/logs",
+        ".git/worktrees/repo-rook",
+    ] {
+        assert!(write.iter().any(|x| x.ends_with(w)), "{w} in {write:?}");
+    }
+    assert!(
+        !write
+            .iter()
+            .any(|w| w.contains(".git/hooks") || w.contains(".git/config")),
+        "{write:?}"
+    );
     assert!(write.contains(&"~/.cargo"), "{write:?}");
     // The files that set its limits are denied, at both levels.
     let deny_write: Vec<&str> = settings["sandbox"]["filesystem"]["denyWrite"]
@@ -178,6 +195,12 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
         "repo-rook/CLAUDE.md",
         "repo-rook/CLAUDE.local.md",
         "repo-rook/OSIRIS.md",
+        ".git/hooks",
+        ".git/config",
+        ".git/info",
+        ".git/worktrees/repo-rook/commondir",
+        ".git/worktrees/repo-rook/gitdir",
+        "repo-rook/.git",
     ] {
         assert!(
             deny_write.iter().any(|w| w.ends_with(f)),
