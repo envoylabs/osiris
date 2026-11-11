@@ -150,12 +150,13 @@ An unattended agent may do only what its role allows: reading and
 commands; for an auditor, reading history. Anything else is refused
 rather than asked, and the agent tool's sandbox keeps it to its own
 directory and the shared store, with no network beyond `[runner]`.
-A fourth role, `advisor` (`ris seat add kite --role advisor`), is for
-an assistant working beside you: it reads, adds items, sends messages
-and raises decisions for you, and `ris` refuses it everything else.
 It can never write the files that set its limits: the configuration,
 the checks and the rules. Each run's output is kept under
 `.osiris/runs/`, and its start and stop are in the log.
+
+A fourth role, `advisor` (`ris seat add kite --role advisor`), is for
+an assistant working beside you: it reads, adds items, sends messages
+and raises decisions for you, and `ris` refuses it everything else.
 
 To run an agent yourself instead, start it in its seat's directory with
 its name set: `cd ../your-repo-rook && RIS_AGENT=rook claude`.
