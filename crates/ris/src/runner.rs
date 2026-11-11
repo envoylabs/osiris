@@ -320,9 +320,11 @@ pub fn latest_run(runs: &Path, seat: &str) -> Option<PathBuf> {
 /// What a run last did, from its output: the last line of the last
 /// record with anything to read (a tool it ran, or what it said), on
 /// one line and cut to `width` characters. `None` before it has said
-/// anything.
+/// anything. Only complete lines count: a running seat's file may end
+/// in a record still being written, which would show as raw JSON.
 pub fn last_activity(text: &str, width: usize) -> Option<String> {
-    let shown = text.lines().rev().find_map(render_line)?;
+    let (complete, _) = lines_from(text, 0, false);
+    let shown = complete.into_iter().rev().find_map(render_line)?;
     let last = shown.lines().rev().find(|l| !l.trim().is_empty())?.trim();
     Some(if last.chars().count() > width {
         let cut: String = last.chars().take(width.saturating_sub(1)).collect();
@@ -510,6 +512,20 @@ mod tests {
         assert_eq!(last_activity(&run, 8).as_deref(), Some("→ Bash …"));
         assert_eq!(last_activity(user, 80), None);
         assert_eq!(last_activity("", 80), None);
+    }
+
+    /// A record still being written at the end of a live run file is
+    /// not shown: the activity is the last complete record's.
+    #[test]
+    fn a_half_written_last_record_is_not_the_activity() {
+        let said = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ris claim I-3"}}]}}"#;
+        let partial = r#"{"type":"assistant","message":{"content":[{"ty"#;
+        let run = format!("{said}\n{partial}");
+        assert_eq!(
+            last_activity(&run, 80).as_deref(),
+            Some("→ Bash ris claim I-3")
+        );
+        assert_eq!(last_activity(partial, 80), None);
     }
 
     /// A seat's latest run is its highest-numbered run file; another
