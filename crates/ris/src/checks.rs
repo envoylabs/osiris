@@ -71,15 +71,53 @@ pub fn run_check_quietly(dir: &Path, check: &CheckConfig) -> Result<(bool, Strin
     Ok((out.status.success(), text))
 }
 
+/// How a command run under a time limit ended.
+#[derive(Debug)]
+pub enum Limited {
+    /// It ended within the limit: whether it exited zero, and its
+    /// combined output.
+    Finished(bool, Vec<u8>),
+    /// It ran past the limit and was stopped. `kill_fault` is what went
+    /// wrong when stopping its process group, if anything did: with a
+    /// fault, what the command started may still be running.
+    TimedOut { kill_fault: Option<String> },
+}
+
+/// Send KILL to the process group `pgid` with `program`, a `kill`
+/// program. `None` when it exits zero; otherwise why the group may
+/// still be running: that the program could not be run, or its exit
+/// status and what it printed on stderr.
+fn kill_group(program: &str, pgid: u32) -> Option<String> {
+    // The signal is named with `-s` and the negative pid follows `--`,
+    // the form POSIX specifies for a process group: util-linux and
+    // procps `kill`, as found on Linux, may read a bare `-<pid>` as an
+    // option or a signal number, while macOS's `kill` accepts either
+    // form.
+    let args = ["-s", "KILL", "--", &format!("-{pgid}")];
+    match Command::new(program).args(args).output() {
+        Err(e) => Some(format!("`{program}` could not be run: {e}")),
+        Ok(out) if out.status.success() => None,
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let mut fault = format!("`{program} {}` ended with {}", args.join(" "), out.status);
+            if !stderr.trim().is_empty() {
+                fault.push_str(": ");
+                fault.push_str(stderr.trim());
+            }
+            Some(fault)
+        }
+    }
+}
+
 /// Run `command` with `sh -c` in `dir`, with no input, for at most
-/// `limit`. Its exit status and combined output, or `None` when it ran
-/// past the limit: then it is killed with everything it started (it
-/// runs in a process group of its own), and what it printed is dropped.
+/// `limit`. When it runs past the limit it is killed with everything it
+/// started (it runs in a process group of its own), and what it printed
+/// is dropped.
 pub fn run_limited(
     dir: &Path,
     command: &str,
     limit: std::time::Duration,
-) -> Result<Option<(bool, Vec<u8>)>, CliError> {
+) -> Result<Limited, CliError> {
     use std::io::Read;
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
@@ -116,21 +154,15 @@ pub fn run_limited(
     };
     let Some(status) = status else {
         // The whole group, so a child the shell started (which holds
-        // the pipes open) goes too. The signal is named with `-s` and
-        // the negative pid follows `--`, the form POSIX specifies for a
-        // process group: util-linux and procps `kill`, as found on
-        // Linux, may read a bare `-<pid>` as an option or a signal
-        // number, while macOS's `kill` accepts either form.
-        let _ = Command::new("kill")
-            .args(["-s", "KILL", "--", &format!("-{}", child.id())])
-            .status();
+        // the pipes open) goes too.
+        let kill_fault = kill_group("kill", child.id());
         let _ = child.kill();
         let _ = child.wait();
-        return Ok(None);
+        return Ok(Limited::TimedOut { kill_fault });
     };
     let mut bytes = out.join().unwrap_or_default();
     bytes.extend(err.join().unwrap_or_default());
-    Ok(Some((status.success(), bytes)))
+    Ok(Limited::Finished(status.success(), bytes))
 }
 
 /// `git rev-parse HEAD` in `root`.
@@ -223,6 +255,53 @@ pub fn require_agent_trailer(message: &str, agent: &str, commit: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // No group has this id: it is above the largest pid Linux or macOS
+    // gives out, so a program that did act on it would reach nothing.
+    const NO_GROUP: u32 = 0x7fff_fff0;
+
+    #[test]
+    fn a_kill_program_that_cannot_be_run_is_reported() {
+        let fault = kill_group("ris-test-no-such-kill-program", NO_GROUP).expect("a fault");
+        assert!(fault.contains("ris-test-no-such-kill-program"), "{fault}");
+        assert!(fault.contains("could not be run"), "{fault}");
+    }
+
+    #[test]
+    fn a_kill_program_that_fails_is_reported_with_its_status_and_stderr() {
+        // `ls` stands in for a `kill` that rejects its arguments: it
+        // reads `KILL` and the group as files that are not there, exits
+        // non-zero and says so on stderr.
+        let fault = kill_group("ls", NO_GROUP).expect("a fault");
+        assert!(fault.contains("`ls -s KILL -- -2147483632`"), "{fault}");
+        assert!(fault.contains("exit status"), "{fault}");
+        // What `ls` printed on stderr, after the command and its status.
+        let stderr = fault.rsplit_once("ended with").expect("a status").1;
+        assert!(stderr.contains("ls:"), "{fault}");
+    }
+
+    #[test]
+    fn the_real_kill_reports_a_group_that_is_not_there() {
+        let fault = kill_group("kill", NO_GROUP).expect("a fault");
+        assert!(fault.contains("ended with"), "{fault}");
+    }
+
+    #[test]
+    fn a_command_stopped_at_its_limit_reports_no_fault_when_the_kill_works() {
+        let dir = std::env::temp_dir();
+        let limit = std::time::Duration::from_millis(200);
+        match run_limited(&dir, "sleep 30", limit).unwrap() {
+            Limited::TimedOut { kill_fault } => assert_eq!(kill_fault, None),
+            Limited::Finished(..) => panic!("sleep 30 ended within 200ms"),
+        }
+        match run_limited(&dir, "echo hi", std::time::Duration::from_secs(10)).unwrap() {
+            Limited::Finished(passed, out) => {
+                assert!(passed);
+                assert_eq!(out, b"hi\n");
+            }
+            Limited::TimedOut { .. } => panic!("echo ran past 10s"),
+        }
+    }
 
     #[test]
     fn the_agent_trailer_names_the_author() {

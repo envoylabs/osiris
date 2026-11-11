@@ -2100,12 +2100,21 @@ fn close_checked(p: &mut Project, actor: &Actor) -> Result<Vec<String>, CliError
     let mut lines = Vec::new();
     let limit = std::time::Duration::from_secs(p.config.action_check_seconds);
     for (id, check) in open {
-        let Some((passed, output)) = checks::run_limited(&p.root, &check, limit)? else {
-            lines.push(format!(
-                "{id}: its check ran past {}s, so it does not pass yet",
-                limit.as_secs()
-            ));
-            continue;
+        let (passed, output) = match checks::run_limited(&p.root, &check, limit)? {
+            checks::Limited::Finished(passed, output) => (passed, output),
+            checks::Limited::TimedOut { kill_fault } => {
+                let mut line = format!(
+                    "{id}: its check ran past {}s, so it does not pass yet",
+                    limit.as_secs()
+                );
+                if let Some(fault) = kill_fault {
+                    line.push_str(&format!(
+                        "\n  what it started may still be running: stopping it failed ({fault})"
+                    ));
+                }
+                lines.push(line);
+                continue;
+            }
         };
         if passed {
             let mut bytes = format!("$ {check}\n").into_bytes();
