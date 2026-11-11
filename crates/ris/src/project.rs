@@ -88,7 +88,7 @@ pub enum CliError {
     /// 2, like any refusal.
     RoleForbids {
         seat: String,
-        role: &'static str,
+        role: crate::config::Role,
         what: &'static str,
     },
     /// Two writers kept colliding; the caller may retry.
@@ -147,15 +147,27 @@ impl std::fmt::Display for CliError {
                 }
             ),
             Self::RoleForbids { seat, role, what } => {
-                let next = if *role == "advisor" {
-                    "`ris item add`, `ris send` or `ris decision raise --substantive`; \
-                     the person or a writing seat does this"
-                } else {
-                    "`ris audit` for the review queue; a builder or lead seat does this"
+                use crate::config::Role;
+                // Matched exhaustively, so a new role must say its own
+                // next step.
+                let (a, next) = match role {
+                    Role::Advisor => (
+                        "an",
+                        "`ris item add`, `ris send` or `ris decision raise --substantive`; \
+                         the person or a writing seat does this",
+                    ),
+                    Role::Auditor => (
+                        "an",
+                        "`ris audit` for the review queue; a builder or lead seat does this",
+                    ),
+                    Role::Lead | Role::Builder => (
+                        "a",
+                        "check the seat's role in .osiris/config.toml; `ris status` shows it",
+                    ),
                 };
                 write!(
                     f,
-                    "refused: {seat} is an {role}, and an {role} does not {what}\n  next: {next}"
+                    "refused: {seat} is {a} {role}, and {a} {role} does not {what}\n  next: {next}"
                 )
             }
             Self::Contended => write!(f, "the log kept moving under this command; try again"),
@@ -472,4 +484,38 @@ fn fresh_salt() -> Salt {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("the OS random source is available");
     Salt(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Role;
+
+    /// Each role's refusal names its own next step: only an auditor is
+    /// pointed at the review queue, only an advisor at what it may do.
+    #[test]
+    fn a_role_refusal_names_that_role_s_next_step() {
+        for &role in Role::ALL {
+            let text = CliError::RoleForbids {
+                seat: "kite".into(),
+                role,
+                what: "claim an item",
+            }
+            .to_string();
+            assert!(
+                text.contains(&format!("is an {role}")) || text.contains(&format!("is a {role}")),
+                "{text}"
+            );
+            assert!(
+                !text.contains("an lead") && !text.contains("an builder"),
+                "{text}"
+            );
+            assert_eq!(text.contains("ris audit"), role == Role::Auditor, "{text}");
+            assert_eq!(
+                text.contains("ris item add"),
+                role == Role::Advisor,
+                "{text}"
+            );
+        }
+    }
 }

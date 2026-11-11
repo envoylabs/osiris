@@ -463,7 +463,7 @@ fn error_envelope(e: &CliError) -> serde_json::Value {
         }
         CliError::RoleForbids { seat, role, .. } => {
             error["seat"] = json!(seat);
-            error["role"] = json!(role);
+            error["role"] = json!(role.as_str());
         }
         _ => {}
     }
@@ -1693,7 +1693,7 @@ fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), Cl
     let refuse = |seat: &str, role: Role, what: &'static str| {
         Err(CliError::RoleForbids {
             seat: seat.to_owned(),
-            role: role.as_str(),
+            role,
             what,
         })
     };
