@@ -240,6 +240,17 @@ enum ActionCmd {
         /// An item that proceeds and is shaped by it. Repeatable.
         #[arg(long = "informs")]
         informs: Vec<ItemId>,
+        /// A shell command that passes once it is done; the person's
+        /// check-ins run it and close the action. The person's only.
+        #[arg(long)]
+        check: Option<String>,
+    },
+    /// Give an open action a check: a shell command that passes once it
+    /// is done. The person's only.
+    Check {
+        action: ris_core::ids::ActionId,
+        #[arg(long)]
+        command: String,
     },
     /// Record a person action done, with evidence or a note. The
     /// person's only.
@@ -1073,7 +1084,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Inbox => Ok(render::inbox(&p.load()?, &actor)),
+        Cmd::Inbox => {
+            let closed = close_checked(&mut p, &actor)?;
+            Ok(with_checks(render::inbox(&p.load()?, &actor), closed))
+        }
 
         Cmd::Send {
             to,
@@ -1120,8 +1134,17 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     done_when,
                     blocks,
                     informs,
+                    check,
                 },
         } => {
+            // A check is a command the person's own ris runs, so only the
+            // person may give one; refuse before anything is written.
+            if check.is_some() && actor != Actor::Person {
+                return Err(CliError::Refused(ris_core::Refusal::ActionIsForThePerson(
+                    l_next_action(&p)?,
+                )));
+            }
+            let check = check.as_deref().map(|c| p.text("check", c)).transpose()?;
             let (l, events) = p.run(&Command::RaiseAction {
                 by: actor.clone(),
                 what: p.text("what", what)?,
@@ -1129,7 +1152,14 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 blocks: blocks.clone(),
                 informs: informs.clone(),
             })?;
-            let id = l.state.actions.keys().last().expect("just raised");
+            let id = *l.state.actions.keys().last().expect("just raised");
+            if let Some(check) = check {
+                p.run(&Command::SetActionCheck {
+                    action: id,
+                    by: actor.clone(),
+                    check,
+                })?;
+            }
             let blocked: Vec<String> = events
                 .iter()
                 .filter_map(|e| match &e.structure {
@@ -1186,7 +1216,29 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Summary => Ok(render::summary(&p.load()?, &actor)),
+        Cmd::Action {
+            action: ActionCmd::Check { action, command },
+        } => {
+            p.run(&Command::SetActionCheck {
+                action: *action,
+                by: actor.clone(),
+                check: p.text("check", command)?,
+            })?;
+            let closed = close_checked(&mut p, &actor)?;
+            Ok(Output::new(
+                if closed.is_empty() {
+                    format!("{action} has a check now")
+                } else {
+                    closed.join("\n")
+                },
+                json!({ "action": action.to_string(), "checks": closed }),
+            ))
+        }
+
+        Cmd::Summary => {
+            let closed = close_checked(&mut p, &actor)?;
+            Ok(with_checks(render::summary(&p.load()?, &actor), closed))
+        }
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 
@@ -1682,7 +1734,10 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
     } else {
         named.to_vec()
     };
-    let mut changed: Vec<String> = Vec::new();
+    let mut changed: Vec<String> = close_checked(p, actor)?
+        .into_iter()
+        .filter(|c| c.contains("closed itself"))
+        .collect();
     let l = p.load()?;
     let places = ris::status::seats(p, &l);
     for seat in &seats {
@@ -1747,6 +1802,63 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
         text,
         json!({ "changed": changed, "not_in_file": retired }),
     ))
+}
+
+/// The next action's id, for a refusal before one is raised.
+fn l_next_action(p: &Project) -> Result<ris_core::ids::ActionId, CliError> {
+    Ok(p.load()?.state.next_action_id())
+}
+
+/// Run the checks of open person actions, for the person only: their
+/// commands are the person's, run with the person's access. A passing
+/// check records the action done with its output as evidence; one that
+/// fails changes nothing. What happened, one line per action.
+fn close_checked(p: &mut Project, actor: &Actor) -> Result<Vec<String>, CliError> {
+    if *actor != Actor::Person {
+        return Ok(Vec::new());
+    }
+    let l = p.load()?;
+    let open: Vec<(ris_core::ids::ActionId, String)> = l
+        .state
+        .actions
+        .values()
+        .filter(|a| a.state == ris_core::primitives::ActionState::Open)
+        .filter_map(|a| a.check.map(|at| (a.id, l.text(at, "check").to_owned())))
+        .collect();
+    let mut lines = Vec::new();
+    for (id, check) in open {
+        let out = std::process::Command::new("sh")
+            .args(["-c", &check])
+            .current_dir(&p.root)
+            .stdin(std::process::Stdio::null())
+            .output()?;
+        if out.status.success() {
+            let mut bytes = format!("$ {check}\n").into_bytes();
+            bytes.extend(&out.stdout);
+            bytes.extend(&out.stderr);
+            let evidence = p.evidence.put(&bytes)?;
+            p.run(&Command::ActionDone {
+                action: id,
+                by: Actor::Person,
+                evidence: vec![evidence],
+                note: Some(p.text("note", "closed by its check")?),
+            })?;
+            lines.push(format!("{id} closed itself: its check passed"));
+        } else {
+            lines.push(format!("{id}: its check does not pass yet"));
+        }
+    }
+    Ok(lines)
+}
+
+/// An output with what the checks did, ahead of it.
+fn with_checks(out: Output, closed: Vec<String>) -> Output {
+    let mut json = out.json;
+    json["checks"] = json!(closed);
+    if closed.is_empty() {
+        return Output::new(out.text, json);
+    }
+    Output::new(format!("{}\n\n{}", closed.join("\n"), out.text), json)
 }
 
 /// `ris down`: pause each seat, so it finishes what it holds and its

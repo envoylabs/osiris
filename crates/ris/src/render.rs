@@ -162,6 +162,12 @@ fn action_block(l: &Loaded, a: &Action) -> String {
     if !a.informs.is_empty() {
         s.push_str(&format!("     informs: {}\n", ids(&a.informs)));
     }
+    if let Some(at) = a.check {
+        s.push_str(&format!(
+            "     check: {} (passes when it is done)\n",
+            l.text(at, "check")
+        ));
+    }
     match &a.state {
         ActionState::Open => s.push_str(&format!(
             "     open; when done: ris action done {} --note \"...\" or --evidence <file>\n",
@@ -197,6 +203,7 @@ fn action_json(l: &Loaded, a: &Action) -> Value {
         "blocks": a.blocks.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "informs": a.informs.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "state": match a.state { ActionState::Open => "open", ActionState::Done { .. } => "done" },
+        "check": a.check.map(|at| l.text(at, "check")),
     });
     if let ActionState::Done { at, evidence } = &a.state {
         v["note"] = json!(l.log_text(*at, "note"));

@@ -125,6 +125,11 @@ pub enum Structure {
         blocks: Vec<ItemId>,
         informs: Vec<ItemId>,
     },
+    /// The person gave the action a check: a shell command that passes
+    /// once the action is done. The text part carries `check`.
+    ActionCheckSet {
+        action: ActionId,
+    },
     /// The person did it. The text part carries `note`, if given.
     ActionDone {
         action: ActionId,

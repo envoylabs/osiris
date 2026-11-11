@@ -157,3 +157,91 @@ fn an_action_blocks_and_informs_and_only_the_person_does_it() {
     ok(&dir, heron, &["claim", "I-1"]);
     ok(&dir, None, &["verify"]);
 }
+
+/// An action with a check closes itself at the person's next check-in
+/// once the check passes; only the person gives an action a check,
+/// since the person's own ris runs it.
+#[test]
+fn an_action_with_a_check_closes_itself_at_a_check_in() {
+    let dir = std::env::temp_dir().join(format!("ris-action-check-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    ok(&dir, None, &["init"]);
+    let config = dir.join(".osiris/config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)
+            .unwrap()
+            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace("phase_branches = true", "phase_branches = false"),
+    )
+    .unwrap();
+    ok(&dir, None, &["phase", "open", "checks"]);
+    ok(&dir, None, &["item", "add", "needs the seat"]);
+
+    // An agent may raise an action, but not give it a check.
+    let r = ris(
+        &dir,
+        Some("heron"),
+        &[
+            "action",
+            "raise",
+            "add rook",
+            "--done-when",
+            "it is there",
+            "--check",
+            "true",
+        ],
+    );
+    assert_eq!(r.status.code(), Some(2));
+    ok(
+        &dir,
+        Some("heron"),
+        &[
+            "action",
+            "raise",
+            "add rook",
+            "--done-when",
+            "rook is in the config",
+            "--blocks",
+            "I-1",
+        ],
+    );
+    let r = ris(
+        &dir,
+        Some("heron"),
+        &["action", "check", "A-1", "--command", "true"],
+    );
+    assert_eq!(r.status.code(), Some(2));
+
+    // The person gives it a check that does not pass yet.
+    let out = ok(
+        &dir,
+        None,
+        &[
+            "action",
+            "check",
+            "A-1",
+            "--command",
+            "grep -q rook .osiris/config.toml",
+        ],
+    );
+    assert!(out.contains("A-1: its check does not pass yet"), "{out}");
+    assert!(ok(&dir, None, &["show", "A-1"]).contains("check: grep -q rook"));
+
+    // Once it is true, the next check-in closes it and frees I-1.
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(&config, format!("{c}\n[agents.rook]\nrole = \"builder\"\n")).unwrap();
+    let out = ok(&dir, None, &["summary"]);
+    assert!(
+        out.starts_with("A-1 closed itself: its check passed"),
+        "{out}"
+    );
+    let a = json(&dir, &["show", "A-1"]);
+    assert_eq!(a["state"], "done");
+    assert_eq!(a["note"], "closed by its check");
+    assert_eq!(a["evidence"].as_array().unwrap().len(), 1);
+    assert_eq!(json(&dir, &["show", "I-1"])["state"], "ready");
+    // Nothing more to run.
+    assert_eq!(json(&dir, &["inbox"])["checks"], serde_json::json!([]));
+}

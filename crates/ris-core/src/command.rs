@@ -111,6 +111,14 @@ pub enum Command {
         blocks: Vec<ItemId>,
         informs: Vec<ItemId>,
     },
+    /// Give an open action a check: a shell command that passes once it
+    /// is done. The person's only, since the person's own commands run
+    /// it, outside any agent's sandbox.
+    SetActionCheck {
+        action: ActionId,
+        by: Actor,
+        check: Text,
+    },
     /// Record a person action done, with evidence or a note. The
     /// person's only.
     ActionDone {
@@ -181,6 +189,7 @@ impl Command {
             Self::RunStop { .. } => CommandKind::RunStop,
             Self::RaiseAction { .. } => CommandKind::RaiseAction,
             Self::ActionDone { .. } => CommandKind::ActionDone,
+            Self::SetActionCheck { .. } => CommandKind::SetActionCheck,
             Self::Pause { .. } => CommandKind::Pause,
             Self::Resume { .. } => CommandKind::Resume,
         }
@@ -289,6 +298,31 @@ fn decision_move(
             command,
         },
     )
+}
+
+/// Look the action's move up in the table, or refuse.
+fn action_move(
+    state: &State,
+    action: ActionId,
+    command: CommandKind,
+) -> Result<Move<ActionStateKind>, Refusal> {
+    let a = state
+        .actions
+        .get(&action)
+        .ok_or(Refusal::UnknownAction(action))?;
+    let k = match a.state {
+        ActionState::Open => ActionStateKind::Open,
+        ActionState::Done { .. } => ActionStateKind::Done,
+    };
+    transitions::lookup(transitions::ACTION, k, command).ok_or(Refusal::IllegalActionTransition {
+        action,
+        state: if k == ActionStateKind::Open {
+            "open"
+        } else {
+            "done"
+        },
+        command,
+    })
 }
 
 /// `H("ris-report-v1" || previous report || log head)`.
@@ -668,6 +702,19 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             Ok(effects)
         }
 
+        Command::SetActionCheck { action, by, check } => {
+            action_move(state, *action, kind)?;
+            if *by != Actor::Person {
+                return Err(Refusal::ActionIsForThePerson(*action));
+            }
+            if check.as_str().trim().is_empty() {
+                return Err(Refusal::MalformedAction);
+            }
+            Ok(vec![
+                Effect::new(Structure::ActionCheckSet { action: *action }).with("check", check),
+            ])
+        }
+
         Command::ActionDone {
             action,
             by,
@@ -1004,6 +1051,7 @@ mod tests {
             | CommandKind::Pause
             | CommandKind::Resume
             | CommandKind::ActionDone
+            | CommandKind::SetActionCheck
             | CommandKind::RunStart
             | CommandKind::RunStop
             | CommandKind::MessageSend => return None,

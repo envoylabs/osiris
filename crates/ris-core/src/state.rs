@@ -348,6 +348,7 @@ impl State {
                         at: seq,
                         blocks: blocks.clone(),
                         informs: informs.clone(),
+                        check: None,
                         state: crate::primitives::ActionState::Open,
                     },
                 );
@@ -358,6 +359,15 @@ impl State {
                         .or_default()
                         .push(*action);
                 }
+            }
+            Structure::ActionCheckSet { action } => {
+                self.actions
+                    .get_mut(action)
+                    .ok_or(FoldError::UnknownAction {
+                        seq,
+                        action: *action,
+                    })?
+                    .check = Some(seq);
             }
             Structure::ActionDone { action, evidence } => {
                 let a = self

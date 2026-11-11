@@ -47,6 +47,8 @@ pub enum CommandKind {
     /// The person recording an action done; items blocked only on it
     /// return to ready.
     ActionDone,
+    /// The person giving an open action a check that closes it.
+    SetActionCheck,
 }
 
 impl CommandKind {
@@ -71,6 +73,7 @@ impl CommandKind {
         Self::Resume,
         Self::RaiseAction,
         Self::ActionDone,
+        Self::SetActionCheck,
         Self::RunStart,
         Self::RunStop,
     ];
@@ -213,7 +216,10 @@ pub const ACTION: &[(ActionStateKind, CommandKind, Move<ActionStateKind>)] = {
     use ActionStateKind as S;
     use CommandKind as C;
     // Done: nothing. Final.
-    &[(S::Open, C::ActionDone, Move::To(S::Done))]
+    &[
+        (S::Open, C::ActionDone, Move::To(S::Done)),
+        (S::Open, C::SetActionCheck, Move::Stay),
+    ]
 };
 
 /// Look up a move. `None` is a refusal.

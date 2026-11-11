@@ -115,6 +115,8 @@ pub struct Action {
     pub blocks: Vec<ItemId>,
     /// Items that proceed without it and are shaped by it.
     pub informs: Vec<ItemId>,
+    /// The event that gave it a check, whose text part holds `check`.
+    pub check: Option<u64>,
     pub state: ActionState,
 }
 
