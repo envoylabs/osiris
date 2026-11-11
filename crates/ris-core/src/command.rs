@@ -1609,7 +1609,7 @@ mod tests {
         );
         assert_eq!(h.state.items[&ItemId(2)].state, ItemState::Ready);
         assert_eq!(h.state.actions_about(ItemId(2)), &[a]);
-        // A substantive decision also blocks I-1: both must clear.
+        // A second action also blocks I-1: both must clear.
         h.must(Command::RaiseAction {
             by: Actor::Person,
             what: t("run the trial"),
@@ -1644,6 +1644,58 @@ mod tests {
         assert_eq!(h.state.items[&ItemId(1)].state, ItemState::Ready);
         assert_eq!(h.state.check_index(), Ok(()));
         assert_eq!(State::fold(&h.log).unwrap(), h.state);
+    }
+
+    /// An item blocked on a decision and an action together becomes
+    /// ready only when both have cleared, in either order.
+    #[test]
+    fn a_decision_and_an_action_together_must_both_clear() {
+        let a = crate::ids::ActionId(1);
+        let d = DecisionId(1);
+        for decision_first in [true, false] {
+            // I-1 is claimed and set aside on D-1, a substantive decision.
+            let mut h = item_in(ItemStateKind::Blocked);
+            h.must(Command::RaiseAction {
+                by: Actor::Person,
+                what: t("run the trial"),
+                done_when: t("the transcript is attached"),
+                blocks: vec![ItemId(1)],
+                informs: vec![],
+            });
+            assert_eq!(
+                h.state.items[&ItemId(1)].state,
+                ItemState::Blocked {
+                    on: vec![Blocker::Decision(d), Blocker::Action(a)]
+                }
+            );
+            let decide = Command::Decide {
+                decision: d,
+                by: Actor::Person,
+                chosen: Choice::Option(0),
+                rationale: t("a"),
+            };
+            let done = Command::ActionDone {
+                action: a,
+                by: Actor::Person,
+                evidence: vec![],
+                note: Some(t("ran it")),
+            };
+            let (first, second, left) = if decision_first {
+                (decide, done, Blocker::Action(a))
+            } else {
+                (done, decide, Blocker::Decision(d))
+            };
+            h.must(first);
+            assert_eq!(
+                h.state.items[&ItemId(1)].state,
+                ItemState::Blocked { on: vec![left] },
+                "decision first: {decision_first}"
+            );
+            h.must(second);
+            assert_eq!(h.state.items[&ItemId(1)].state, ItemState::Ready);
+            assert_eq!(h.state.check_index(), Ok(()));
+            assert_eq!(State::fold(&h.log).unwrap(), h.state);
+        }
     }
 
     #[test]
