@@ -114,18 +114,37 @@ pub fn sandbox_settings(write: &[String], protected: &[String], network: &[Strin
     .to_string()
 }
 
+/// The rules files an agent tool loads from a directory, by name: what
+/// osiris writes (`OSIRIS.md`, and `CLAUDE.local.md` importing it) and
+/// what a project may use instead (`AGENTS.md`, `CLAUDE.md`, and
+/// `.claude/CLAUDE.md`).
+pub const RULES_FILES: &[&str] = &[
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".claude/CLAUDE.md",
+    crate::project::LOCAL_IMPORT_FILE,
+    crate::project::RULES_FILE,
+];
+
 /// The files that set an agent's limits, which it must never write:
 /// the configuration (its allowlist, sandbox and denylist), the
-/// checks, and the rules it reads. The store and evidence beside them
+/// checks, and every rules file an agent loads, in the main checkout,
+/// in the seat's own directory and inside `.osiris/`, whether or not it
+/// exists, so a seat can neither edit the rules in force nor create a
+/// file that would take precedence. The store and evidence beside them
 /// stay writable; the chain shows any tampering with the store.
 pub fn protected(root: &Path, rules: &Path, dir: &Path) -> Vec<PathBuf> {
     let osiris = root.join(crate::project::DIR);
     let mut out = vec![
         osiris.join("config.toml"),
         osiris.join("checks.toml"),
+        osiris.join(crate::project::RULES_FILE),
         rules.to_path_buf(),
-        dir.join(crate::project::LOCAL_IMPORT_FILE),
     ];
+    for base in [root, dir] {
+        out.extend(RULES_FILES.iter().map(|f| base.join(f)));
+    }
+    out.sort();
     out.dedup();
     out
 }
@@ -372,6 +391,23 @@ mod tests {
         ] {
             assert!(d.contains(&want.to_owned()), "{want} in {d:?}");
         }
+        // Every rules file an agent loads, in both places, whatever the
+        // rules path is and whether or not the files exist.
+        let p = protected(
+            Path::new("/r"),
+            Path::new("/r/OSIRIS.md"),
+            Path::new("/r-rook"),
+        );
+        for base in ["/r", "/r-rook"] {
+            for f in RULES_FILES {
+                let want = Path::new(base).join(f);
+                assert!(p.contains(&want), "{} in {p:?}", want.display());
+            }
+        }
+        assert!(p.contains(&PathBuf::from("/r/.osiris/OSIRIS.md")));
+        let mut unique = p.clone();
+        unique.dedup();
+        assert_eq!(unique, p, "each path once");
     }
 
     #[test]

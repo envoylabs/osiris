@@ -60,6 +60,10 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
 
     git(&repo, &["init", "-q", "-b", "main"]);
     fs::write(repo.join("README"), "base\n").unwrap();
+    // The project's own rules are AGENTS.md, imported by CLAUDE.md, as
+    // in a project whose rules predate osiris.
+    fs::write(repo.join("AGENTS.md"), "# rules\n").unwrap();
+    fs::write(repo.join("CLAUDE.md"), "@AGENTS.md\n").unwrap();
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "base"]);
     let r = |agent: Option<&str>, args: &[&str]| ris(&repo, &bin, agent, args);
@@ -156,23 +160,36 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
+    // Every rules file an agent loads is denied, in the main checkout
+    // and the seat's worktree, whether or not it exists: the project's
+    // AGENTS.md and CLAUDE.md, and an OSIRIS.md a seat might create to
+    // take precedence.
+    let denied = after("--disallowedTools");
     for f in [
         ".osiris/config.toml",
         ".osiris/checks.toml",
+        ".osiris/OSIRIS.md",
+        "repo/AGENTS.md",
+        "repo/CLAUDE.md",
+        "repo/CLAUDE.local.md",
+        "repo/OSIRIS.md",
+        "repo/.claude/CLAUDE.md",
+        "repo-rook/AGENTS.md",
+        "repo-rook/CLAUDE.md",
         "repo-rook/CLAUDE.local.md",
+        "repo-rook/OSIRIS.md",
     ] {
         assert!(
             deny_write.iter().any(|w| w.ends_with(f)),
             "{f} in {deny_write:?}"
         );
+        assert!(
+            denied
+                .split(',')
+                .any(|d| d.starts_with("Edit(//") && d.ends_with(&format!("/{f})"))),
+            "{f} in {denied}"
+        );
     }
-    let denied = after("--disallowedTools");
-    assert!(
-        denied
-            .split(',')
-            .any(|d| d.starts_with("Edit(//") && d.ends_with("/.osiris/config.toml)")),
-        "{denied}"
-    );
     assert!(args.iter().any(|a| a.contains("RIS_AGENT is set to rook")));
     assert!(text.contains("rook stopped (exit 3)"), "{text}");
 
