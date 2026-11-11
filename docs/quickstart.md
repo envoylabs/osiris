@@ -152,6 +152,14 @@ item, and it has no uncommitted or untracked files. A worktree behind
 that fails one of these is left where it is, and `ris up` names it and
 says which.
 
+One case is rebased instead. A seat can never write a rules file
+(`AGENTS.md`, `CLAUDE.md`), so when the phase branch changes one, a seat
+whose branch already holds a commit cannot rebase over the change: its
+`ris merge` is refused before its worktree is touched, and names `ris
+up <seat>`. That `ris up` rebases the seat's branch onto the phase
+branch, keeping its commits, provided its worktree is clean, its agent
+has stopped and nothing conflicts; otherwise it says what is in the way.
+
 An unattended agent may do only what its role allows: reading and
 `ris`; for a writing seat, edits, `git` and the project's check
 commands; for an auditor, reading history. Anything else is refused

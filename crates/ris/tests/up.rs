@@ -421,6 +421,66 @@ fn up_leaves_a_worktree_with_its_own_commits_alone() {
     assert_eq!(rig.git_in(&wt, &["rev-parse", "HEAD"]), own);
 }
 
+/// The one rebase `ris up` does: a seat's sandbox refuses writes to a
+/// rules file, so a branch with a commit of its own behind a change to
+/// one cannot be rebased by its seat. Up rebases it, keeping the commit,
+/// once the seat's agent has stopped; while it runs, it is left alone
+/// and up says why.
+#[test]
+fn up_rebases_a_seat_over_a_rules_file_change() {
+    let rig = Rig::new("up-rules", WAITING_AGENT);
+    // The rebase makes a commit, so it needs an identity.
+    rig.git(&["config", "user.name", "ris"]);
+    rig.git(&["config", "user.email", "ris@localhost"]);
+    rig.ok(None, &["up", "rook"]);
+    let wt = rig.repo.with_file_name("repo-rook");
+    fs::write(wt.join("mine"), "work\n").unwrap();
+    rig.git_in(&wt, &["add", "mine"]);
+    rig.git_in(&wt, &["commit", "-q", "-m", "mine"]);
+    let own = rig.git_in(&wt, &["rev-parse", "HEAD"]);
+
+    // The phase branch gains a commit that adds a rules file, made in a
+    // worktree of its own that is then removed.
+    let side = rig.repo.with_file_name("repo-side");
+    rig.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        side.to_str().unwrap(),
+        "phase/P-1",
+    ]);
+    fs::write(side.join("AGENTS.md"), "rules\n").unwrap();
+    rig.git_in(&side, &["add", "AGENTS.md"]);
+    rig.git_in(&side, &["commit", "-q", "-m", "rules"]);
+    let tip = rig.git_in(&side, &["rev-parse", "HEAD"]);
+    rig.git(&["update-ref", "refs/heads/phase/P-1", &tip]);
+    rig.git(&["worktree", "remove", "--force", side.to_str().unwrap()]);
+
+    // Its agent is running: left alone.
+    let out = rig.ok(None, &["up", "rook"]);
+    assert!(
+        out.contains("rook: 1 behind phase/P-1, which changed AGENTS.md"),
+        "{out}"
+    );
+    assert!(out.contains("left alone: its agent is running"), "{out}");
+    assert_eq!(rig.git_in(&wt, &["rev-parse", "HEAD"]), own);
+
+    // Stopped: rebased, with its own commit on top of the phase branch.
+    rig.stop_all();
+    rig.until("rook stopped", |r| r.events("run_stopped").len() == 1);
+    let out = rig.ok(None, &["up", "rook"]);
+    assert!(
+        out.contains("rook: rebased onto phase/P-1 over its change to AGENTS.md"),
+        "{out}"
+    );
+    assert_eq!(rig.git_in(&wt, &["rev-parse", "HEAD^"]), tip);
+    assert_eq!(rig.git_in(&wt, &["log", "-1", "--format=%s"]), "mine");
+    assert_eq!(head_branch(&wt), "rook");
+    assert_eq!(fs::read_to_string(wt.join("AGENTS.md")).unwrap(), "rules\n");
+    assert_eq!(fs::read_to_string(wt.join("mine")).unwrap(), "work\n");
+}
+
 /// A `ris seat start` killed outright never records its stop. Up sees
 /// its process is gone, clears the run and starts the seat again,
 /// instead of counting it as running for good.

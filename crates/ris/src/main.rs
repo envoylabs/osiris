@@ -1951,7 +1951,6 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
     // running it decides when it moves, pauses and runs.
     let (seats, attended): (Vec<String>, Vec<String>) =
         seats.into_iter().partition(|s| p.config.agents[s].start);
-    changed.extend(bring_up_to_phase(p, &l, &seats));
     let name = |s: &String| AgentName(s.clone());
     let paused: Vec<AgentName> = seats
         .iter()
@@ -1972,6 +1971,9 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
     let cleared = clear_gone_runs(p, actor, &l, &seats)?;
     let l = if cleared.is_empty() { l } else { p.load()? };
     changed.extend(cleared);
+    // After the cleared runs, so a seat whose process is gone does not
+    // count as running when its worktree is brought up.
+    changed.extend(bring_up_to_phase(p, &l, &seats));
     let exe = std::env::current_exe()?;
     let mut starting = Vec::new();
     for seat in &seats {
@@ -2032,12 +2034,14 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
 }
 
 /// Bring each named writing seat's worktree that is behind the phase
-/// branch up to it, so a seat never starts on a stale base. Only a
+/// branch up to it, so a seat never starts on a stale base. A
 /// fast-forward, and only when nothing can be lost: the seat's branch
 /// holds no commits of its own, it holds no claimed item, and its
 /// worktree has no uncommitted or untracked files. A seat behind that
-/// fails one of those is left alone and the line says why. One line
-/// per seat that was behind.
+/// fails one of those is left alone and the line says why. The one
+/// exception is a branch with commits of its own behind a change to a
+/// rules file, which is rebased (`rebase_over_rules`). One line per
+/// seat that was behind.
 fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) -> Vec<String> {
     let Some(phase) = ris::status::phase_branch(p, l) else {
         return Vec::new();
@@ -2056,6 +2060,17 @@ fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) ->
         if behind == 0 {
             continue;
         }
+        let seat = &s.seat;
+        // A branch with commits of its own is the seat's to rebase, at
+        // its merge. It cannot when the phase branch changed a rules
+        // file since, which its sandbox will not let it write: then the
+        // rebase is done here, with the person's access.
+        if s.ahead.unwrap_or(1) > 0
+            && let Some(rules) = rules_changed_since_fork(dir, &phase)
+        {
+            lines.push(rebase_over_rules(dir, &s, &phase, behind, &rules));
+            continue;
+        }
         let held = if s.ahead.unwrap_or(1) > 0 {
             Some("its branch holds commits of its own".to_owned())
         } else if let Some(item) = &s.claim {
@@ -2065,7 +2080,6 @@ fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) ->
         } else {
             None
         };
-        let seat = &s.seat;
         let line = match held {
             Some(why) => format!("{seat}: {behind} behind {phase}, left alone: {why}"),
             None => match git(dir, &["merge", "--quiet", "--ff-only", &phase]) {
@@ -2079,6 +2093,73 @@ fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) ->
         lines.push(line);
     }
     lines
+}
+
+/// The rules files the phase branch has changed since the branch checked
+/// out in `dir` left it, as a list for a message; `None` when it has
+/// changed none.
+fn rules_changed_since_fork(dir: &std::path::Path, phase: &str) -> Option<String> {
+    let fork = git(dir, &["merge-base", "HEAD", phase]).ok()?;
+    let mut args = vec!["diff", "--name-only", &fork, phase, "--"];
+    let specs: Vec<String> = ris::runner::RULES_FILES
+        .iter()
+        .map(|f| format!(":(top){f}"))
+        .collect();
+    args.extend(specs.iter().map(String::as_str));
+    let names = git(dir, &args).ok()?;
+    (!names.is_empty()).then(|| names.lines().collect::<Vec<_>>().join(", "))
+}
+
+/// Rebase a seat's branch, which holds commits of its own, onto a phase
+/// branch that has changed the rules files `rules` since: the one
+/// rebase a seat cannot do for itself. Only when nothing can be lost
+/// and nothing is in the way: the worktree has no uncommitted or
+/// untracked files, the seat's agent is not running in it, and the
+/// commits apply without a conflict. The line says what was done, or
+/// why the seat was left alone.
+fn rebase_over_rules(
+    dir: &std::path::Path,
+    s: &ris::status::Seat,
+    phase: &str,
+    behind: u32,
+    rules: &str,
+) -> String {
+    let seat = &s.seat;
+    let left = |why: String| {
+        format!(
+            "{seat}: {behind} behind {phase}, which changed {rules}, a rules file a seat cannot \
+             rebase over; left alone: {why}"
+        )
+    };
+    if s.uncommitted.unwrap_or(1) > 0 {
+        return left(format!(
+            "its worktree has uncommitted changes\n  next: commit or clear them, then `ris up {seat}`"
+        ));
+    }
+    if s.running {
+        return left(format!(
+            "its agent is running\n  next: `ris up {seat}` once it has stopped"
+        ));
+    }
+    if let RebaseOutlook::Conflict(files) = rebase_outlook(dir, phase) {
+        return left(format!(
+            "its commits conflict with {phase} (in {})\n  \
+             next: `git rebase {phase}` in its worktree and resolve, then `ris up {seat}`",
+            files.join(", ")
+        ));
+    }
+    match git(dir, &["rebase", "--quiet", phase]) {
+        Ok(_) => format!(
+            "{seat}: rebased onto {phase} over its change to {rules}; its own commits are kept"
+        ),
+        Err(e) => {
+            let _ = git(dir, &["rebase", "--abort"]);
+            left(format!(
+                "the rebase failed ({})\n  next: `git rebase {phase}` in its worktree, then `ris up {seat}`",
+                e.lines().next().unwrap_or("no reason given")
+            ))
+        }
+    }
 }
 
 /// Run the checks of open person actions, for the person only: their
@@ -2620,6 +2701,83 @@ fn require_one_commit(
     }
 }
 
+/// What rebasing a branch onto another would meet.
+enum RebaseOutlook {
+    /// No conflict. `rules` are the rules files (`RULES_FILES`, from the
+    /// top of the tree) the rebase would rewrite in the worktree.
+    Clean { rules: Vec<String> },
+    /// The files that conflict.
+    Conflict(Vec<String>),
+    /// Git could not say (one older than 2.38 has no `merge-tree
+    /// --write-tree`): the rebase itself is the test.
+    Unknown,
+}
+
+/// What rebasing `HEAD` in `dir` onto `onto` would meet, worked out in
+/// the object store alone, so neither the worktree nor the index is
+/// touched. The two are merged as trees, which for a branch of one
+/// commit is the merge its rebase performs.
+fn rebase_outlook(dir: &std::path::Path, onto: &str) -> RebaseOutlook {
+    let Ok(out) = std::process::Command::new("git")
+        .args(["merge-tree", "--write-tree", "--name-only", "--no-messages"])
+        .args([onto, "HEAD"])
+        .current_dir(dir)
+        .output()
+    else {
+        return RebaseOutlook::Unknown;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut lines = text.lines();
+    let Some(tree) = lines.next() else {
+        return RebaseOutlook::Unknown;
+    };
+    match out.status.code() {
+        Some(0) => {
+            let mut args = vec!["diff", "--name-only", "HEAD", tree, "--"];
+            let specs: Vec<String> = ris::runner::RULES_FILES
+                .iter()
+                .map(|f| format!(":(top){f}"))
+                .collect();
+            args.extend(specs.iter().map(String::as_str));
+            match git(dir, &args) {
+                Ok(names) => RebaseOutlook::Clean {
+                    rules: names.lines().map(str::to_owned).collect(),
+                },
+                Err(_) => RebaseOutlook::Unknown,
+            }
+        }
+        Some(1) => RebaseOutlook::Conflict(
+            lines
+                .take_while(|l| !l.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        ),
+        _ => RebaseOutlook::Unknown,
+    }
+}
+
+/// Whether this process may write `path`, found without changing it: a
+/// file that exists is opened for appending and nothing is written; one
+/// that does not is created and removed. A seat's sandbox refuses both
+/// for a rules file.
+fn can_write(path: &std::path::Path) -> bool {
+    use std::fs::OpenOptions;
+    if path.exists() {
+        return OpenOptions::new().append(true).open(path).is_ok();
+    }
+    // Without its directory there is nothing to try; the rebase decides.
+    if !path.parent().is_some_and(|d| d.is_dir()) {
+        return true;
+    }
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(path);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Width above one. Under the merge lock: rebase the builder's branch
 /// onto the phase branch, require exactly one commit on top, vet it and
 /// run every check on the combined tree, then fast-forward the phase
@@ -2650,6 +2808,39 @@ fn merge_from_worktree(
     };
     let old =
         git(&p.root, &["rev-parse", &format!("refs/heads/{phase}")]).map_err(CliError::Other)?;
+    // What the rebase would meet is found before it starts, so a merge
+    // that cannot go through leaves the worktree as it was. A branch
+    // already on top of the phase branch has nothing to rebase.
+    if git(&p.work, &["merge-base", "--is-ancestor", &phase, "HEAD"]).is_err() {
+        match rebase_outlook(&p.work, &phase) {
+            RebaseOutlook::Conflict(files) => {
+                return Err(CliError::Other(format!(
+                    "refused: {item} conflicts with work merged to {phase} before it (in {})\n  \
+                     next: `git rebase {phase}` in your worktree, resolve, keep one commit, and run `ris merge {item}` again",
+                    files.join(", ")
+                )));
+            }
+            RebaseOutlook::Clean { rules } => {
+                let top = git(&p.work, &["rev-parse", "--show-toplevel"])
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|_| p.work.clone());
+                let locked: Vec<String> = rules
+                    .into_iter()
+                    .filter(|f| !can_write(&top.join(f)))
+                    .collect();
+                if !locked.is_empty() {
+                    return Err(CliError::Other(format!(
+                        "refused: {phase} changed {} since your branch left it, and this seat \
+                         cannot write a rules file, so it cannot rebase onto {phase}\n  \
+                         next: stop and say so; the person's `ris up {author}` brings your branch \
+                         up to {phase}, and then `ris merge {item}` goes through",
+                        locked.join(", ")
+                    )));
+                }
+            }
+            RebaseOutlook::Unknown => {}
+        }
+    }
     if let Err(e) = git(&p.work, &["rebase", "--quiet", &phase]) {
         let _ = git(&p.work, &["rebase", "--abort"]);
         return Err(CliError::Other(format!(
