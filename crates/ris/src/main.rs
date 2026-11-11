@@ -51,8 +51,9 @@ enum Cmd {
     #[command(hide = true)]
     Worktree { seat: String },
     /// Make the harness match .osiris/config.toml, doing only the
-    /// difference: worktrees, resumes, and agents started in the
-    /// background. Safe to run again. The person's.
+    /// difference: worktrees, idle worktrees fast-forwarded to the phase
+    /// branch, resumes, and agents started in the background. Safe to
+    /// run again. The person's.
     Up {
         /// Only these seats; all of them when none is named.
         seats: Vec<String>,
@@ -1765,7 +1766,8 @@ fn make_worktree(p: &Project, seat: &str) -> Result<PathBuf, CliError> {
 
 /// `ris up`: make the harness match the configuration, doing only the
 /// difference. Each named seat (or every seat) gets the worktree it
-/// needs, is resumed if paused, and is started in the background if its
+/// needs, brought up to the phase branch when idle and behind it, is
+/// resumed if paused, and is started in the background if its
 /// agent is not running. Seats in the log but not in the file are
 /// reported and left alone.
 fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliError> {
@@ -1829,6 +1831,7 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
             changed.push(format!("{seat}: worktree at {}", shown_beside(p, &path)));
         }
     }
+    changed.extend(bring_up_to_phase(p, &l, &seats));
     let name = |s: &String| AgentName(s.clone());
     let paused: Vec<AgentName> = seats
         .iter()
@@ -1883,6 +1886,56 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
         text,
         json!({ "changed": changed, "not_in_file": retired }),
     ))
+}
+
+/// Bring each named writing seat's worktree that is behind the phase
+/// branch up to it, so a seat never starts on a stale base. Only a
+/// fast-forward, and only when nothing can be lost: the seat's branch
+/// holds no commits of its own, it holds no claimed item, and its
+/// worktree has no uncommitted or untracked files. A seat behind that
+/// fails one of those is left alone and the line says why. One line
+/// per seat that was behind.
+fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) -> Vec<String> {
+    let Some(phase) = ris::status::phase_branch(p, l) else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    for s in ris::status::seats(p, l) {
+        if !named.contains(&s.seat) || s.role == ris::config::Role::Auditor {
+            continue;
+        }
+        // Only a seat on its own branch in its own worktree: a lead at
+        // width one reports the main checkout, which is not its to move.
+        let (Some(dir), true) = (&s.worktree, s.branch.as_deref() == Some(s.seat.as_str())) else {
+            continue;
+        };
+        let behind = s.behind.unwrap_or(0);
+        if behind == 0 {
+            continue;
+        }
+        let held = if s.ahead.unwrap_or(1) > 0 {
+            Some("its branch holds commits of its own".to_owned())
+        } else if let Some(item) = &s.claim {
+            Some(format!("it holds {item}"))
+        } else if s.uncommitted.unwrap_or(1) > 0 {
+            Some("its worktree has uncommitted changes".to_owned())
+        } else {
+            None
+        };
+        let seat = &s.seat;
+        let line = match held {
+            Some(why) => format!("{seat}: {behind} behind {phase}, left alone: {why}"),
+            None => match git(dir, &["merge", "--quiet", "--ff-only", &phase]) {
+                Ok(_) => format!("{seat}: brought up to {phase} ({behind} commits)"),
+                Err(e) => format!(
+                    "{seat}: {behind} behind {phase}, left alone: {}",
+                    e.lines().next().unwrap_or("the fast-forward failed")
+                ),
+            },
+        };
+        lines.push(line);
+    }
+    lines
 }
 
 /// The next action's id, for a refusal before one is raised.

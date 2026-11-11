@@ -128,10 +128,17 @@ ris logs rook --follow                 # what rook is doing
 ```
 
 `ris up` compares the file with what exists and does only the
-difference: a worktree for each builder that has none, paused seats
+difference: a worktree for each builder that has none, each idle
+worktree behind the phase branch fast-forwarded to it, paused seats
 resumed, and each seat whose agent is not running started in the
 background. Run it again after any change to the file; with nothing to
 do, it says so.
+
+A worktree is brought up to the phase branch only when that loses
+nothing: its branch has no commits of its own, its seat holds no claimed
+item, and it has no uncommitted or untracked files. A worktree behind
+that fails one of these is left where it is, and `ris up` names it and
+says which.
 
 An unattended agent may do only what its role allows: reading and
 `ris`; for a writing seat, edits, `git` and the project's check

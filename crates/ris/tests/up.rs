@@ -311,3 +311,99 @@ fn up_takes_the_main_checkout_off_the_phase_branch() {
     assert!(out.contains("main checkout: on main"), "{out}");
     assert_eq!(head_branch(&rig.repo), "main");
 }
+
+impl Rig {
+    /// Run git in `dir` and return its trimmed output.
+    fn git_in(&self, dir: &std::path::Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(["-c", "user.name=ris", "-c", "user.email=ris@localhost"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {}", args.join(" "));
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    /// Move the phase branch on by one empty commit, as another seat's
+    /// merge would. The new tip.
+    fn advance_phase(&self) -> String {
+        let next = self.git_in(
+            &self.repo,
+            &[
+                "commit-tree",
+                "phase/P-1^{tree}",
+                "-p",
+                "phase/P-1",
+                "-m",
+                "merged elsewhere",
+            ],
+        );
+        self.git_in(&self.repo, &["update-ref", "refs/heads/phase/P-1", &next]);
+        next
+    }
+}
+
+/// A builder's worktree behind the phase branch is fast-forwarded by
+/// `ris up` only when that loses nothing: no claim, no commits of its
+/// own, nothing uncommitted. Otherwise it is left where it is and up
+/// says why.
+#[test]
+fn up_brings_an_idle_worktree_up_to_the_phase_branch() {
+    let rig = Rig::new("up-stale", WAITING_AGENT);
+    rig.ok(None, &["up", "rook"]);
+    let wt = rig.repo.with_file_name("repo-rook");
+    let head = |r: &Rig| r.git_in(&wt, &["rev-parse", "HEAD"]);
+
+    // Idle and clean: brought up, still on its own branch.
+    let tip = rig.advance_phase();
+    let out = rig.ok(None, &["up", "rook"]);
+    assert!(
+        out.contains("rook: brought up to phase/P-1 (1 commits)"),
+        "{out}"
+    );
+    assert_eq!(head(&rig), tip);
+    assert_eq!(head_branch(&wt), "rook");
+
+    // Up to date: nothing said about it.
+    let out = rig.ok(None, &["up", "rook"]);
+    assert!(!out.contains("phase/P-1"), "{out}");
+
+    // Uncommitted changes: left alone.
+    let tip = rig.advance_phase();
+    fs::write(wt.join("scratch"), "work\n").unwrap();
+    let out = rig.ok(None, &["up", "rook"]);
+    assert!(
+        out.contains("rook: 1 behind phase/P-1, left alone: its worktree has uncommitted changes"),
+        "{out}"
+    );
+    assert_ne!(head(&rig), tip);
+    fs::remove_file(wt.join("scratch")).unwrap();
+
+    // A claimed item: left alone.
+    rig.ok(Some("heron"), &["item", "add", "x"]);
+    rig.ok(Some("rook"), &["claim", "I-1"]);
+    let out = rig.ok(None, &["up", "rook"]);
+    assert!(out.contains("left alone: it holds I-1"), "{out}");
+    assert_ne!(head(&rig), tip);
+}
+
+/// A worktree with a commit of its own is never moved by `ris up`: no
+/// rebase, no reset.
+#[test]
+fn up_leaves_a_worktree_with_its_own_commits_alone() {
+    let rig = Rig::new("up-own", WAITING_AGENT);
+    rig.ok(None, &["up", "rook"]);
+    let wt = rig.repo.with_file_name("repo-rook");
+    fs::write(wt.join("mine"), "work\n").unwrap();
+    rig.git_in(&wt, &["add", "mine"]);
+    rig.git_in(&wt, &["commit", "-q", "-m", "mine"]);
+    let own = rig.git_in(&wt, &["rev-parse", "HEAD"]);
+    rig.advance_phase();
+    let out = rig.ok(None, &["up", "rook"]);
+    assert!(
+        out.contains("rook: 1 behind phase/P-1, left alone: its branch holds commits of its own"),
+        "{out}"
+    );
+    assert_eq!(rig.git_in(&wt, &["rev-parse", "HEAD"]), own);
+}
