@@ -108,6 +108,14 @@ pub struct RunnerConfig {
     /// cache: `write = ["~/.cargo"]`.
     #[serde(default)]
     pub write: Vec<String>,
+    /// How long, in seconds, a running seat's output may stay quiet
+    /// before `ris status` marks it possibly stuck.
+    #[serde(default = "default_quiet_after_seconds")]
+    pub quiet_after_seconds: u64,
+}
+
+fn default_quiet_after_seconds() -> u64 {
+    600
 }
 
 impl Default for RunnerConfig {
@@ -117,6 +125,7 @@ impl Default for RunnerConfig {
             allow: BTreeMap::new(),
             network: Vec::new(),
             write: Vec::new(),
+            quiet_after_seconds: default_quiet_after_seconds(),
         }
     }
 }
@@ -347,6 +356,11 @@ merge_on_close = true
 # checkout unless absolute. {repo} is this checkout's directory name and
 # {seat} the seat's name, which the template must contain.
 worktrees = \"../{repo}-{seat}\"
+
+# How seats' agents are run. `ris status` marks a running seat possibly
+# stuck once its output has been quiet for quiet_after_seconds.
+[runner]
+quiet_after_seconds = 600
 
 # The person's ris, rebuilt from the last merged commit (which passed
 # every check) and installed on your PATH, by `ris install` and on your

@@ -199,12 +199,19 @@ decide say it is too short.
   the way an implementation unfolds while working an issue.
 - **Substantive decisions: queued for the person.** The test is the cost
   of reversing, not whether reversal is possible: a decision can be
-  reversible and still expensive to reverse. Substantive if it changes a
-  contract (an API, a data or wire format, a public interface), adds or
+  reversible and still expensive to reverse. Substantive if it removes
+  or renames something in a contract (an API, a data or wire format, a
+  public interface) or changes what an existing part means, adds or
   swaps a dependency, changes the phase's scope or the order of other
   agents' items, or sets a design direction other work will build on.
   The agent records it with options and a recommendation, sets that item
   aside and takes another.
+- **Adding to a contract is mechanical.** A new event type, a new JSON
+  key or a new optional field breaks no reader that ignores what it
+  does not know, so it is cheap to reverse while nothing depends on it
+  yet; the agent logs it and the check-in reviews it. Removing,
+  renaming or changing the meaning of what is already there stays
+  substantive.
 - **Misclassification is caught at review.** The phase report lists the
   mechanical decisions too, one line each, so one that should have been
   substantive is seen at the next check-in.
@@ -301,7 +308,9 @@ from them; it does not define them.
   whether the diff does what the item asked, whether the evidence
   supports the claim that it is done, whether the rules were kept, and
   whether any decision logged as mechanical should have been
-  substantive.
+  substantive. The auditor reviews the open phase's items: `ris audit`
+  is that queue, and `ris audit --all` adds earlier phases' unreviewed
+  items, so audit cost is bounded by the phase rather than by history.
 
 | arrangement | width | audit | needs beyond the core |
 |---|---|---|---|

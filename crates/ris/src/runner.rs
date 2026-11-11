@@ -76,7 +76,10 @@ pub fn prompt(seat: &str, role: Role) -> String {
              with `ris claim` (its output is your brief), do it, run `ris done`, \
              commit once with the Item and Agent trailers, then `ris merge`. \
              Repeat. Raise decisions and items as the rules say, and never \
-             take a substantive decision. "
+             take a substantive decision: adding to a contract or format \
+             (a new event, a new JSON key) is mechanical, while removing, \
+             renaming or changing the meaning of what is there is \
+             substantive. "
         }
         Role::Advisor => {
             "Work beside the person: read `ris summary` and `ris inbox`; add \
@@ -86,7 +89,8 @@ pub fn prompt(seat: &str, role: Role) -> String {
              Never claim, finish, merge or decide, and never write to the tree. "
         }
         Role::Auditor => {
-            "Work through `ris audit`: for each item, read its diff and its \
+            "Work through `ris audit`, the open phase's items, and review \
+             no earlier phase's: for each item, read its diff and its \
              evidence against its goal, the decisions that touch it and the \
              rules; send each finding to its author with `ris send <seat> \
              --kind finding --about <item>`; then record the review with \
@@ -297,6 +301,43 @@ pub fn render_line(line: &str) -> Option<String> {
     }
 }
 
+/// The file of a seat's latest run in `runs` (`<seat>-<n>.jsonl`, the
+/// highest `n`), or `None` when it has not run.
+pub fn latest_run(runs: &Path, seat: &str) -> Option<PathBuf> {
+    let prefix = format!("{seat}-");
+    std::fs::read_dir(runs)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let n: u64 = name
+                .strip_prefix(&prefix)?
+                .strip_suffix(".jsonl")?
+                .parse()
+                .ok()?;
+            Some((n, e.path()))
+        })
+        .max()
+        .map(|(_, path)| path)
+}
+
+/// What a run last did, from its output: the last line of the last
+/// record with anything to read (a tool it ran, or what it said), on
+/// one line and cut to `width` characters. `None` before it has said
+/// anything. Only complete lines count: a running seat's file may end
+/// in a record still being written, which would show as raw JSON.
+pub fn last_activity(text: &str, width: usize) -> Option<String> {
+    let (complete, _) = lines_from(text, 0, false);
+    let shown = complete.into_iter().rev().find_map(render_line)?;
+    let last = shown.lines().rev().find(|l| !l.trim().is_empty())?.trim();
+    Some(if last.chars().count() > width {
+        let cut: String = last.chars().take(width.saturating_sub(1)).collect();
+        format!("{cut}…")
+    } else {
+        last.to_owned()
+    })
+}
+
 /// Where a seat's git data lives: the repository's common git
 /// directory, and the seat's own entry under its `worktrees/` when the
 /// seat works in a linked worktree (`None` in the main checkout).
@@ -461,6 +502,57 @@ mod tests {
         assert_eq!(render_line("plain text").unwrap(), "plain text");
     }
 
+    /// The last activity is the last thing a run did, skipping
+    /// bookkeeping records, and is cut to one short line.
+    #[test]
+    fn the_last_activity_is_the_last_thing_said_or_run() {
+        let said = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"claiming I-3"},{"type":"tool_use","name":"Bash","input":{"command":"ris claim I-3"}}]}}"#;
+        let user = r#"{"type":"user","message":{}}"#;
+        let run = format!("{said}\n{user}\n");
+        assert_eq!(
+            last_activity(&run, 80).as_deref(),
+            Some("→ Bash ris claim I-3")
+        );
+        assert_eq!(last_activity(&run, 8).as_deref(), Some("→ Bash …"));
+        assert_eq!(last_activity(user, 80), None);
+        assert_eq!(last_activity("", 80), None);
+    }
+
+    /// A record still being written at the end of a live run file is
+    /// not shown: the activity is the last complete record's.
+    #[test]
+    fn a_half_written_last_record_is_not_the_activity() {
+        let said = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ris claim I-3"}}]}}"#;
+        let partial = r#"{"type":"assistant","message":{"content":[{"ty"#;
+        let run = format!("{said}\n{partial}");
+        assert_eq!(
+            last_activity(&run, 80).as_deref(),
+            Some("→ Bash ris claim I-3")
+        );
+        assert_eq!(last_activity(partial, 80), None);
+    }
+
+    /// A seat's latest run is its highest-numbered run file; another
+    /// seat's files, and names that only start the same, are not it.
+    #[test]
+    fn the_latest_run_is_the_highest_numbered() {
+        let dir = std::env::temp_dir().join(format!("ris-latest-run-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(latest_run(&dir, "rook"), None);
+        for f in [
+            "rook-2.jsonl",
+            "rook-10.jsonl",
+            "rooky-99.jsonl",
+            "heron-50.jsonl",
+        ] {
+            std::fs::write(dir.join(f), "").unwrap();
+        }
+        assert_eq!(latest_run(&dir, "rook"), Some(dir.join("rook-10.jsonl")));
+        assert_eq!(latest_run(&dir.join("absent"), "rook"), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A line that reaches the file in two writes is read once, whole,
     /// after its second write; a last line without a newline is read
     /// only when the writer has finished.
@@ -535,6 +627,20 @@ mod tests {
         }
         assert!(prompt("wren", Role::Auditor).contains("Never write to the tree"));
         assert!(prompt("kite", Role::Advisor).contains("never write to the tree"));
+    }
+
+    #[test]
+    fn writers_are_told_the_decision_rule_and_the_auditor_its_scope() {
+        for role in [Role::Lead, Role::Builder] {
+            let p = prompt("rook", role);
+            assert!(
+                p.contains("(a new event, a new JSON key) is mechanical"),
+                "{p}"
+            );
+            assert!(p.contains("renaming"), "{p}");
+        }
+        let p = prompt("wren", Role::Auditor);
+        assert!(p.contains("the open phase's items"), "{p}");
     }
 
     #[test]

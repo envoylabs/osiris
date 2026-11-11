@@ -43,7 +43,10 @@ event as `data`. Without `--json` they print bare event lines.
 
 `ris logs <seat> --follow` prints one envelope per line of the run's
 output as it is written, each with `seat` and `line` as `data`. Without
-`--follow`, `ris logs` is one document with `seat` and `lines`.
+`--follow`, `ris logs` is one document with `seat` and `lines`. With no
+seat, `ris logs --follow` streams every seat's output the same way, one
+line of output per envelope, and ends once no seat is running; without
+`--follow` it is one document whose `lines` are each `seat` and `line`.
 
 ## Values
 
@@ -72,10 +75,21 @@ output as it is written, each with `seat` and `line` as `data`. Without
   `--all` was given, in which case nothing is left out.
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
+- `ris audit`: `queue`, the open phase's done and merged items the
+  caller has still to review, each with its `id`, `phase`, `goal`,
+  `state` and `checks`; with `--all`, earlier phases' too.
 - `ris status`: `seats`, each with its role, place, branch, claim,
-  `paused` and `running`.
+  `paused`, `running` and `activity`: for a running seat with a run
+  file, `last` (what it last ran or said, or null), `quiet_seconds`
+  since its output last changed, and `stuck` (quiet for longer than
+  `[runner] quiet_after_seconds`); null otherwise.
 - `ris show A-n`: a person action, with `blocks`, `informs`, `state`
   and, when it has one, its `check`.
+- `ris decide` with no decision: `queue`, the open substantive
+  decisions oldest first, whatever phase raised them, each entry the
+  `data` that `ris eli5 D-n` gives (`decision`, and `explanation` or
+  null). A client shows each and answers with
+  `ris decide D-n --choose <k>`; `--rationale` is optional.
 - `ris watch`: every event as it is appended, including `run_started`
   and `run_stopped` when the runner starts and stops a seat's agent.
 

@@ -57,15 +57,18 @@ new, and end the session. The person brings seats back with `ris up`.
 The test is the cost of reversing, not whether reversal is possible.
 
 - **Mechanical** (cheap to reverse: a blocker found, something adjacent
-  discovered, the shape an implementation takes): decide, and log it.
+  discovered, the shape an implementation takes, or an addition to a
+  contract or format, such as a new event or a new JSON key): decide,
+  and log it.
   ```
   ris decision raise --about I-7 --question "..." --option a --option b --recommend 0 --rationale "..."
   ```
   It is taken at once under your name and appears in the phase report,
   where the person checks the class.
-- **Substantive** (expensive to reverse: a contract, a data or wire
-  format, a dependency, the phase's scope, a design direction others
-  build on): queue it and take another item.
+- **Substantive** (expensive to reverse: removing, renaming or changing
+  the meaning of something in a contract or a data or wire format, a
+  dependency, the phase's scope, a design direction others build on):
+  queue it and take another item.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```
@@ -151,11 +154,13 @@ inbox before starting an item and after a check runs, not mid-task.
 ## The auditor's seat
 
 An auditor never writes to the tree; `ris` refuses an auditor seat
-that tries to claim, finish or merge an item. For each done item it reads the
-diff and the evidence against the goal, the decisions that touch it and
-these rules, and reads the item's mechanical decisions for any that
-should have been substantive. Findings go to the author as messages; a
-finding the author disputes is raised as a substantive decision.
+that tries to claim, finish or merge an item. For each done item of
+the open phase (`ris audit`; earlier phases' items are not its work,
+and `ris audit --all` only shows them) it reads the diff and the
+evidence against the goal, the decisions that touch it and these rules,
+and reads the item's mechanical decisions for any that should have been
+substantive. Findings go to the author as messages; a finding the
+author disputes is raised as a substantive decision.
 
 ## The advisor's seat
 

@@ -61,6 +61,7 @@ role = "auditor"
 [runner]
 write = ["~/.cargo"]                   # more paths agents may write, e.g. a build cache
 network = []                           # hosts agents may reach
+quiet_after_seconds = 600              # ris status marks a seat quiet for longer possibly stuck
 
 [runner.allow]
 builder = ["Bash(cargo *)"]            # more tool permissions, in the agent tool's syntax
@@ -128,8 +129,9 @@ from an existing project's backlog.
 
 ```sh
 ris up                                 # make it so; safe to run again
-ris status                             # where each seat is, and what it holds
+ris status                             # where each seat is, what it holds, what it last did
 ris logs rook --follow                 # what rook is doing
+ris logs -f                            # every seat at once, each line prefixed with its seat
 ```
 
 `ris up` compares the file with what exists and does only the
@@ -139,11 +141,24 @@ resumed, and each seat whose agent is not running started in the
 background. Run it again after any change to the file; with nothing to
 do, it says so.
 
+For each running seat, `ris status` shows what its agent last ran or
+said and how long ago its output last changed. A seat quiet for longer
+than `[runner] quiet_after_seconds` is marked possibly stuck; `ris logs
+<seat>` shows where it stopped.
+
 A worktree is brought up to the phase branch only when that loses
 nothing: its branch has no commits of its own, its seat holds no claimed
 item, and it has no uncommitted or untracked files. A worktree behind
 that fails one of these is left where it is, and `ris up` names it and
 says which.
+
+One case is rebased instead. A seat can never write a rules file
+(`AGENTS.md`, `CLAUDE.md`), so when the phase branch changes one, a seat
+whose branch already holds a commit cannot rebase over the change: its
+`ris merge` is refused before its worktree is touched, and names `ris
+up <seat>`. That `ris up` rebases the seat's branch onto the phase
+branch, keeping its commits, provided its worktree is clean, its agent
+has stopped and nothing conflicts; otherwise it says what is in the way.
 
 An unattended agent may do only what its role allows: reading and
 `ris`; for a writing seat, edits, `git` and the project's check
@@ -173,7 +188,8 @@ tries it again.
 
 ```sh
 ris summary                            # decisions, your actions, what waits on what, the report
-ris eli5 D-3                           # a decision's full case
+ris decide                             # each open decision's case, then pick with one key
+ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
 ```
@@ -190,7 +206,20 @@ only you raise them (`ris action raise "..." --done-when "..." --blocks
 I-7`), linked to the items they hold up. An agent that is blocked raises
 an item or a decision instead, and never an action. An action that
 names a check closes itself at your next check-in once the check
-passes.
+passes. A check that runs past `action_check_seconds` does not pass and
+is stopped with everything it started; if stopping it fails, the
+check-in says so and why, since what it started may still be running.
+
+Only substantive decisions wait for you: those expensive to reverse,
+such as removing, renaming or changing the meaning of something in a
+contract or a format, a dependency, or the phase's scope. An agent takes
+a mechanical one itself and logs it, which includes adding to a contract
+(a new event, a new JSON key). The report lists the mechanical ones, one
+line each, so you can see any that should have come to you.
+
+The auditor's queue is `ris audit`: the open phase's done and merged
+items it did not write and has not reviewed. Earlier phases' unreviewed
+items are not its work; `ris audit --all` shows them.
 
 ## 6. Bring it down and close
 

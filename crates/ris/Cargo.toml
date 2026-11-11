@@ -20,6 +20,7 @@ serde.workspace = true
 toml.workspace = true
 getrandom.workspace = true
 anstyle.workspace = true
+crossterm.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

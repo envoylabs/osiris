@@ -256,6 +256,74 @@ fn a_conflicting_merge_is_refused_and_a_clean_one_goes_through() {
     assert_eq!(show(&main, "phase/P-1:NEW"), "kite's file\n");
 }
 
+fn porcelain_of(dir: &Path) -> String {
+    let out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// A seat's sandbox refuses writes to a rules file, so a seat whose
+/// branch is behind a change to one cannot rebase. The merge is refused
+/// before the rebase starts, naming the file and the person's `ris up`,
+/// and the worktree is left exactly as it was: same commit, same branch,
+/// nothing modified and no rebase in progress. A read-only file stands
+/// in for the sandbox.
+#[test]
+fn a_merge_behind_a_rules_file_change_is_refused_before_the_worktree_is_touched() {
+    let (main, trees) = setup(
+        "rules",
+        "[checks.ok]\ncommand = \"true\"\n",
+        &["heron", "wren"],
+    );
+    let (h, w) = (&trees[0], &trees[1]);
+    for goal in ["add the rules", "a file", "change the rules", "another"] {
+        ok(&main, None, &["item", "add", goal, "--check", "ok"]);
+    }
+    let land = |dir: &Path, item: &str, agent: &str, file: &str, text: &str| {
+        ok(dir, Some(agent), &["claim", item]);
+        fs::write(dir.join(file), text).unwrap();
+        ok(dir, Some(agent), &["done", item]);
+        commit(dir, item, agent);
+    };
+    // Both seats come to hold the rules file, then heron changes it.
+    land(h, "I-1", "heron", "AGENTS.md", "rules, first\n");
+    ok(h, Some("heron"), &["merge", "I-1"]);
+    land(w, "I-2", "wren", "ONE", "one\n");
+    ok(w, Some("wren"), &["merge", "I-2"]);
+    land(h, "I-3", "heron", "AGENTS.md", "rules, second\n");
+    ok(h, Some("heron"), &["merge", "I-3"]);
+    let phase = rev(&main, "phase/P-1");
+
+    land(w, "I-4", "wren", "TWO", "two\n");
+    let before = head(w);
+    let rules = w.join("AGENTS.md");
+    let perms = |mode| fs::set_permissions(&rules, fs::Permissions::from_mode(mode)).unwrap();
+    perms(0o444);
+    let out = ris(w, Some("wren"), &["merge", "I-4"]);
+    perms(0o644);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("phase/P-1 changed AGENTS.md"), "{err}");
+    assert!(err.contains("`ris up wren`"), "{err}");
+    assert_eq!(head(w), before, "the branch did not move");
+    assert_eq!(branch(w), "wren", "no rebase was left in progress");
+    assert_eq!(porcelain_of(w), "", "the worktree is untouched");
+    assert_eq!(
+        fs::read_to_string(&rules).unwrap(),
+        "rules, first\n",
+        "the rules file was not written"
+    );
+    assert_eq!(rev(&main, "phase/P-1"), phase, "the phase branch stayed");
+
+    // Where the file can be written, the same merge goes through.
+    ok(w, Some("wren"), &["merge", "I-4"]);
+    assert_eq!(show(&main, "phase/P-1:AGENTS.md"), "rules, second\n");
+    assert_eq!(show(&main, "phase/P-1:TWO"), "two\n");
+}
+
 /// Two merges submitted at the same moment land in one order: the
 /// second is rebased onto and checked against a tree containing the
 /// first, so the phase branch ends with both.
