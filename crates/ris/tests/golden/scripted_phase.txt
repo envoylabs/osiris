@@ -74,13 +74,16 @@ item is kept from undoing an earlier one.
 The test is the cost of reversing, not whether reversal is possible.
 
 - **Mechanical** (cheap to reverse: a blocker found, something adjacent
-  discovered, the shape an implementation takes): decide and log it.
+  discovered, the shape an implementation takes, or an addition to a
+  contract or format, such as a new event or a new JSON key): decide
+  and log it.
   ```
   ris decision raise --about I-7 --question "..." --option a --option b --recommend 0 --rationale "..."
   ```
-- **Substantive** (expensive to reverse: a contract, a data or wire
-  format, a dependency, the scope, a design direction others build on):
-  queue it, and take another item.
+- **Substantive** (expensive to reverse: removing, renaming or changing
+  the meaning of something in a contract or a data or wire format, a
+  dependency, the scope, a design direction others build on): queue it,
+  and take another item.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```
@@ -140,8 +143,9 @@ Kinds: `handoff`, `interface-changed`, `question`, `finding`.
 
 An auditor never writes to the tree, and `ris` refuses an auditor seat
 that tries to claim, finish or merge an item, or to get a worktree.
-`ris audit` is its queue: done and
-merged items it did not write and has not reviewed. For each, it reads
+`ris audit` is its queue: the open phase's done and merged items it did
+not write and has not reviewed; earlier phases' are not its work, and
+`ris audit --all` only shows them. For each, it reads
 the diff and the evidence against the goal, the decisions that touch it
 and these rules, and checks the item's mechanical decisions for any
 that should have been substantive. Findings go to the author with

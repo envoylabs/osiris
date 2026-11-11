@@ -98,8 +98,14 @@ enum Cmd {
     Claim { item: ItemId },
     /// Return a claimed item to ready: its holder, or the person.
     Release { item: ItemId },
-    /// The review queue; with an item, record that you reviewed it.
-    Audit { item: Option<ItemId> },
+    /// The review queue, the open phase's items; with an item, record
+    /// that you reviewed it.
+    Audit {
+        item: Option<ItemId>,
+        /// Every phase's items, not only the open phase's.
+        #[arg(long, conflicts_with = "item")]
+        all: bool,
+    },
     /// Something only the person can do: raise one, or record it done.
     Action {
         #[command(subcommand)]
@@ -1127,9 +1133,15 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(lines.join("\n"), json!({ "checks": results })))
         }
 
-        Cmd::Audit { item: None } => Ok(render::audit_queue(&p.load()?, &actor)),
+        Cmd::Audit { item: None, all } => {
+            let l = p.load()?;
+            let scope = render::Scope::of(&l, *all);
+            Ok(render::audit_queue(&l, &actor, scope))
+        }
 
-        Cmd::Audit { item: Some(item) } => {
+        Cmd::Audit {
+            item: Some(item), ..
+        } => {
             let by = agent_only(&actor)?;
             p.run(&Command::Audit {
                 item: *item,
@@ -1756,7 +1768,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         | Cmd::Log { .. }
         | Cmd::Watch { .. }
         | Cmd::Scan { .. }
-        | Cmd::Audit { item: None }
+        | Cmd::Audit { item: None, .. }
         | Cmd::Send { .. }
         | Cmd::Item {
             action: ItemCmd::Add(_),
@@ -1773,7 +1785,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         Cmd::Merge { .. } => Some("merge items"),
         Cmd::Decide { .. } => Some("take decisions"),
         Cmd::Release { .. } => Some("release items"),
-        Cmd::Audit { item: Some(_) } => Some("record reviews"),
+        Cmd::Audit { item: Some(_), .. } => Some("record reviews"),
         Cmd::Check { .. } => Some("run checks"),
         _ => Some("change the harness"),
     }

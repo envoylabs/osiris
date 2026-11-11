@@ -76,7 +76,10 @@ pub fn prompt(seat: &str, role: Role) -> String {
              with `ris claim` (its output is your brief), do it, run `ris done`, \
              commit once with the Item and Agent trailers, then `ris merge`. \
              Repeat. Raise decisions and items as the rules say, and never \
-             take a substantive decision. "
+             take a substantive decision: adding to a contract or format \
+             (a new event, a new JSON key) is mechanical, while removing, \
+             renaming or changing the meaning of what is there is \
+             substantive. "
         }
         Role::Advisor => {
             "Work beside the person: read `ris summary` and `ris inbox`; add \
@@ -86,7 +89,8 @@ pub fn prompt(seat: &str, role: Role) -> String {
              Never claim, finish, merge or decide, and never write to the tree. "
         }
         Role::Auditor => {
-            "Work through `ris audit`: for each item, read its diff and its \
+            "Work through `ris audit`, the open phase's items, and review \
+             no earlier phase's: for each item, read its diff and its \
              evidence against its goal, the decisions that touch it and the \
              rules; send each finding to its author with `ris send <seat> \
              --kind finding --about <item>`; then record the review with \
@@ -623,6 +627,20 @@ mod tests {
         }
         assert!(prompt("wren", Role::Auditor).contains("Never write to the tree"));
         assert!(prompt("kite", Role::Advisor).contains("never write to the tree"));
+    }
+
+    #[test]
+    fn writers_are_told_the_decision_rule_and_the_auditor_its_scope() {
+        for role in [Role::Lead, Role::Builder] {
+            let p = prompt("rook", role);
+            assert!(
+                p.contains("(a new event, a new JSON key) is mechanical"),
+                "{p}"
+            );
+            assert!(p.contains("renaming"), "{p}");
+        }
+        let p = prompt("wren", Role::Auditor);
+        assert!(p.contains("the open phase's items"), "{p}");
     }
 
     #[test]

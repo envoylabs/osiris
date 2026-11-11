@@ -1054,14 +1054,16 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool) -> Output {
     )
 }
 
-/// `ris audit`: the review queue. For an agent, done and merged items it
-/// did not author and has not reviewed; for the person, those nobody has
-/// reviewed.
-pub fn audit_queue(l: &Loaded, actor: &Actor) -> Output {
+/// `ris audit`: the review queue, limited to `scope` (the open phase's
+/// items unless `--all` is asked for). For an agent, done and merged
+/// items it did not author and has not reviewed; for the person, those
+/// nobody has reviewed.
+pub fn audit_queue(l: &Loaded, actor: &Actor, scope: Scope) -> Output {
     let queue: Vec<&Item> = l
         .state
         .items
         .values()
+        .filter(|i| scope.item(i))
         .filter(|i| matches!(i.state, ItemState::Done { .. } | ItemState::Merged { .. }))
         .filter(|i| match actor {
             Actor::Agent(me) => i.author.as_ref() != Some(me) && !i.audited_by.contains(me),
