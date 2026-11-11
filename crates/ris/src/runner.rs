@@ -173,6 +173,43 @@ pub fn run(
     Ok(child.wait()?.code())
 }
 
+/// One line of a run's output as text: the agent tool's stream JSON
+/// turned into what was said and which tool was used, anything else
+/// shown as it is; `None` for bookkeeping lines with nothing to read.
+pub fn render_line(line: &str) -> Option<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Some(line.to_owned());
+    };
+    match v["type"].as_str() {
+        Some("assistant") => {
+            let parts: Vec<String> = v["message"]["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| match c["type"].as_str() {
+                    Some("text") => c["text"].as_str().map(str::to_owned),
+                    Some("tool_use") => Some(format!(
+                        "→ {} {}",
+                        c["name"].as_str().unwrap_or("tool"),
+                        c["input"]["command"]
+                            .as_str()
+                            .or(c["input"]["file_path"].as_str())
+                            .unwrap_or("")
+                    )),
+                    _ => None,
+                })
+                .collect();
+            (!parts.is_empty()).then(|| parts.join("\n"))
+        }
+        Some("result") => Some(format!(
+            "== {} ==",
+            v["subtype"].as_str().unwrap_or("result")
+        )),
+        Some("user" | "system") => None,
+        _ => Some(line.to_owned()),
+    }
+}
+
 /// The paths a seat's agent must be able to write besides its own
 /// directory: the shared store, and the repository's git directory
 /// for a writing seat (a worktree's commits are stored there).
@@ -244,6 +281,21 @@ mod tests {
         assert!(has("--settings", "{}"));
         assert!(has("--model", "m"));
         assert!(!args.iter().any(|a| a.contains("skip-permissions")));
+    }
+
+    #[test]
+    fn a_stream_reads_as_what_was_said_and_done() {
+        let said = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"claiming I-3"},{"type":"tool_use","name":"Bash","input":{"command":"ris claim I-3"}}]}}"#;
+        assert_eq!(
+            render_line(said).unwrap(),
+            "claiming I-3\n→ Bash ris claim I-3"
+        );
+        assert_eq!(render_line(r#"{"type":"system","subtype":"init"}"#), None);
+        assert_eq!(
+            render_line(r#"{"type":"result","subtype":"success"}"#).unwrap(),
+            "== success =="
+        );
+        assert_eq!(render_line("plain text").unwrap(), "plain text");
     }
 
     #[test]

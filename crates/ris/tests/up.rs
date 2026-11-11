@@ -1,7 +1,8 @@
-//! `ris up` and `ris down`: the harness declared in .osiris/config.toml
-//! is brought up by doing only the difference, as docker compose up -d
-//! does, and brought down without losing work. A fake agent program on
-//! PATH stands in for the agent tool.
+//! `ris up`, `ris down` and `ris logs`: the harness declared in
+//! .osiris/config.toml is brought up by doing only the difference, as
+//! docker compose up -d does, brought down without losing work, and
+//! each seat's output read back. A fake agent program on PATH stands in
+//! for the agent tool.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -95,6 +96,13 @@ impl Rig {
             .collect()
     }
 
+    /// Write every seat's stop file, so its fake agent exits.
+    fn stop_all(&self) {
+        for seat in ["heron", "rook", "wren"] {
+            let _ = fs::write(self.repo.join(format!(".osiris/stop-{seat}")), "");
+        }
+    }
+
     /// Wait until `f` holds, or fail after a few seconds.
     fn until(&self, what: &str, f: impl Fn(&Self) -> bool) {
         let start = Instant::now();
@@ -105,6 +113,14 @@ impl Rig {
             );
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+}
+
+/// A failing test must not leave agents running in the background:
+/// they would outlive it and slow every later run.
+impl Drop for Rig {
+    fn drop(&mut self) {
+        self.stop_all();
     }
 }
 
@@ -145,6 +161,11 @@ fn up_does_only_the_difference_and_down_stops_without_losing_work() {
         "nothing to do: the harness matches .osiris/config.toml"
     );
     assert_eq!(rig.events("run_started").len(), 3, "nothing started twice");
+
+    // Each seat's output reads back as text.
+    rig.until("rook's output", |r| {
+        r.ok(None, &["logs", "rook"]).contains("hello from rook")
+    });
 
     // Down: every seat is paused and lets its agent finish.
     let out = rig.ok(None, &["down"]);

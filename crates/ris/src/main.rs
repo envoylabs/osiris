@@ -63,6 +63,13 @@ enum Cmd {
         /// Only these seats; all of them when none is named.
         seats: Vec<String>,
     },
+    /// A seat's latest run output, as text.
+    Logs {
+        seat: String,
+        /// Keep printing until the run stops.
+        #[arg(long, short)]
+        follow: bool,
+    },
     /// Print the agents' rules (what OSIRIS.md holds). Not listed in
     /// help: named wherever it is needed.
     #[command(hide = true)]
@@ -544,6 +551,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Up { seats } => up(&mut p, &actor, seats),
 
         Cmd::Down { seats } => down(&mut p, &actor, seats),
+
+        Cmd::Logs { seat, follow } => logs(&p, seat, *follow),
 
         Cmd::Seat {
             action: SeatCmd::Add { name, role },
@@ -1790,6 +1799,66 @@ fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliE
         changed.join("\n"),
         json!({ "changed": changed }),
     ))
+}
+
+/// `ris logs`: the seat's latest run, with the agent tool's stream
+/// rendered as text where it is understood and shown raw otherwise.
+fn logs(p: &Project, seat: &str, follow: bool) -> Result<Output, CliError> {
+    if !p.config.agents.contains_key(seat) {
+        return Err(CliError::UnknownAgent(seat.to_owned()));
+    }
+    let dir = p.root.join(ris::project::DIR).join("runs");
+    let prefix = format!("{seat}-");
+    let latest = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let n: u64 = name
+                .strip_prefix(&prefix)?
+                .strip_suffix(".jsonl")?
+                .parse()
+                .ok()?;
+            Some((n, e.path()))
+        })
+        .max();
+    let Some((_, path)) = latest else {
+        return Ok(Output::new(
+            format!("{seat} has not run yet\n  next: `ris up {seat}`"),
+            json!({ "seat": seat, "lines": [] }),
+        ));
+    };
+    let mut seen = 0;
+    let mut all = Vec::new();
+    loop {
+        let text = std::fs::read_to_string(&path)?;
+        let lines: Vec<&str> = text.lines().collect();
+        for line in &lines[seen.min(lines.len())..] {
+            let shown = ris::runner::render_line(line);
+            if follow && let Some(s) = &shown {
+                println!("{s}");
+            }
+            all.extend(shown);
+        }
+        seen = lines.len();
+        if !follow
+            || !p
+                .load()?
+                .state
+                .running
+                .contains_key(&AgentName(seat.to_owned()))
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    let text = if follow {
+        String::new()
+    } else {
+        all.join("\n")
+    };
+    Ok(Output::new(text, json!({ "seat": seat, "lines": all })))
 }
 
 /// A path beside the repository, shown relative to its parent.
