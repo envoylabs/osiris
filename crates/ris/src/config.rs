@@ -293,7 +293,7 @@ trailers = true
 # git server (a pull or merge request).
 merge_on_close = true
 
-# Where each builder's worktree goes: a path template, relative to this
+# Where each writing seat's worktree goes: a path template, relative to this
 # checkout unless absolute. {repo} is this checkout's directory name and
 # {seat} the seat's name, which the template must contain.
 worktrees = \"../{repo}-{seat}\"

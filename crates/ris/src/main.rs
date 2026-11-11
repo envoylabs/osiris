@@ -1703,12 +1703,6 @@ fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), Cl
     }
 }
 
-/// Width one: the item must be exactly one commit on top of where the
-/// phase branch stood after its last recorded merge (or where the phase
-/// branch left the main line, before the phase's first merge), as a
-/// merge from a worktree requires. Skipped only when there is no base
-/// to count from: work committed straight onto the main line with no
-/// merge yet recorded in the phase, or no main line to fork from.
 /// Create a writing seat's worktree where `worktrees` in the
 /// configuration puts it (by default beside the repository), on its own
 /// branch, with the rules imported. Its path.
@@ -2207,6 +2201,12 @@ fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result
     ))
 }
 
+/// Width one: the item must be exactly one commit on top of where the
+/// phase branch stood after its last recorded merge (or where the phase
+/// branch left the main line, before the phase's first merge), as a
+/// merge from a worktree requires. Skipped only when there is no base
+/// to count from: work committed straight onto the main line with no
+/// merge yet recorded in the phase, or no main line to fork from.
 fn require_one_commit(
     p: &Project,
     l: &ris::project::Loaded,
