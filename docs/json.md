@@ -75,6 +75,9 @@ line of output per envelope, and ends once no seat is running; without
   `--all` was given, in which case nothing is left out.
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
+- `ris audit`: `queue`, the open phase's done and merged items the
+  caller has still to review, each with its `id`, `phase`, `goal`,
+  `state` and `checks`; with `--all`, earlier phases' too.
 - `ris status`: `seats`, each with its role, place, branch, claim,
   `paused`, `running` and `activity`: for a running seat with a run
   file, `last` (what it last ran or said, or null), `quiet_seconds`
