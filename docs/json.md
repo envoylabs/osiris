@@ -41,6 +41,10 @@ Every outcome is one JSON document on stdout, success or failure:
 `ris log` and `ris watch` print one envelope per line, each with one
 event as `data`. Without `--json` they print bare event lines.
 
+`ris logs <seat> --follow` prints one envelope per line of the run's
+output as it is written, each with `seat` and `line` as `data`. Without
+`--follow`, `ris logs` is one document with `seat` and `lines`.
+
 ## Values
 
 - Ids are strings in display form: `"I-7"`, `"D-5"`, `"A-2"`, `"P-1"`,

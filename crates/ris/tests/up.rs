@@ -248,6 +248,19 @@ fn up_does_only_the_difference_and_down_stops_without_losing_work() {
     fs::write(rig.repo.join(".osiris/stop-rook"), "").unwrap();
     rig.until("rook stopped", |r| running(r).is_empty());
 
+    // Followed with --json, every line out is an envelope: JSON lines,
+    // with no text or trailing document mixed in.
+    let out = rig.ok(None, &["--json", "logs", "rook", "--follow"]);
+    assert!(!out.trim().is_empty(), "nothing followed");
+    for line in out.lines() {
+        let v: serde_json::Value =
+            serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}"));
+        assert_eq!(v["ok"], true, "{line}");
+        assert_eq!(v["data"]["seat"], "rook", "{line}");
+        assert!(v["data"]["line"].is_string(), "{line}");
+    }
+    assert!(out.contains("hello from rook"), "{out}");
+
     // A seat in the log but removed from the file is reported, untouched.
     rig.ok(None, &["seat", "resume", "heron"]);
     rig.ok(Some("heron"), &["item", "add", "x"]);

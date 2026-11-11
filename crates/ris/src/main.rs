@@ -584,7 +584,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Down { seats } => down(&mut p, &actor, seats),
 
-        Cmd::Logs { seat, follow } => logs(&p, seat, *follow),
+        Cmd::Logs { seat, follow } => logs(&p, seat, *follow, cli.json),
 
         Cmd::Seat {
             action: SeatCmd::Add { name, role },
@@ -2159,7 +2159,7 @@ fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliE
 
 /// `ris logs`: the seat's latest run, with the agent tool's stream
 /// rendered as text where it is understood and shown raw otherwise.
-fn logs(p: &Project, seat: &str, follow: bool) -> Result<Output, CliError> {
+fn logs(p: &Project, seat: &str, follow: bool, json: bool) -> Result<Output, CliError> {
     if !p.config.agents.contains_key(seat) {
         return Err(CliError::UnknownAgent(seat.to_owned()));
     }
@@ -2185,36 +2185,48 @@ fn logs(p: &Project, seat: &str, follow: bool) -> Result<Output, CliError> {
             json!({ "seat": seat, "lines": [] }),
         ));
     };
-    let mut seen = 0;
+    let mut at = 0;
     let mut all = Vec::new();
     loop {
-        let text = std::fs::read_to_string(&path)?;
-        let lines: Vec<&str> = text.lines().collect();
-        for line in &lines[seen.min(lines.len())..] {
-            let shown = ris::runner::render_line(line);
-            if follow && let Some(s) = &shown {
-                println!("{s}");
-            }
-            all.extend(shown);
-        }
-        seen = lines.len();
-        if !follow
-            || !p
-                .load()?
+        // Whether the run is still going is read before the file, so
+        // the last read after it stops sees everything it wrote, and
+        // only then is a last line without a newline taken as it is.
+        let running = follow
+            && p.load()?
                 .state
                 .running
-                .contains_key(&AgentName(seat.to_owned()))
-        {
+                .contains_key(&AgentName(seat.to_owned()));
+        let text = std::fs::read_to_string(&path)?;
+        let (lines, next) = ris::runner::lines_from(&text, at, !running);
+        at = next;
+        for line in lines {
+            let Some(shown) = ris::runner::render_line(line) else {
+                continue;
+            };
+            if follow {
+                // Followed output goes out as it comes: with --json, one
+                // envelope per line, as `ris watch` streams events.
+                if json {
+                    emit(&render::envelope(&json!({ "seat": seat, "line": shown })).to_string());
+                } else {
+                    emit(&shown);
+                }
+            }
+            all.push(shown);
+        }
+        if !running {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    let text = if follow {
-        String::new()
-    } else {
-        all.join("\n")
-    };
-    Ok(Output::new(text, json!({ "seat": seat, "lines": all })))
+    if follow {
+        // Everything has been printed; nothing follows it.
+        return Ok(Output::stream(String::new(), Vec::new()));
+    }
+    Ok(Output::new(
+        all.join("\n"),
+        json!({ "seat": seat, "lines": all }),
+    ))
 }
 
 /// A path beside the repository, shown relative to its parent.

@@ -244,6 +244,20 @@ fn path_with_ris(exe: Option<&Path>) -> Option<std::ffi::OsString> {
     std::env::join_paths(std::iter::once(dir).chain(std::env::split_paths(&rest))).ok()
 }
 
+/// The lines of `text` from byte offset `from`, and the offset to read
+/// from next. A run file is read while it is written, so a last line
+/// with no newline may be only part of a write: it is left for the next
+/// read unless `to_end` says the writer has finished.
+pub fn lines_from(text: &str, from: usize, to_end: bool) -> (Vec<&str>, usize) {
+    let rest = text.get(from..).unwrap_or("");
+    let take = if to_end {
+        rest.len()
+    } else {
+        rest.rfind('\n').map_or(0, |n| n + 1)
+    };
+    (rest[..take].lines().collect(), from + take)
+}
+
 /// One line of a run's output as text: the agent tool's stream JSON
 /// turned into what was said and which tool was used, anything else
 /// shown as it is; `None` for bookkeeping lines with nothing to read.
@@ -443,6 +457,30 @@ mod tests {
             "== success =="
         );
         assert_eq!(render_line("plain text").unwrap(), "plain text");
+    }
+
+    /// A line that reaches the file in two writes is read once, whole,
+    /// after its second write; a last line without a newline is read
+    /// only when the writer has finished.
+    #[test]
+    fn a_line_written_in_two_parts_is_read_once_whole() {
+        let line = r#"{"type":"result","subtype":"success"}"#;
+        let (half, rest) = line.split_at(10);
+        let mut file = String::from("first\n");
+        file.push_str(half);
+        let (got, at) = lines_from(&file, 0, false);
+        assert_eq!(got, ["first"]);
+        assert_eq!(at, 6);
+        file.push_str(rest);
+        file.push('\n');
+        let (got, at) = lines_from(&file, at, false);
+        assert_eq!(got, [line]);
+        assert_eq!(at, file.len());
+        assert_eq!(lines_from(&file, at, false), (vec![], file.len()));
+        // The writer stopped mid-line: the end is read as it is.
+        file.push_str("cut");
+        assert_eq!(lines_from(&file, at, false).0, Vec::<&str>::new());
+        assert_eq!(lines_from(&file, at, true), (vec!["cut"], file.len()));
     }
 
     #[test]
