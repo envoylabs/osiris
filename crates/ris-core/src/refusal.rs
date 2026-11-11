@@ -104,7 +104,8 @@ pub enum Refusal {
     AlreadyRunning { seat: AgentName, since: u64 },
     /// No run of the seat's agent is recorded as running.
     NotRunning(AgentName),
-    /// An item is replaced by another item that is not itself replaced.
+    /// An item is replaced by another item that is not itself replaced
+    /// and does not depend, directly or through other items, on it.
     NotAReplacement { item: ItemId, by: ItemId },
 }
 
@@ -197,7 +198,8 @@ impl Refusal {
                 "raise it with the person, who runs `ris item supersede`".into()
             }
             Self::NotAReplacement { .. } => {
-                "name an item that is neither this one nor superseded; add one with `ris item add`"
+                "name an item that is not this one, not superseded and not waiting on this one; \
+                 add one with `ris item add`"
                     .into()
             }
         }

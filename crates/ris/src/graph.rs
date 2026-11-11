@@ -149,16 +149,7 @@ impl Graph {
         if linked.is_empty() {
             return "no links between open decisions and unmerged items".into();
         }
-        let has_parent: BTreeSet<Node> = self
-            .edges
-            .values()
-            .flat_map(|c| c.iter().map(|(n, _)| *n))
-            .collect();
-        let mut lines = Vec::new();
-        let mut drawn = BTreeSet::new();
-        for &root in linked.iter().filter(|n| !has_parent.contains(n)) {
-            self.walk(l, root, None, "", true, &mut drawn, &mut lines);
-        }
+        let lines = self.lines(&|n| label(l, n));
         let mut out: Vec<String> = lines.iter().take(MAX_LINES).cloned().collect();
         if lines.len() > MAX_LINES {
             out.push(format!(
@@ -175,10 +166,35 @@ impl Graph {
         out.join("\n")
     }
 
+    /// Every drawn line, uncut in number. Roots (linked nodes with no
+    /// parent) are walked first; then any linked node the walk missed is
+    /// walked as a root. Only a cycle has no root, and the log can hold
+    /// one written before supersede refused them; without this second
+    /// pass its nodes and edges would vanish from the drawing.
+    fn lines(&self, label: &dyn Fn(Node) -> String) -> Vec<String> {
+        let linked = self.linked();
+        let has_parent: BTreeSet<Node> = self
+            .edges
+            .values()
+            .flat_map(|c| c.iter().map(|(n, _)| *n))
+            .collect();
+        let mut lines = Vec::new();
+        let mut drawn = BTreeSet::new();
+        for &root in linked.iter().filter(|n| !has_parent.contains(n)) {
+            self.walk(label, root, None, "", true, &mut drawn, &mut lines);
+        }
+        for &node in &linked {
+            if !drawn.contains(&node) {
+                self.walk(label, node, None, "", true, &mut drawn, &mut lines);
+            }
+        }
+        lines
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn walk(
         &self,
-        l: &Loaded,
+        label: &dyn Fn(Node) -> String,
         node: Node,
         via: Option<Kind>,
         prefix: &str,
@@ -194,12 +210,12 @@ impl Graph {
             (Some(Kind::Informs), true) => ("└╌╌ ", "    "),
         };
         let seen = !drawn.insert(node);
-        let label = if seen {
+        let text = if seen {
             format!("{node}  (above)")
         } else {
-            label(l, node)
+            label(node)
         };
-        lines.push(cut(&format!("{prefix}{branch}{label}"), WIDTH));
+        lines.push(cut(&format!("{prefix}{branch}{text}"), WIDTH));
         if seen {
             return;
         }
@@ -207,7 +223,7 @@ impl Graph {
         let next = format!("{prefix}{carry}");
         for (k, (child, kind)) in children.iter().enumerate() {
             self.walk(
-                l,
+                label,
                 *child,
                 Some(*kind),
                 &next,
@@ -270,4 +286,39 @@ fn cut(s: &str, width: usize) -> String {
     let mut out: String = s.chars().take(width - 1).collect();
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cycle has no root. Each of its nodes is still drawn once in
+    /// full, and each of its edges appears once: the edge back into the
+    /// cycle shows as `(above)`.
+    #[test]
+    fn a_cycle_is_drawn_with_every_node_and_edge() {
+        let a = Node::Item(ItemId(5));
+        let b = Node::Item(ItemId(6));
+        let c = Node::Item(ItemId(7));
+        let d = Node::Decision(DecisionId(1));
+        let mut edges = BTreeMap::new();
+        edges.insert(a, vec![(b, Kind::Blocks)]);
+        edges.insert(b, vec![(a, Kind::Blocks)]);
+        edges.insert(d, vec![(c, Kind::Blocks)]);
+        let g = Graph {
+            nodes: [a, b, c, d].into_iter().collect(),
+            edges,
+        };
+        let lines = g.lines(&|n| format!("{n}  x"));
+        assert_eq!(
+            lines,
+            vec![
+                "D-1  x",
+                "└── I-7  x",
+                "I-5  x",
+                "└── I-6  x",
+                "    └── I-5  (above)"
+            ]
+        );
+    }
 }

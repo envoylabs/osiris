@@ -794,7 +794,10 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             }
             item_move(state, *item, kind)?;
             let replacement = state.items.get(by).ok_or(Refusal::UnknownItem(*by))?;
-            if by == item || matches!(replacement.state, ItemState::Superseded { .. }) {
+            if by == item
+                || matches!(replacement.state, ItemState::Superseded { .. })
+                || state.would_wait_on_itself(*item, *by)
+            {
                 return Err(Refusal::NotAReplacement {
                     item: *item,
                     by: *by,

@@ -179,6 +179,47 @@ fn every_edge_is_drawn_once_and_matches_the_json() {
     assert!(text.contains('…'), "the long goal is cut");
 }
 
+/// A supersede that would make the replacement wait on itself is
+/// refused, so the graph never holds a cycle: directly (I-2 depends on
+/// I-1, which it would replace) and through another item (I-3 depends
+/// on I-2, which depends on I-1).
+#[test]
+fn a_supersede_that_closes_a_cycle_is_refused() {
+    let dir = std::env::temp_dir().join(format!("ris-graph-cycle-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    ok(&dir, None, &["init"]);
+    let config = dir.join(".osiris/config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)
+            .unwrap()
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
+            .replace("phase_branches = true", "phase_branches = false"),
+    )
+    .unwrap();
+    ok(&dir, None, &["phase", "open", "cycles"]);
+    ok(&dir, None, &["item", "add", "first"]);
+    ok(&dir, None, &["item", "add", "second", "--depends", "I-1"]);
+    ok(&dir, None, &["item", "add", "third", "--depends", "I-2"]);
+    ok(&dir, None, &["item", "add", "unrelated"]);
+    for by in ["I-2", "I-3"] {
+        let out = ris(&dir, None, &["item", "supersede", "I-1", "--by", by]);
+        assert_eq!(out.status.code(), Some(2), "supersede I-1 by {by}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(&format!("{by} cannot replace I-1")), "{err}");
+    }
+    // A replacement outside the chain is still accepted.
+    ok(&dir, None, &["item", "supersede", "I-1", "--by", "I-4"]);
+    let ready = ok(&dir, Some("heron"), &["ready"]);
+    assert!(ready.contains("I-4"), "{ready}");
+    let text = ok(&dir, None, &["summary"]);
+    assert!(text.contains("I-2  waiting"), "{text}");
+}
+
 /// An item with an unmerged dependency is `waiting` everywhere the
 /// person reads it: the graph, the report's lines and counts, and
 /// `ris show`, matching `ris ready`, which leaves it out. The JSON

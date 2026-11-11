@@ -147,6 +147,35 @@ impl State {
             .collect()
     }
 
+    /// Whether superseding `item` by `by` would make `by` wait on
+    /// itself: its dependencies, followed through replacements with
+    /// `item` standing for `by`, reach `by` again. Items are added
+    /// depending only on items that exist, so a supersede is the only
+    /// way a cycle forms, and every cycle it forms passes through `by`.
+    pub fn would_wait_on_itself(&self, item: ItemId, by: ItemId) -> bool {
+        let after = |d: ItemId| {
+            let c = self.current(d);
+            if c == item { by } else { c }
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        let mut stack = vec![by];
+        while let Some(i) = stack.pop() {
+            let Some(it) = self.items.get(&i) else {
+                continue;
+            };
+            for d in &it.depends_on {
+                let d = after(*d);
+                if d == by {
+                    return true;
+                }
+                if seen.insert(d) {
+                    stack.push(d);
+                }
+            }
+        }
+        false
+    }
+
     /// The item that stands for `item` now: itself, or the end of its
     /// chain of replacements. The chain cannot loop: an item is only
     /// superseded by one that is not itself superseded.
