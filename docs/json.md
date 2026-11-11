@@ -66,7 +66,10 @@ output as it is written, each with `seat` and `line` as `data`. Without
 
 - `ris summary`: `inbox`, `report`, `ready`, `graph` (the nodes and
   edges of work in motion) and `checks` (what running the person's
-  action checks did, often empty).
+  action checks did, often empty). By default these cover the open
+  phase alone, and `carried_over` counts the `items` and open
+  `decisions` from earlier phases left out; `all` says whether
+  `--all` was given, in which case nothing is left out.
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
 - `ris status`: `seats`, each with its role, place, branch, claim,

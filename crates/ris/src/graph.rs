@@ -24,6 +24,7 @@ use ris_core::primitives::{ActionState, Blocker, DecisionState, ItemState};
 use serde_json::{Value, json};
 
 use crate::project::Loaded;
+use crate::render::Scope;
 
 /// The widest a drawn line may be, in characters.
 pub const WIDTH: usize = 80;
@@ -75,10 +76,18 @@ pub struct Graph {
 
 impl Graph {
     pub fn of(l: &Loaded) -> Self {
+        Self::of_scope(l, Scope::All)
+    }
+
+    /// The graph over the decisions and items in `scope`. Open person
+    /// actions are the person's own to-do and are always nodes.
+    pub fn of_scope(l: &Loaded, scope: Scope) -> Self {
         let s = &l.state;
         let mut nodes = BTreeSet::new();
         for d in s.open_decisions() {
-            nodes.insert(Node::Decision(d.id));
+            if scope.decision(l, d) {
+                nodes.insert(Node::Decision(d.id));
+            }
         }
         for a in s.actions.values() {
             if a.state == ActionState::Open {
@@ -86,10 +95,12 @@ impl Graph {
             }
         }
         for i in s.items.values() {
-            if !matches!(
-                i.state,
-                ItemState::Merged { .. } | ItemState::Superseded { .. }
-            ) {
+            if scope.item(i)
+                && !matches!(
+                    i.state,
+                    ItemState::Merged { .. } | ItemState::Superseded { .. }
+                )
+            {
                 nodes.insert(Node::Item(i.id));
             }
         }

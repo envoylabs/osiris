@@ -178,6 +178,11 @@ ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
 ```
 
+The summary covers the open phase: its decisions, its items and what
+of it is ready. Work carried over from earlier phases is counted at the
+top, and `ris summary --all` shows it. With no phase open, the summary
+says so and names the next step.
+
 The summary draws what waits on what: open decisions, actions and
 unmerged items, with hard edges (the item waits) solid and soft ones
 (it proceeds) dashed. Person actions (A-n) are your own to-do list:

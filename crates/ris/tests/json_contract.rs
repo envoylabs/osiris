@@ -122,7 +122,15 @@ fn every_outcome_is_one_envelope_and_the_data_keys_are_pinned() {
         (&["inbox"], &["actions", "checks", "decisions"]),
         (
             &["summary"],
-            &["checks", "graph", "inbox", "ready", "report"],
+            &[
+                "all",
+                "carried_over",
+                "checks",
+                "graph",
+                "inbox",
+                "ready",
+                "report",
+            ],
         ),
         (&["status"], &["seats"]),
         (

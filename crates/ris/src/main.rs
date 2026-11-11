@@ -156,8 +156,12 @@ enum Cmd {
     },
     /// One record in full: an item, decision, phase or message by id.
     Show { id: String },
-    /// The check-in view: decisions, report and what is ready, in one screen.
-    Summary,
+    /// The check-in view of the open phase: decisions, graph, report and what is ready.
+    Summary {
+        /// Every phase's work, not only the open phase's.
+        #[arg(long)]
+        all: bool,
+    },
     /// The phase report.
     Report,
     /// Where each seat is: role, worktree, branch, claim, commits ahead
@@ -1294,9 +1298,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Summary => {
+        Cmd::Summary { all } => {
             let closed = close_checked(&mut p, &actor)?;
-            Ok(with_checks(render::summary(&p.load()?, &actor), closed))
+            Ok(with_checks(
+                render::summary(&p.load()?, &actor, *all),
+                closed,
+            ))
         }
 
         Cmd::Report => Ok(render::report(&p.load()?)),
@@ -1734,7 +1741,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         Cmd::Ready
         | Cmd::Inbox
         | Cmd::Show { .. }
-        | Cmd::Summary
+        | Cmd::Summary { .. }
         | Cmd::Report
         | Cmd::Status
         | Cmd::Verify
