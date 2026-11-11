@@ -421,6 +421,70 @@ fn up_leaves_a_worktree_with_its_own_commits_alone() {
     assert_eq!(rig.git_in(&wt, &["rev-parse", "HEAD"]), own);
 }
 
+/// A `ris seat start` killed outright never records its stop. Up sees
+/// its process is gone, clears the run and starts the seat again,
+/// instead of counting it as running for good.
+#[test]
+fn up_clears_a_run_whose_process_is_gone_and_starts_it_again() {
+    let rig = Rig::new("up-gone", WAITING_AGENT);
+    let rook_runs = |r: &Rig, event: &str| {
+        r.events(event)
+            .iter()
+            .filter(|e| e["structure"]["seat"] == "rook")
+            .count()
+    };
+    rig.ok(None, &["up"]);
+    let lock = rig.repo.join(".osiris/runs/rook.lock");
+    rig.until("rook's run names its process", |_| {
+        fs::read_to_string(&lock).is_ok_and(|s| !s.trim().is_empty())
+    });
+    let pid = fs::read_to_string(&lock).unwrap().trim().to_owned();
+    assert!(
+        Command::new("kill")
+            .args(["-KILL", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    // Its agent is left behind; let it go too, then clear the way for
+    // the next one.
+    let stop = rig.repo.join(".osiris/stop-rook");
+    fs::write(&stop, "").unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    fs::remove_file(&stop).unwrap();
+    assert_eq!(
+        rook_runs(&rig, "run_stopped"),
+        0,
+        "the kill recorded nothing"
+    );
+
+    let out = rig.ok(None, &["up"]);
+    assert!(
+        out.contains("rook: its last run ended without being recorded"),
+        "{out}"
+    );
+    assert!(out.contains("rook: started"), "{out}");
+    assert_eq!(rook_runs(&rig, "run_stopped"), 1);
+    assert_eq!(rook_runs(&rig, "run_started"), 2);
+    // The live ones are left as they are.
+    assert!(!out.contains("heron:"), "{out}");
+}
+
+/// A start that fails is reported as failing, with why, not as started.
+#[test]
+fn up_reports_a_start_that_fails() {
+    let rig = Rig::new("up-fails", WAITING_AGENT);
+    let config = rig.repo.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(&config, c.replace("fake-agent", "no-such-agent-tool")).unwrap();
+    let out = rig.ok(None, &["up", "wren"]);
+    assert!(
+        out.contains("wren: failed to start: could not run `no-such-agent-tool`"),
+        "{out}"
+    );
+    assert!(!out.contains("wren: started"), "{out}");
+}
+
 /// A seat marked `start = false` is attended: a person runs it. Up gives
 /// it a worktree and nothing more; down does not pause it; a pause the
 /// person set on it is not undone by up.

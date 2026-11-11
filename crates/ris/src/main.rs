@@ -1943,26 +1943,43 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
             changed.push(format!("{s}: resumed"));
         }
     }
+    // A run the log holds whose process is gone is cleared, so the seat
+    // is started again below rather than counted as running for good.
+    let cleared = clear_gone_runs(p, actor, &l, &seats)?;
+    let l = if cleared.is_empty() { l } else { p.load()? };
+    changed.extend(cleared);
     let exe = std::env::current_exe()?;
+    let mut starting = Vec::new();
     for seat in &seats {
         if l.state.running.contains_key(&name(seat)) {
             continue;
         }
         // In the background, in its own process group, so it outlives
         // this command and the terminal's interrupt does not reach it;
-        // it records its own start and stop.
+        // it records its own start and stop. What it prints goes to a
+        // file, read below if it fails early.
         use std::os::unix::process::CommandExt;
-        std::process::Command::new(&exe)
+        let out_file = p
+            .root
+            .join(ris::project::DIR)
+            .join("runs")
+            .join(format!("{seat}.start"));
+        if let Some(runs) = out_file.parent() {
+            std::fs::create_dir_all(runs)?;
+        }
+        let out = std::fs::File::create(&out_file)?;
+        let child = std::process::Command::new(&exe)
             .args(["seat", "start", seat, "--quiet"])
             .current_dir(&p.root)
             .env("RIS_AGENT", ris::project::PERSON)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(out.try_clone()?)
+            .stderr(out)
             .process_group(0)
             .spawn()?;
-        changed.push(format!("{seat}: started; `ris logs {seat}` follows it"));
+        starting.push((seat.clone(), child, out_file));
     }
+    changed.extend(settle_starts(starting));
     let retired: Vec<String> = names_in_log(&l.state)
         .into_iter()
         .filter(|n| !p.config.agents.contains_key(n))
@@ -2319,6 +2336,19 @@ fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result
         .display()
         .to_string();
     let program = p.config.runner.program.clone();
+    // The run holds a lock for as long as this process lives, so `ris
+    // up` can tell a run whose process is gone (killed, or the machine
+    // restarted) from a live one: the operating system releases the
+    // lock however the process ends. The file names the process.
+    let lock_path = run_lock_file(p, seat);
+    if let Some(runs) = lock_path.parent() {
+        std::fs::create_dir_all(runs)?;
+    }
+    let held = std::fs::File::create(&lock_path)?;
+    held.try_lock().map_err(|e| {
+        CliError::Other(format!("{seat}'s run lock is held by another process: {e}"))
+    })?;
+    std::fs::write(&lock_path, format!("{}\n", std::process::id()))?;
     let result = ris::runner::run(&program, &args, &dir, seat, &p.root, &log, quiet);
     let status = result.as_ref().ok().copied().flatten();
     p.run(&Command::RunStop {
@@ -2326,6 +2356,7 @@ fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result
         actor: actor.clone(),
         status,
     })?;
+    drop(held);
     let status = result.map_err(|e| {
         CliError::Other(format!(
             "could not run `{program}` for {seat}: {e}\n  next: install it, or set [runner] program in .osiris/config.toml"
@@ -2338,6 +2369,92 @@ fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result
         ),
         json!({ "seat": seat, "status": status, "log": shown_log }),
     ))
+}
+
+/// How long `ris up` watches the seats it started before saying they
+/// started: a start that fails (no agent tool, nowhere to work) fails
+/// well within it.
+const START_GRACE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Watch the `ris seat start` processes just spawned for `START_GRACE`,
+/// or until all have exited, and say for each whether it started,
+/// failed (with the first line of what it printed), or already ended.
+fn settle_starts(mut starting: Vec<(String, std::process::Child, PathBuf)>) -> Vec<String> {
+    let deadline = std::time::Instant::now() + START_GRACE;
+    let mut exited: Vec<Option<std::process::ExitStatus>> = vec![None; starting.len()];
+    while std::time::Instant::now() < deadline && exited.iter().any(Option::is_none) {
+        for (i, (_, child, _)) in starting.iter_mut().enumerate() {
+            if exited[i].is_none() {
+                exited[i] = child.try_wait().ok().flatten();
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    starting
+        .iter()
+        .zip(exited)
+        .map(|((seat, _, out_file), status)| match status {
+            None => format!("{seat}: started; `ris logs {seat}` follows it"),
+            Some(s) => {
+                let printed = std::fs::read_to_string(out_file).unwrap_or_default();
+                let first = printed.lines().next().unwrap_or("").trim().to_owned();
+                if s.success() {
+                    format!("{seat}: started and already stopped: {first}")
+                } else {
+                    format!("{seat}: failed to start: {first}")
+                }
+            }
+        })
+        .collect()
+}
+
+/// The lock a seat's live run holds, which also names its process.
+fn run_lock_file(p: &Project, seat: &str) -> PathBuf {
+    p.root
+        .join(ris::project::DIR)
+        .join("runs")
+        .join(format!("{seat}.lock"))
+}
+
+/// Whether the process holding a seat's run is alive: whether its run
+/// lock is still held. In doubt (no lock file, as for a run started
+/// before run locks were kept, or a lock that cannot be tried), alive:
+/// a live run must never be cleared.
+fn run_alive(p: &Project, seat: &str) -> bool {
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .open(run_lock_file(p, seat))
+    else {
+        return true;
+    };
+    !matches!(file.try_lock(), Ok(()))
+}
+
+/// Clear each named seat's run whose process is gone: the log says it
+/// is running, but no `ris seat start` holds it, so it would stay
+/// running for good and never be started again. One line per seat.
+fn clear_gone_runs(
+    p: &mut Project,
+    actor: &Actor,
+    l: &ris::project::Loaded,
+    named: &[String],
+) -> Result<Vec<String>, CliError> {
+    let mut lines = Vec::new();
+    for seat in named {
+        let name = AgentName(seat.clone());
+        if !l.state.running.contains_key(&name) || run_alive(p, seat) {
+            continue;
+        }
+        p.run(&Command::RunStop {
+            seat: name,
+            actor: actor.clone(),
+            status: None,
+        })?;
+        lines.push(format!(
+            "{seat}: its last run ended without being recorded (its process is gone); cleared"
+        ));
+    }
+    Ok(lines)
 }
 
 /// Width one: the item must be exactly one commit on top of where the

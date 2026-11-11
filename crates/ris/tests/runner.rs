@@ -235,9 +235,13 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
         .unwrap();
     assert_eq!(stopped["structure"]["status"], 3);
     // The output is kept, under .osiris/runs/.
-    let runs: Vec<_> = fs::read_dir(repo.join(".osiris/runs")).unwrap().collect();
+    let runs: Vec<_> = fs::read_dir(repo.join(".osiris/runs"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .collect();
     assert_eq!(runs.len(), 1);
-    let kept = fs::read_to_string(runs[0].as_ref().unwrap().path()).unwrap();
+    let kept = fs::read_to_string(&runs[0]).unwrap();
     assert!(kept.contains("AGENT rook"));
 
     // An auditor runs in the main checkout and cannot edit.
