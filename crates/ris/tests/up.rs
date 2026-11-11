@@ -129,6 +129,51 @@ impl Drop for Rig {
 const WAITING_AGENT: &str = "#!/bin/sh\nprintf 'hello from %s\\n' \"$RIS_AGENT\"\n\
     while [ ! -f \"$RIS_ROOT/.osiris/stop-$RIS_AGENT\" ]; do sleep 0.05; done\nexit 0\n";
 
+/// `worktrees` in the configuration places a builder's worktree; one
+/// inside the main checkout leaves that checkout clean.
+#[test]
+fn up_puts_a_worktree_where_the_configuration_says() {
+    let rig = Rig::new("up-placed", WAITING_AGENT);
+    let config = rig.repo.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(&config, format!("worktrees = \".seats/{{seat}}\"\n{c}")).unwrap();
+
+    let out = rig.ok(None, &["up", "rook"]);
+    assert!(out.contains("rook: worktree at .seats/rook"), "{out}");
+    let wt = rig.repo.join(".seats/rook");
+    assert!(wt.join("README").exists(), "a checkout of the repository");
+    assert!(
+        !rig.repo.with_file_name("repo-rook").exists(),
+        "not at the default place"
+    );
+
+    let v: Value = serde_json::from_slice(&rig.ris(None, &["--json", "status"]).stdout).unwrap();
+    let rook = v["data"]["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["seat"] == "rook")
+        .unwrap();
+    assert_eq!(rook["worktree"], ".seats/rook", "{rook}");
+
+    let porcelain = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&rig.repo)
+        .output()
+        .unwrap();
+    assert!(
+        porcelain.stdout.is_empty(),
+        "the main checkout stays clean: {}",
+        String::from_utf8_lossy(&porcelain.stdout)
+    );
+
+    // A template every seat would share is refused before anything runs.
+    fs::write(&config, format!("worktrees = \"../shared\"\n{c}")).unwrap();
+    let out = rig.ris(None, &["status"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("must contain {seat}"));
+}
+
 #[test]
 fn up_does_only_the_difference_and_down_stops_without_losing_work() {
     let rig = Rig::new("up", WAITING_AGENT);

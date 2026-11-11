@@ -1698,27 +1698,29 @@ fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), Cl
 /// merge from a worktree requires. Skipped only when there is no base
 /// to count from: work committed straight onto the main line with no
 /// merge yet recorded in the phase, or no main line to fork from.
-/// Create a writing seat's worktree beside the repository, on its own
+/// Create a writing seat's worktree where `worktrees` in the
+/// configuration puts it (by default beside the repository), on its own
 /// branch, with the rules imported. Its path.
 fn make_worktree(p: &Project, seat: &str) -> Result<PathBuf, CliError> {
     if !p.config.agents.contains_key(seat) {
         return Err(CliError::UnknownAgent(seat.to_owned()));
     }
-    let name = p
-        .root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "repo".into());
-    let path = p
-        .root
-        .parent()
-        .unwrap_or(&p.root)
-        .join(format!("{name}-{seat}"));
+    let path = p.config.worktree_path(&p.root, seat);
     if path.exists() {
         return Err(CliError::Other(format!(
             "{} already exists\n  next: start the agent there, or remove it with `git worktree remove`",
-            path.display()
+            shown_beside(p, &path)
         )));
+    }
+    // Inside the main checkout, the worktree would show there as
+    // untracked, and the main checkout must be clean to open or close
+    // a phase.
+    if let Ok(inside) = path.strip_prefix(ris::config::normalize(&p.root)) {
+        let pattern = format!("/{}/", inside.to_string_lossy().replace('\\', "/"));
+        ris::project::exclude_locally(&p.root, &[&pattern])?;
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
     let has_branch = git(
         &p.root,
@@ -2007,10 +2009,7 @@ fn logs(p: &Project, seat: &str, follow: bool) -> Result<Output, CliError> {
 
 /// A path beside the repository, shown relative to its parent.
 fn shown_beside(p: &Project, path: &std::path::Path) -> String {
-    let base = p.root.parent().unwrap_or(&p.root);
-    path.strip_prefix(base)
-        .map(|r| format!("../{}", r.display()))
-        .unwrap_or_else(|_| path.display().to_string())
+    ris::config::relative(&p.root, path).display().to_string()
 }
 
 /// The goal of the item every phase gets for its docs (`docs_item`).

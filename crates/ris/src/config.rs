@@ -6,6 +6,7 @@
 //! command and its pass condition.
 
 use std::collections::BTreeMap;
+use std::path::{Component, Path, PathBuf};
 
 use ris_core::text::{Policy, scan};
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,19 @@ pub struct Config {
     /// date, which `ris phase close` waits for. On unless turned off.
     #[serde(default = "default_true")]
     pub docs_item: bool,
+    /// Where a writing seat's worktree goes: a path template, relative
+    /// to the main checkout unless absolute, in which `{repo}` is the
+    /// main checkout's directory name and `{seat}` the seat's name. It
+    /// must contain `{seat}`, so no two seats share a path.
+    #[serde(default = "default_worktrees")]
+    pub worktrees: String,
+}
+
+/// The default `worktrees`: beside the repository, as `<repo>-<seat>`.
+pub const DEFAULT_WORKTREES: &str = "../{repo}-{seat}";
+
+fn default_worktrees() -> String {
+    DEFAULT_WORKTREES.to_owned()
 }
 
 /// The runner: which agent tool starts a seat's agent, and the line an
@@ -117,6 +131,7 @@ impl Default for Config {
             merge_on_close: true,
             runner: RunnerConfig::default(),
             docs_item: true,
+            worktrees: default_worktrees(),
         }
     }
 }
@@ -163,7 +178,27 @@ impl Config {
                 crate::project::PERSON
             ));
         }
+        if !c.worktrees.contains("{seat}") {
+            return Err(
+                "config.toml: `worktrees` must contain {seat}, so no two seats share a path".into(),
+            );
+        }
         Ok(c)
+    }
+
+    /// Where `seat`'s worktree goes for the main checkout at `root`:
+    /// `worktrees` filled in, joined to `root` unless absolute, with
+    /// `.` and `..` resolved lexically.
+    pub fn worktree_path(&self, root: &Path, seat: &str) -> PathBuf {
+        let repo = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "repo".into());
+        let filled = self
+            .worktrees
+            .replace("{repo}", &repo)
+            .replace("{seat}", seat);
+        normalize(&root.join(filled))
     }
 
     /// The scan policy this configuration defines.
@@ -258,6 +293,11 @@ trailers = true
 # git server (a pull or merge request).
 merge_on_close = true
 
+# Where each builder's worktree goes: a path template, relative to this
+# checkout unless absolute. {repo} is this checkout's directory name and
+# {seat} the seat's name, which the template must contain.
+worktrees = \"../{repo}-{seat}\"
+
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment,
 # and RIS_AGENT=person in the person's; unset is refused.
@@ -267,6 +307,46 @@ role = \"lead\"
 [agents.wren]
 role = \"auditor\"
 ";
+}
+
+/// `path` with `.` dropped and each `..` taking off the component
+/// before it, without touching the filesystem (the path may not exist).
+pub fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// `path` relative to `from`, both absolute, as `../x` or `x/y`; `.`
+/// when they are the same. Shown on screen in place of an absolute
+/// path, which would carry a username.
+pub fn relative(from: &Path, path: &Path) -> PathBuf {
+    let from = normalize(from);
+    let path = normalize(path);
+    let a: Vec<_> = from.components().collect();
+    let b: Vec<_> = path.components().collect();
+    let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let mut out = PathBuf::new();
+    for _ in common..a.len() {
+        out.push("..");
+    }
+    for c in &b[common..] {
+        out.push(c);
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
 }
 
 /// What `checks.toml` holds.
@@ -367,6 +447,60 @@ mod tests {
         assert!(
             Config::with_seat(&with_denylist, "examplename", Role::Lead, &[]).is_err(),
             "denylisted"
+        );
+    }
+
+    #[test]
+    fn worktrees_default_beside_the_repository_and_can_be_placed() {
+        // A root assembled from pieces: a literal absolute path in the
+        // tree is refused by the exit scan.
+        let root: PathBuf = [std::path::MAIN_SEPARATOR_STR, "w", "proj"]
+            .iter()
+            .collect();
+        let base = root.parent().unwrap();
+        let c = Config::parse(Config::TEMPLATE).unwrap();
+        assert_eq!(c.worktrees, DEFAULT_WORKTREES);
+        assert_eq!(c.worktree_path(&root, "rook"), base.join("proj-rook"));
+        assert_eq!(
+            Config::default().worktree_path(&root, "rook"),
+            base.join("proj-rook"),
+            "unset is the default"
+        );
+
+        let inside = Config::parse("worktrees = \".seats/{seat}\"\n").unwrap();
+        assert_eq!(
+            inside.worktree_path(&root, "kite"),
+            root.join(".seats").join("kite")
+        );
+        let elsewhere = Config::parse("worktrees = \"../trees/{repo}/./{seat}\"\n").unwrap();
+        assert_eq!(
+            elsewhere.worktree_path(&root, "kite"),
+            base.join("trees").join("proj").join("kite")
+        );
+        assert!(
+            Config::parse("worktrees = \"../{repo}-shared\"\n").is_err(),
+            "every seat would share one path"
+        );
+    }
+
+    #[test]
+    fn a_path_is_shown_relative_without_its_prefix() {
+        let root: PathBuf = [std::path::MAIN_SEPARATOR_STR, "w", "proj"]
+            .iter()
+            .collect();
+        let base = root.parent().unwrap();
+        assert_eq!(
+            relative(&root, &base.join("proj-rook")),
+            Path::new("../proj-rook")
+        );
+        assert_eq!(
+            relative(&root, &root.join(".seats/kite")),
+            Path::new(".seats/kite")
+        );
+        assert_eq!(relative(&root, &root), Path::new("."));
+        assert_eq!(
+            relative(&root, &base.join("a/../trees/x")),
+            Path::new("../trees/x")
         );
     }
 

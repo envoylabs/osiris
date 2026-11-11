@@ -78,6 +78,14 @@ For a repository merged through a git server's web interface, set
 merge request) and, if the project's commit convention has no room for
 them, `trailers = false`.
 
+Each builder's worktree goes where `worktrees` says: a path template,
+relative to the main checkout unless absolute, in which `{repo}` is the
+checkout's directory name and `{seat}` the seat's name. The default,
+`"../{repo}-{seat}"`, puts it beside the repository. The template must
+contain `{seat}`. A worktree placed inside the main checkout, such as
+`".seats/{seat}"`, is added to git's local exclude file so the main
+checkout stays clean.
+
 `.osiris/checks.toml` declares the project's checks, each a command that
 passes on exit status zero:
 

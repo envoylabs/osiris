@@ -139,17 +139,13 @@ fn role_word(r: Role) -> &'static str {
     }
 }
 
-/// Paths are shown relative to the store root's parent, where `ris
-/// worktree` puts them, so no absolute path reaches the screen.
+/// Paths are shown relative to the main checkout, wherever `worktrees`
+/// puts them, so no absolute path reaches the screen.
 fn shown(p: &Project, path: &Path) -> String {
     if path == p.root {
         return "main checkout".into();
     }
-    let base = p.root.parent().unwrap_or(&p.root);
-    match path.strip_prefix(base) {
-        Ok(rel) => format!("../{}", rel.display()),
-        Err(_) => path.display().to_string(),
-    }
+    crate::config::relative(&p.root, path).display().to_string()
 }
 
 pub fn render(p: &Project, l: &Loaded) -> Output {
