@@ -63,6 +63,12 @@ pub struct Config {
     /// must contain `{seat}`, so no two seats share a path.
     #[serde(default = "default_worktrees")]
     pub worktrees: String,
+    /// How long a person action's check may run, in seconds, before it
+    /// is stopped and counted as not passing yet. The checks run from
+    /// the person's inbox, summary and up, so a check that hangs must
+    /// not hang the check-in.
+    #[serde(default = "default_action_check_seconds")]
+    pub action_check_seconds: u64,
     /// The person's ris, rebuilt from the last merged commit and
     /// installed on their PATH (D-48). Off when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,6 +77,10 @@ pub struct Config {
 
 /// The default `worktrees`: beside the repository, as `<repo>-<seat>`.
 pub const DEFAULT_WORKTREES: &str = "../{repo}-{seat}";
+
+fn default_action_check_seconds() -> u64 {
+    10
+}
 
 fn default_worktrees() -> String {
     DEFAULT_WORKTREES.to_owned()
@@ -136,6 +146,7 @@ impl Default for Config {
             runner: RunnerConfig::default(),
             docs_item: true,
             worktrees: default_worktrees(),
+            action_check_seconds: default_action_check_seconds(),
             install: None,
         }
     }

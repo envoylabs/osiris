@@ -71,6 +71,64 @@ pub fn run_check_quietly(dir: &Path, check: &CheckConfig) -> Result<(bool, Strin
     Ok((out.status.success(), text))
 }
 
+/// Run `command` with `sh -c` in `dir`, with no input, for at most
+/// `limit`. Its exit status and combined output, or `None` when it ran
+/// past the limit: then it is killed with everything it started (it
+/// runs in a process group of its own), and what it printed is dropped.
+pub fn run_limited(
+    dir: &Path,
+    command: &str,
+    limit: std::time::Duration,
+) -> Result<Option<(bool, Vec<u8>)>, CliError> {
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let mut child = Command::new("sh")
+        .args(["-c", command])
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()?;
+    // Read both pipes as the command runs, so a command that prints a
+    // lot does not stall on a full pipe and look like a hang.
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = drain(child.stdout.take().map(|p| Box::new(p) as _));
+    let err = drain(child.stderr.take().map(|p| Box::new(p) as _));
+    let deadline = std::time::Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let Some(status) = status else {
+        // The whole group, so a child the shell started (which holds
+        // the pipes open) goes too.
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{}", child.id())])
+            .status();
+        let _ = child.kill();
+        let _ = child.wait();
+        return Ok(None);
+    };
+    let mut bytes = out.join().unwrap_or_default();
+    bytes.extend(err.join().unwrap_or_default());
+    Ok(Some((status.success(), bytes)))
+}
+
 /// `git rev-parse HEAD` in `root`.
 pub fn git_head(root: &Path) -> Result<String, CliError> {
     let out = Command::new("git")

@@ -2057,16 +2057,18 @@ fn close_checked(p: &mut Project, actor: &Actor) -> Result<Vec<String>, CliError
         .filter_map(|a| a.check.map(|at| (a.id, l.text(at, "check").to_owned())))
         .collect();
     let mut lines = Vec::new();
+    let limit = std::time::Duration::from_secs(p.config.action_check_seconds);
     for (id, check) in open {
-        let out = std::process::Command::new("sh")
-            .args(["-c", &check])
-            .current_dir(&p.root)
-            .stdin(std::process::Stdio::null())
-            .output()?;
-        if out.status.success() {
+        let Some((passed, output)) = checks::run_limited(&p.root, &check, limit)? else {
+            lines.push(format!(
+                "{id}: its check ran past {}s, so it does not pass yet",
+                limit.as_secs()
+            ));
+            continue;
+        };
+        if passed {
             let mut bytes = format!("$ {check}\n").into_bytes();
-            bytes.extend(&out.stdout);
-            bytes.extend(&out.stderr);
+            bytes.extend(&output);
             let evidence = p.evidence.put(&bytes)?;
             p.run(&Command::ActionDone {
                 action: id,

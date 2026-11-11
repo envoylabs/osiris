@@ -262,3 +262,61 @@ fn an_action_with_a_check_closes_itself_at_a_check_in() {
     // Nothing more to run.
     assert_eq!(json(&dir, &["inbox"])["checks"], serde_json::json!([]));
 }
+
+/// A check that runs past its time limit does not hang the check-in: it
+/// is stopped, with what it started, and counts as not passing yet.
+#[test]
+fn a_check_that_runs_past_its_limit_does_not_pass_and_is_stopped() {
+    let dir = std::env::temp_dir().join(format!("ris-action-slow-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    ok(&dir, None, &["init"]);
+    let config = dir.join(".osiris/config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)
+            .unwrap()
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false\naction_check_seconds = 1",
+            )
+            .replace("phase_branches = true", "phase_branches = false"),
+    )
+    .unwrap();
+    ok(&dir, None, &["phase", "open", "slow checks"]);
+    ok(
+        &dir,
+        None,
+        &["action", "raise", "wait for it", "--done-when", "it comes"],
+    );
+    // It would pass, and its background child would leave a file
+    // behind, if it ran to the end. Killing only the shell would leave
+    // that child running: the whole process group must go.
+    let start = std::time::Instant::now();
+    let out = ok(
+        &dir,
+        None,
+        &[
+            "action",
+            "check",
+            "A-1",
+            "--command",
+            "(sleep 2; touch late) & wait",
+        ],
+    );
+    assert!(out.contains("A-1: its check ran past 1s"), "{out}");
+    let out = ok(&dir, None, &["summary"]);
+    assert!(out.contains("A-1: its check ran past 1s"), "{out}");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(3),
+        "two check-ins took {:?}",
+        start.elapsed()
+    );
+    assert_eq!(json(&dir, &["show", "A-1"])["state"], "open");
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    assert!(
+        !dir.join("late").exists(),
+        "the check was stopped, not left running"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
