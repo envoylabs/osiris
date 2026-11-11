@@ -155,6 +155,14 @@ the checks and the rules. Each run's output is kept under
 To run an agent yourself instead, start it in its seat's directory with
 its name set: `cd ../your-repo-rook && RIS_AGENT=rook claude`.
 
+In a project that builds `ris` itself, `[install]` in the configuration
+keeps your `ris` at the last build that passed every check. A merge
+records its commit; your next command (or `ris install`) builds that
+commit in a checkout outside the repository and installs it where `to`
+says, so you never run a seat's work in progress. A build that fails is
+reported once and leaves the last good program in place; `ris install`
+tries it again.
+
 ## 5. Check in
 
 ```sh

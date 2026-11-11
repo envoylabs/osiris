@@ -170,6 +170,12 @@ enum Cmd {
     Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
+    /// Build the last merged commit (the last build that passed every
+    /// check) and install it where `[install]` in config.toml says. Also
+    /// done on the person's next command after a merge, so not listed
+    /// in help. The person's.
+    #[command(hide = true)]
+    Install,
     /// Import items, standing decisions and open questions from a TOML
     /// file into the open phase. The whole file is validated first; see `ris import
     /// --help` and the onboarding skill for the format.
@@ -546,6 +552,17 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     let mut p = Project::find(&cwd)?;
     let actor = p.actor()?;
     forbidden_by_role(&p, &actor, &cli.command)?;
+    // D-48: the person's ris catches up with the last merge before it
+    // does anything else. A seat's never does: it runs in a sandbox.
+    if actor == Actor::Person
+        && !matches!(cli.command, Cmd::Install)
+        && let Some(cfg) = &p.config.install
+    {
+        let l = p.load()?;
+        if let Some(line) = ris::install::catch_up(&p.root, cfg, &l.log) {
+            eprintln!("{line}");
+        }
+    }
 
     match &cli.command {
         Cmd::Init { .. } | Cmd::Rules => unreachable!(),
@@ -562,6 +579,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         }
 
         Cmd::Up { seats } => up(&mut p, &actor, seats),
+
+        Cmd::Install => install(&p, &actor),
 
         Cmd::Down { seats } => down(&mut p, &actor, seats),
 
@@ -1809,6 +1828,40 @@ fn make_worktree(p: &Project, seat: &str) -> Result<PathBuf, CliError> {
 /// resumed if paused, and is started in the background if its
 /// agent is not running. Seats in the log but not in the file are
 /// reported and left alone.
+/// `ris install`: the person's, outside any sandbox (D-48).
+fn install(p: &Project, actor: &Actor) -> Result<Output, CliError> {
+    if *actor != Actor::Person {
+        return Err(CliError::Other(
+            "refused: installing ris is the person's; a seat's ris runs in its sandbox and never writes the person's PATH\n  \
+             next: merge the item; the person's next command installs the build"
+                .into(),
+        ));
+    }
+    let Some(cfg) = &p.config.install else {
+        return Err(CliError::Other(
+            "nothing to install: config.toml has no [install]\n  \
+             next: add [install] with build, artifact and to (the template shows an example)"
+                .into(),
+        ));
+    };
+    let l = p.load()?;
+    let Some((item, commit)) = ris::install::last_merged(&l.log) else {
+        return Err(CliError::Other(
+            "nothing to install: no item has been merged yet\n  next: `ris merge` an item first"
+                .into(),
+        ));
+    };
+    let commit = ris::install::install(&p.root, cfg, &commit)?;
+    Ok(Output::new(
+        format!(
+            "installed ris from {} ({item}, the last merge) to {}",
+            ris::install::short(&commit),
+            cfg.to
+        ),
+        json!({ "item": item.to_string(), "commit": commit, "to": cfg.to }),
+    ))
+}
+
 fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliError> {
     if *actor != Actor::Person {
         return Err(CliError::Refused(

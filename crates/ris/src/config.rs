@@ -63,6 +63,10 @@ pub struct Config {
     /// must contain `{seat}`, so no two seats share a path.
     #[serde(default = "default_worktrees")]
     pub worktrees: String,
+    /// The person's ris, rebuilt from the last merged commit and
+    /// installed on their PATH (D-48). Off when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install: Option<crate::install::InstallConfig>,
 }
 
 /// The default `worktrees`: beside the repository, as `<repo>-<seat>`.
@@ -132,6 +136,7 @@ impl Default for Config {
             runner: RunnerConfig::default(),
             docs_item: true,
             worktrees: default_worktrees(),
+            install: None,
         }
     }
 }
@@ -322,6 +327,16 @@ merge_on_close = true
 # {seat} the seat's name, which the template must contain.
 worktrees = \"../{repo}-{seat}\"
 
+# The person's ris, rebuilt from the last merged commit (which passed
+# every check) and installed on your PATH, by `ris install` and on your
+# next command after a merge. For a project that builds ris itself. The
+# build runs in a checkout outside the repository (`dir`, by default in
+# your cache directory). Uncomment to turn it on.
+# [install]
+# build = \"cargo build --release -p ris\"
+# artifact = \"target/release/ris\"
+# to = \"~/.local/bin/ris\"
+
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment,
 # and RIS_AGENT=person in the person's; unset is refused.
@@ -430,6 +445,17 @@ mod tests {
         assert_eq!(c.agents["wren"].role, Role::Auditor);
         assert!(c.denylist.is_empty());
         c.check_agent_names().unwrap();
+        assert_eq!(c.install, None, "installing is off until configured");
+        let on = Config::parse(&Config::TEMPLATE.replace("# [install]", "[install]").replace(
+            "\n# build = \"cargo build --release -p ris\"\n# artifact = \"target/release/ris\"\n# to =",
+            "\nbuild = \"cargo build --release -p ris\"\nartifact = \"target/release/ris\"\nto =",
+        ))
+        .unwrap();
+        let install = on
+            .install
+            .expect("the template's example, uncommented, parses");
+        assert_eq!(install.artifact, "target/release/ris");
+        assert_eq!(on.agents.len(), 2, "the seats below stay seats");
         let k = ChecksConfig::parse(ChecksConfig::TEMPLATE).unwrap();
         assert_eq!(k.checks["test"].command, "cargo test --workspace");
     }
