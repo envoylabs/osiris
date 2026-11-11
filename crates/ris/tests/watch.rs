@@ -12,7 +12,7 @@ use std::time::Duration;
 fn cmd(dir: &Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_ris"));
     c.current_dir(dir)
-        .env_remove("RIS_AGENT")
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1");
     c
@@ -40,7 +40,10 @@ fn a_watcher_sees_what_another_process_appends() {
         &config,
         fs::read_to_string(&config)
             .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             .replace("phase_branches = true", "phase_branches = false"),
     )
     .unwrap();

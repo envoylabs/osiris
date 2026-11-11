@@ -19,7 +19,7 @@ fn ris(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ris"))
         .args(args)
         .current_dir(dir)
-        .env_remove("RIS_AGENT")
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1")
         .output()

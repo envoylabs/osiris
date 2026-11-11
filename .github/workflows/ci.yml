@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
+      # ris refuses every command with RIS_AGENT unset.
+      RIS_AGENT: person
     steps:
       - uses: actions/checkout@v4
 

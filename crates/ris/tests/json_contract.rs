@@ -13,7 +13,7 @@ use serde_json::Value;
 fn cmd(dir: &Path, agent: Option<&str>) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_ris"));
     c.current_dir(dir)
-        .env_remove("RIS_AGENT")
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1");
     if let Some(a) = agent {
@@ -68,7 +68,7 @@ fn project(name: &str) -> PathBuf {
     // A git repository, for `ris scan`; no commits, so no phase branches.
     assert!(
         Command::new("git")
-            .args(["init", "-q"])
+            .args(["init", "-q", "-b", "main"])
             .current_dir(&dir)
             .status()
             .unwrap()
@@ -80,7 +80,10 @@ fn project(name: &str) -> PathBuf {
         &config,
         fs::read_to_string(&config)
             .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             .replace("phase_branches = true", "phase_branches = false"),
     )
     .unwrap();
@@ -116,8 +119,19 @@ fn every_outcome_is_one_envelope_and_the_data_keys_are_pinned() {
     // Pinned top-level keys of the data a client reads most.
     let pinned: &[(&[&str], &[&str])] = &[
         (&["ready"], &["ready"]),
-        (&["inbox"], &["decisions"]),
-        (&["summary"], &["inbox", "ready", "report"]),
+        (&["inbox"], &["actions", "checks", "decisions"]),
+        (
+            &["summary"],
+            &[
+                "all",
+                "carried_over",
+                "checks",
+                "graph",
+                "inbox",
+                "ready",
+                "report",
+            ],
+        ),
         (&["status"], &["seats"]),
         (
             &["report"],
@@ -126,6 +140,7 @@ fn every_outcome_is_one_envelope_and_the_data_keys_are_pinned() {
                 "items",
                 "log",
                 "mechanical",
+                "merged_ahead",
                 "messages",
                 "phase",
                 "previous_report",

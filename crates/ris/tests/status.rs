@@ -19,7 +19,7 @@ fn ris(dir: &Path, agent: Option<&str>, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ris"));
     cmd.args(args)
         .current_dir(dir)
-        .env_remove("RIS_AGENT")
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1");
     if let Some(a) = agent {
@@ -53,9 +53,10 @@ fn status_shows_where_each_seat_is() {
     let config = main.join(".osiris/config.toml");
     fs::write(
         &config,
-        fs::read_to_string(&config)
-            .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]"),
+        fs::read_to_string(&config).unwrap().replace(
+            "denylist = []",
+            "denylist = [\"example client\"]\ndocs_item = false",
+        ),
     )
     .unwrap();
     ok(&main, None, &["seat", "add", "rook", "--role", "builder"]);
@@ -97,10 +98,12 @@ fn status_shows_where_each_seat_is() {
 
     let k = seat("kite");
     assert!(k["worktree"].is_null() && k["claim"].is_null(), "{k}");
+    // Without a worktree of its own, a seat is shown in the main
+    // checkout, which stays on the main line (D-43).
     for name in ["heron", "wren"] {
         let s = seat(name);
         assert_eq!(s["worktree"], "main checkout", "{s}");
-        assert_eq!(s["branch"], "phase/P-1", "{s}");
+        assert_eq!(s["branch"], "main", "{s}");
     }
 
     let text = ok(&main, None, &["status"]);

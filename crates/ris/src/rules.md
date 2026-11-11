@@ -13,7 +13,11 @@ environment:
 export RIS_AGENT=<your seat>
 ```
 
-With it unset, `ris` acts as the person. Use only your own seat.
+With it unset, `ris` refuses every command. Use only your own seat;
+`RIS_AGENT=person` is the person's, never yours. A seat started by
+`ris up` has it set already and finds `ris` on its PATH: run `ris ...`
+as it is, with no `RIS_AGENT=` or path in front, since the seat's
+allow rules match `ris ...`.
 
 ## The loop
 
@@ -27,6 +31,7 @@ git commit -m "feat(scope): summary" -m "Item: I-7
 Agent: <your seat>"
 ris merge I-7                   # runs every project check and merges
 ris inbox                       # messages to you; read between items
+# A claim refused with "paused by the person" means stop and wait.
 ```
 
 - An item lands as one commit, carrying exactly one `Item:` trailer and
@@ -40,15 +45,16 @@ ris inbox                       # messages to you; read between items
 
 ## Working beside other builders
 
-When more than one builder works at once, each has its own git worktree
-on its own branch; the store is shared. Commit your item on your branch
-and run `ris merge` from your worktree: it rebases your one commit onto
-the phase branch, runs every check on the result, and moves the phase
-branch forward, one merge at a time. If your change conflicts with work
-merged before it, or the combined tree fails a check, the merge is
-refused and nothing moves: rebase onto the phase branch yourself, fix,
-and run `ris merge` again. That is how a later item is kept from undoing
-an earlier one.
+Each writing seat, the lead included, has its own git worktree on its
+own branch; the store is shared. The phase branch is checked out
+nowhere, and the main checkout is the person's. Commit your item on
+your branch and run `ris merge` from your worktree: it rebases your one
+commit onto the phase branch, runs every check on the result, and moves
+the phase branch forward by a ref update, one merge at a time. If your
+change conflicts with work merged before it, or the combined tree fails
+a check, the merge is refused and nothing moves: rebase onto the phase
+branch yourself, fix, and run `ris merge` again. That is how a later
+item is kept from undoing an earlier one.
 
 ## Decisions
 
@@ -75,6 +81,25 @@ The test is the cost of reversing, not whether reversal is possible.
   Adding a dependency is substantive. Prefer an existing library to
   writing the thing yourself; raise the dependency rather than working
   around it. Never take a substantive decision yourself; `ris` refuses.
+
+## Person actions
+
+A person action is the person's own to-do, raised only by the person
+and linked to the work it holds up; `ris` refuses an agent that raises
+one. An item may wait on an action or proceed under one; its brief
+names them.
+
+When you are blocked, raise one of two things and take another item:
+
+- **An item**, for a fault in the harness or the code:
+  `ris item add "what is wrong and what fixes it"`.
+- **A decision**, for a judgement, as under Decisions. When what you
+  need is something only the person can do (grant access, add a seat,
+  run a trial), queue it as a substantive decision about your item and
+  say what is needed in the question.
+
+Never mark an action done; `ris` refuses. Never do the person's part
+of the work by another route.
 
 ## Confidentiality: the ground rule
 
@@ -111,6 +136,16 @@ that should have been substantive. Findings go to the author with
 author disputes is raised as a substantive decision. `ris audit I-n`
 records the review. Merges never wait for it: findings are fixed
 forward.
+
+## An advisor's seat
+
+An advisor works beside the person and never writes to the tree. It
+reads, adds items (`ris item add`), sends messages (`ris send`), and
+puts judgements to the person (`ris decision raise --substantive`, then
+`ris decision explain`). `ris` refuses it everything else: claiming,
+finishing, merging, releasing, deciding, a mechanical decision (which
+is taken as it is raised), recording a review, running checks, and any
+command that changes the harness.
 
 ## Onboarding a project
 

@@ -2,19 +2,26 @@
 
 This repository is osiris, a harness for directing coding agents, and it
 is built with itself. Work here goes through the `ris` command, not
-through status documents. The design is `PLAN.md`; read its Principles,
-Working model and Confidentiality sections before the first item.
+through status documents: what there is to do, and what has been
+decided, is only in `ris`. `PLAN.md` describes the design as built;
+read its Principles, Working model and Confidentiality sections for
+background, but never take work from it.
 
 ## Who you are
 
 Your seat is named in `.osiris/config.toml` and set in your environment:
 
 ```
-export RIS_AGENT=heron    # or wren
+export RIS_AGENT=heron    # or rook, or wren
 ```
 
-With it unset, `ris` acts as the person. Never set it to a name that is
-not a seat.
+With it unset, `ris` refuses every command. Never set it to a name
+that is not your seat; `RIS_AGENT=person` is the person's alone. A seat
+started by `ris up` has it set already and finds the harness's `ris` on
+its PATH: run `ris ...` as it is, with no `RIS_AGENT=` or path in front,
+since the seat's allow rules match `ris ...`. Outside `ris up`, in a
+tool that starts a fresh shell per command, set it on each command
+(`RIS_AGENT=heron ris ...`) or launch the tool with it set.
 
 ## The loop
 
@@ -29,6 +36,9 @@ ris merge I-7                   # runs every project check, records the commit
 ris inbox                       # messages to you; read it between items
 ```
 
+A claim refused with "paused by the person" means stop: finish nothing
+new, and end the session. The person brings seats back with `ris up`.
+
 - `done` fails with exit 3 if a check fails. The output is evidence
   under `.osiris/evidence/`, named in the message. Fix and run again.
 - `merge` needs exactly one `Item: <id>` trailer and exactly one
@@ -37,8 +47,10 @@ ris inbox                       # messages to you; read it between items
   email address and no model name (the model behind a seat is in its
   binding). Add no other trailer that carries an address; the exit scan
   refuses them and has no exceptions.
-- Build `ris` with `cargo build -p ris`; the binary is
-  `target/debug/ris`.
+- Run the loop with the harness's `ris`, the one on a seat's PATH,
+  never a binary built in your worktree from code you are changing.
+  `cargo build -p ris` builds the code under work, at
+  `target/debug/ris`, for its tests.
 
 ## Decisions
 
@@ -68,6 +80,25 @@ The test is the cost of reversing, not whether reversal is possible.
   thing yourself; raise the dependency rather than working around it.
 - Never take a substantive decision; `ris` refuses it. The person does,
   at a check-in.
+
+## Person actions
+
+A person action is the person's own to-do, raised only by the person
+and linked to the work it holds up; `ris` refuses an agent that raises
+one. An item may wait on an action or proceed under one; its brief
+names them.
+
+When you are blocked, raise one of two things and take another item:
+
+- **An item**, for a fault in the harness or the code:
+  `ris item add "what is wrong and what fixes it"`.
+- **A decision**, for a judgement, as under Decisions. When what you
+  need is something only the person can do (grant access, add a seat,
+  run a trial), queue it as a substantive decision about your item and
+  say what is needed in the question.
+
+Never mark an action done; `ris` refuses. Never do the person's part
+of the work by another route.
 
 ## Confidentiality: the ground rule
 
@@ -125,3 +156,13 @@ diff and the evidence against the goal, the decisions that touch it and
 these rules, and reads the item's mechanical decisions for any that
 should have been substantive. Findings go to the author as messages; a
 finding the author disputes is raised as a substantive decision.
+
+## The advisor's seat
+
+An advisor works beside the person and never writes to the tree. It
+reads, adds items (`ris item add`), sends messages (`ris send`), and
+puts judgements to the person (`ris decision raise --substantive`, then
+`ris decision explain`). `ris` refuses it everything else: claiming,
+finishing, merging, releasing, deciding, a mechanical decision (which
+is taken as it is raised), recording a review, running checks, and any
+command that changes the harness.

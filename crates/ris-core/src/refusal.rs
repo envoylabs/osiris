@@ -7,7 +7,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{AgentName, DecisionId, ItemId};
+use crate::ids::{ActionId, AgentName, DecisionId, ItemId};
 use crate::text::Category;
 use crate::transitions::CommandKind;
 
@@ -78,7 +78,34 @@ pub enum Refusal {
     ThinExplanation(DecisionId),
     /// Replacing an item is the person's to do.
     SupersedeIsForThePerson(ItemId),
-    /// An item is replaced by another item that is not itself replaced.
+    /// The seat is paused: it takes nothing new until resumed.
+    SeatPaused(AgentName),
+    /// Pausing and resuming seats is the person's to do.
+    SeatControlIsForThePerson,
+    /// No action has this id.
+    UnknownAction(ActionId),
+    /// The command is not allowed from the action's current state.
+    IllegalActionTransition {
+        action: ActionId,
+        state: &'static str,
+        command: CommandKind,
+    },
+    /// Only the person does a person action.
+    ActionIsForThePerson(ActionId),
+    /// Only the person raises a person action: it is their own to-do.
+    RaiseActionIsForThePerson,
+    /// Done means a result: evidence, or a note.
+    ActionNeedsResult(ActionId),
+    /// An action says what to do and how to tell it is done.
+    MalformedAction,
+    /// A merged or superseded item is settled; nothing new attaches to it.
+    SettledItem(ItemId),
+    /// The seat's agent is already running, since the given event.
+    AlreadyRunning { seat: AgentName, since: u64 },
+    /// No run of the seat's agent is recorded as running.
+    NotRunning(AgentName),
+    /// An item is replaced by another item that is not itself replaced
+    /// and does not depend, directly or through other items, on it.
     NotAReplacement { item: ItemId, by: ItemId },
 }
 
@@ -144,11 +171,35 @@ impl Refusal {
             Self::ThinExplanation(_) => {
                 "give --summary, --why, and a --pro or --con for every option".into()
             }
+            Self::SeatPaused(seat) => {
+                format!("stop here: the person resumes the seat with `ris seat resume {seat}`")
+            }
+            Self::SeatControlIsForThePerson => "ask the person; seats are theirs to pause".into(),
+            Self::UnknownAction(_) => "list actions with `ris inbox`".into(),
+            Self::IllegalActionTransition { .. } => {
+                "it is done; raise a new action if more is needed".into()
+            }
+            Self::ActionIsForThePerson(_) => {
+                "leave it to the person; it shows in their inbox".into()
+            }
+            Self::RaiseActionIsForThePerson => {
+                "raise an item for a fault in the harness or the code (`ris item add`), \
+                 or a decision for a judgement (`ris decision raise`)"
+                    .into()
+            }
+            Self::ActionNeedsResult(_) => "attach --evidence <file>, or give --note".into(),
+            Self::MalformedAction => "give what to do and --done-when".into(),
+            Self::SettledItem(_) => "link the action to an item still in motion".into(),
+            Self::AlreadyRunning { seat, .. } => format!(
+                "it is working; if its process is gone, record that with `ris seat stopped {seat}`"
+            ),
+            Self::NotRunning(_) => "nothing to record; `ris status` shows what runs".into(),
             Self::SupersedeIsForThePerson(_) => {
                 "raise it with the person, who runs `ris item supersede`".into()
             }
             Self::NotAReplacement { .. } => {
-                "name an item that is neither this one nor superseded; add one with `ris item add`"
+                "name an item that is not this one, not superseded and not waiting on this one; \
+                 add one with `ris item add`"
                     .into()
             }
         }
@@ -231,6 +282,37 @@ impl fmt::Display for Refusal {
                 f,
                 "refused: {d}'s explanation leaves an option without a pro or a con, or has no summary or reason"
             ),
+            Self::SeatPaused(seat) => write!(f, "refused: {seat} is paused by the person"),
+            Self::SeatControlIsForThePerson => {
+                f.write_str("refused: only the person pauses and resumes seats")
+            }
+            Self::UnknownAction(a) => write!(f, "refused: no action {a}"),
+            Self::IllegalActionTransition {
+                action,
+                state,
+                command,
+            } => write!(
+                f,
+                "refused: {action} is {state}, which does not accept {command:?}"
+            ),
+            Self::ActionIsForThePerson(a) => write!(f, "refused: only the person does {a}"),
+            Self::RaiseActionIsForThePerson => {
+                f.write_str("refused: only the person raises a person action")
+            }
+            Self::ActionNeedsResult(a) => {
+                write!(f, "refused: {a} needs evidence or a note to be done")
+            }
+            Self::MalformedAction => {
+                f.write_str("refused: an action needs what to do and how to tell it is done")
+            }
+            Self::SettledItem(i) => write!(f, "refused: {i} is settled"),
+            Self::AlreadyRunning { seat, since } => {
+                write!(
+                    f,
+                    "refused: {seat} is already running (since event {since})"
+                )
+            }
+            Self::NotRunning(seat) => write!(f, "refused: {seat} is not running"),
             Self::SupersedeIsForThePerson(item) => {
                 write!(f, "refused: only the person supersedes {item}")
             }

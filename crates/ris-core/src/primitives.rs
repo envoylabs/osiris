@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{
-    Actor, AgentName, CheckId, ClaimId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
+    ActionId, Actor, AgentName, CheckId, ClaimId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
     MessageId, PhaseId,
 };
 use crate::text::Text;
@@ -98,6 +98,36 @@ pub enum ItemState {
 pub enum Blocker {
     Decision(DecisionId),
     Item(ItemId),
+    Action(ActionId),
+}
+
+/// Something only the person can do: run a trial, provide a
+/// prerequisite, do a chore. Raised and done only by the person.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Action {
+    pub id: ActionId,
+    pub by: Actor,
+    /// The event that raised it; its text part holds `what` and
+    /// `done_when`.
+    pub at: u64,
+    /// Items that wait for it.
+    pub blocks: Vec<ItemId>,
+    /// Items that proceed without it and are shaped by it.
+    pub informs: Vec<ItemId>,
+    /// The event that gave it a check, whose text part holds `check`.
+    pub check: Option<u64>,
+    pub state: ActionState,
+}
+
+/// Where an action is in its life.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActionState {
+    Open,
+    /// The event that recorded it holds `note`, if one was given.
+    Done {
+        at: u64,
+        evidence: Vec<EvidenceId>,
+    },
 }
 
 /// A decision: a question with options and a recommendation.

@@ -33,7 +33,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::ids::{
-    Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId, MessageId, PhaseId,
+    ActionId, Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
+    MessageId, PhaseId,
 };
 use crate::primitives::{Blocker, DecisionClass, MessageKind};
 use crate::text::Text;
@@ -114,6 +115,44 @@ pub enum Structure {
     ItemSuperseded {
         item: ItemId,
         by: ItemId,
+    },
+    /// A person action. The text part carries `what` and `done_when`.
+    /// Items it blocks are set aside by `ItemBlocked` events emitted
+    /// with it.
+    ActionRaised {
+        action: ActionId,
+        by: Actor,
+        blocks: Vec<ItemId>,
+        informs: Vec<ItemId>,
+    },
+    /// The person gave the action a check: a shell command that passes
+    /// once the action is done. The text part carries `check`.
+    ActionCheckSet {
+        action: ActionId,
+    },
+    /// The person did it. The text part carries `note`, if given.
+    ActionDone {
+        action: ActionId,
+        evidence: Vec<EvidenceId>,
+    },
+    /// The runner started a seat's agent. The text part carries
+    /// `runner` and, when configured, `model`: the binding behind the
+    /// seat's name for this run.
+    RunStarted {
+        seat: AgentName,
+    },
+    /// The seat's agent stopped, with its exit status when it had one.
+    RunStopped {
+        seat: AgentName,
+        status: Option<i32>,
+    },
+    /// The person paused a seat: its next claim or audit is refused
+    /// until it is resumed. What it holds now it finishes.
+    SeatPaused {
+        seat: AgentName,
+    },
+    SeatResumed {
+        seat: AgentName,
     },
     /// An auditor reviewed a done or merged item. Findings travel as
     /// messages; this records only that the review happened.

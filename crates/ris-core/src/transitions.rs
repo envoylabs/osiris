@@ -36,6 +36,19 @@ pub enum CommandKind {
     /// The person replacing an item that has not been started with
     /// another.
     Supersede,
+    /// The person pausing seats, or resuming them.
+    Pause,
+    Resume,
+    /// The runner recording that a seat's agent started or stopped.
+    RunStart,
+    RunStop,
+    /// Raising a person action; it sets aside the items it blocks.
+    RaiseAction,
+    /// The person recording an action done; items blocked only on it
+    /// return to ready.
+    ActionDone,
+    /// The person giving an open action a check that closes it.
+    SetActionCheck,
 }
 
 impl CommandKind {
@@ -56,6 +69,13 @@ impl CommandKind {
         Self::Audit,
         Self::Explain,
         Self::Supersede,
+        Self::Pause,
+        Self::Resume,
+        Self::RaiseAction,
+        Self::ActionDone,
+        Self::SetActionCheck,
+        Self::RunStart,
+        Self::RunStop,
     ];
 }
 
@@ -143,6 +163,14 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         // is released first, and one done or merged stands.
         (S::Ready, C::Supersede, Move::To(S::Superseded)),
         (S::Blocked, C::Supersede, Move::To(S::Superseded)),
+        // A person action that blocks an item sets it aside, claimed or
+        // not, as a substantive decision does; one more blocker on a
+        // blocked item leaves it blocked. Done, it returns the item to
+        // Ready when nothing else blocks it.
+        (S::Ready, C::RaiseAction, Move::To(S::Blocked)),
+        (S::Claimed, C::RaiseAction, Move::To(S::Blocked)),
+        (S::Blocked, C::RaiseAction, Move::Stay),
+        (S::Blocked, C::ActionDone, Move::To(S::Ready)),
         // Superseded: nothing. Final.
     ]
 };
@@ -169,6 +197,28 @@ pub const DECISION: &[(DecisionStateKind, CommandKind, Move<DecisionStateKind>)]
         // latest explanation is the one shown.
         (S::Open, C::Explain, Move::Stay),
         // Taken and Superseded: nothing. A new decision supersedes.
+    ]
+};
+
+/// The shape of a person action's state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ActionStateKind {
+    Open,
+    Done,
+}
+
+impl ActionStateKind {
+    pub const ALL: &[ActionStateKind] = &[Self::Open, Self::Done];
+}
+
+/// Commands that act on a person action, from each state.
+pub const ACTION: &[(ActionStateKind, CommandKind, Move<ActionStateKind>)] = {
+    use ActionStateKind as S;
+    use CommandKind as C;
+    // Done: nothing. Final.
+    &[
+        (S::Open, C::ActionDone, Move::To(S::Done)),
+        (S::Open, C::SetActionCheck, Move::Stay),
     ]
 };
 
@@ -241,6 +291,11 @@ mod tests {
             DecisionStateKind::ALL,
             &[DecisionStateKind::Superseded],
         );
+    }
+
+    #[test]
+    fn action_table_is_well_formed() {
+        assert_well_formed(ACTION, ActionStateKind::ALL, &[]);
     }
 
     #[test]

@@ -12,7 +12,7 @@ fn ris(dir: &Path, agent: Option<&str>, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ris"));
     cmd.args(args)
         .current_dir(dir)
-        .env_remove("RIS_AGENT")
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1");
     if let Some(a) = agent {
@@ -42,7 +42,10 @@ fn project(name: &str) -> std::path::PathBuf {
         &config,
         fs::read_to_string(&config)
             .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             .replace("phase_branches = true", "phase_branches = false"),
     )
     .unwrap();
@@ -173,4 +176,14 @@ fn a_decision_about_a_superseded_item_is_in_its_replacements_brief() {
     let brief = ok(&dir, heron, &["claim", "I-4"]);
     assert!(brief.contains("D-2 how is the base shaped"), "{brief}");
     assert!(!brief.contains("what does pause act on"), "{brief}");
+}
+
+#[test]
+fn a_carried_over_items_brief_names_the_open_phase() {
+    let dir = project("carried");
+    ok(&dir, None, &["item", "add", "left for later"]);
+    ok(&dir, None, &["phase", "close"]);
+    ok(&dir, None, &["phase", "open", "the next goal"]);
+    let brief = ok(&dir, Some("heron"), &["claim", "I-1"]);
+    assert!(brief.contains("project: P-2 the next goal"), "{brief}");
 }

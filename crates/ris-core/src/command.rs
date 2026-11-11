@@ -6,12 +6,17 @@
 //! supplies ([`seal`]), appends them, and folds them into its state.
 
 use crate::event::{Event, Salt, Structure, TextPart};
-use crate::ids::{Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId};
+use crate::ids::{
+    ActionId, Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
+};
+use crate::primitives::ActionState;
 use crate::primitives::{Blocker, DecisionClass, DecisionState, ItemState, MessageKind};
 use crate::refusal::Refusal;
 use crate::state::State;
 use crate::text::Text;
-use crate::transitions::{self, CommandKind, DecisionStateKind, ItemStateKind, Move};
+use crate::transitions::{
+    self, ActionStateKind, CommandKind, DecisionStateKind, ItemStateKind, Move,
+};
 
 /// What an actor asks for. Every free-text field is a [`Text`], so it
 /// has already passed the confidentiality scan.
@@ -96,6 +101,58 @@ pub enum Command {
         about: Option<ItemId>,
         body: Text,
     },
+    /// Raise a person action: what to do and how to tell it is done,
+    /// the items that wait for it (`blocks`) and those it shapes
+    /// without holding them up (`informs`). The person's only: an
+    /// action is their own to-do. An agent that is blocked raises an
+    /// item or a decision instead.
+    RaiseAction {
+        by: Actor,
+        what: Text,
+        done_when: Text,
+        blocks: Vec<ItemId>,
+        informs: Vec<ItemId>,
+    },
+    /// Give an open action a check: a shell command that passes once it
+    /// is done. The person's only, since the person's own commands run
+    /// it, outside any agent's sandbox.
+    SetActionCheck {
+        action: ActionId,
+        by: Actor,
+        check: Text,
+    },
+    /// Record a person action done, with evidence or a note. The
+    /// person's only.
+    ActionDone {
+        action: ActionId,
+        by: Actor,
+        evidence: Vec<EvidenceId>,
+        note: Option<Text>,
+    },
+    /// The runner started a seat's agent, on the person's command. A
+    /// paused seat, or one already running, is refused.
+    RunStart {
+        seat: AgentName,
+        actor: Actor,
+        runner: Text,
+        model: Option<Text>,
+    },
+    /// The seat's agent stopped.
+    RunStop {
+        seat: AgentName,
+        actor: Actor,
+        status: Option<i32>,
+    },
+    /// Pause seats: each finishes what it holds, and its next claim or
+    /// audit is refused until it is resumed. The person's only.
+    Pause {
+        seats: Vec<AgentName>,
+        actor: Actor,
+    },
+    Resume {
+        seats: Vec<AgentName>,
+        actor: Actor,
+    },
     /// Replace an item that has not been started with another, which
     /// must exist and stand for itself. The person's only.
     Supersede {
@@ -130,6 +187,13 @@ impl Command {
             Self::Release { .. } => CommandKind::Release,
             Self::Audit { .. } => CommandKind::Audit,
             Self::Supersede { .. } => CommandKind::Supersede,
+            Self::RunStart { .. } => CommandKind::RunStart,
+            Self::RunStop { .. } => CommandKind::RunStop,
+            Self::RaiseAction { .. } => CommandKind::RaiseAction,
+            Self::ActionDone { .. } => CommandKind::ActionDone,
+            Self::SetActionCheck { .. } => CommandKind::SetActionCheck,
+            Self::Pause { .. } => CommandKind::Pause,
+            Self::Resume { .. } => CommandKind::Resume,
         }
     }
 }
@@ -238,6 +302,31 @@ fn decision_move(
     )
 }
 
+/// Look the action's move up in the table, or refuse.
+fn action_move(
+    state: &State,
+    action: ActionId,
+    command: CommandKind,
+) -> Result<Move<ActionStateKind>, Refusal> {
+    let a = state
+        .actions
+        .get(&action)
+        .ok_or(Refusal::UnknownAction(action))?;
+    let k = match a.state {
+        ActionState::Open => ActionStateKind::Open,
+        ActionState::Done { .. } => ActionStateKind::Done,
+    };
+    transitions::lookup(transitions::ACTION, k, command).ok_or(Refusal::IllegalActionTransition {
+        action,
+        state: if k == ActionStateKind::Open {
+            "open"
+        } else {
+            "done"
+        },
+        command,
+    })
+}
+
 /// `H("ris-report-v1" || previous report || log head)`.
 pub fn report_hash(previous: &Hash, head: &Hash) -> Hash {
     use sha2::{Digest, Sha256};
@@ -297,6 +386,9 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
         }
 
         Command::Claim { item, agent } => {
+            if state.paused.contains(agent) {
+                return Err(Refusal::SeatPaused(agent.clone()));
+            }
             item_move(state, *item, kind)?;
             let i = &state.items[item];
             let waiting_on = state.unlanded_dependencies(i);
@@ -496,6 +588,9 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
         }
 
         Command::Audit { item, by } => {
+            if state.paused.contains(by) {
+                return Err(Refusal::SeatPaused(by.clone()));
+            }
             item_move(state, *item, kind)?;
             let i = &state.items[item];
             if i.author.as_ref() == Some(by) {
@@ -521,13 +616,188 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             Ok(vec![Effect::new(Structure::ItemReady { item: *item })])
         }
 
+        Command::RunStart {
+            seat,
+            actor,
+            runner,
+            model,
+        } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::SeatControlIsForThePerson);
+            }
+            if state.paused.contains(seat) {
+                return Err(Refusal::SeatPaused(seat.clone()));
+            }
+            if let Some(at) = state.running.get(seat) {
+                return Err(Refusal::AlreadyRunning {
+                    seat: seat.clone(),
+                    since: *at,
+                });
+            }
+            let mut e =
+                Effect::new(Structure::RunStarted { seat: seat.clone() }).with("runner", runner);
+            if let Some(m) = model {
+                e = e.with("model", m);
+            }
+            Ok(vec![e])
+        }
+
+        Command::RunStop {
+            seat,
+            actor,
+            status,
+        } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::SeatControlIsForThePerson);
+            }
+            if !state.running.contains_key(seat) {
+                return Err(Refusal::NotRunning(seat.clone()));
+            }
+            Ok(vec![Effect::new(Structure::RunStopped {
+                seat: seat.clone(),
+                status: *status,
+            })])
+        }
+
+        Command::RaiseAction {
+            by,
+            what,
+            done_when,
+            blocks,
+            informs,
+        } => {
+            if *by != Actor::Person {
+                return Err(Refusal::RaiseActionIsForThePerson);
+            }
+            if what.as_str().trim().is_empty() || done_when.as_str().trim().is_empty() {
+                return Err(Refusal::MalformedAction);
+            }
+            let mut effects = Vec::new();
+            for item in blocks {
+                item_move(state, *item, kind)?;
+            }
+            for item in informs {
+                let i = state.items.get(item).ok_or(Refusal::UnknownItem(*item))?;
+                if matches!(
+                    i.state,
+                    ItemState::Merged { .. } | ItemState::Superseded { .. }
+                ) {
+                    return Err(Refusal::SettledItem(*item));
+                }
+            }
+            let action = state.next_action_id();
+            effects.push(
+                Effect::new(Structure::ActionRaised {
+                    action,
+                    by: by.clone(),
+                    blocks: blocks.clone(),
+                    informs: informs.clone(),
+                })
+                .with("what", what)
+                .with("done_when", done_when),
+            );
+            for item in blocks {
+                let mut on = match &state.items[item].state {
+                    ItemState::Blocked { on } => on.clone(),
+                    _ => Vec::new(),
+                };
+                on.push(Blocker::Action(action));
+                effects.push(Effect::new(Structure::ItemBlocked { item: *item, on }));
+            }
+            Ok(effects)
+        }
+
+        Command::SetActionCheck { action, by, check } => {
+            action_move(state, *action, kind)?;
+            if *by != Actor::Person {
+                return Err(Refusal::ActionIsForThePerson(*action));
+            }
+            if check.as_str().trim().is_empty() {
+                return Err(Refusal::MalformedAction);
+            }
+            Ok(vec![
+                Effect::new(Structure::ActionCheckSet { action: *action }).with("check", check),
+            ])
+        }
+
+        Command::ActionDone {
+            action,
+            by,
+            evidence,
+            note,
+        } => {
+            let a = state
+                .actions
+                .get(action)
+                .ok_or(Refusal::UnknownAction(*action))?;
+            let k = match a.state {
+                ActionState::Open => ActionStateKind::Open,
+                ActionState::Done { .. } => ActionStateKind::Done,
+            };
+            transitions::lookup(transitions::ACTION, k, kind).ok_or(
+                Refusal::IllegalActionTransition {
+                    action: *action,
+                    state: if k == ActionStateKind::Open {
+                        "open"
+                    } else {
+                        "done"
+                    },
+                    command: kind,
+                },
+            )?;
+            if *by != Actor::Person {
+                return Err(Refusal::ActionIsForThePerson(*action));
+            }
+            let note = note.as_ref().filter(|n| !n.as_str().trim().is_empty());
+            if evidence.is_empty() && note.is_none() {
+                return Err(Refusal::ActionNeedsResult(*action));
+            }
+            let mut done = Effect::new(Structure::ActionDone {
+                action: *action,
+                evidence: evidence.clone(),
+            });
+            if let Some(n) = note {
+                done = done.with("note", n);
+            }
+            let mut effects = vec![done];
+            // Items blocked only on this action come back to Ready.
+            for i in state.items.values() {
+                if let ItemState::Blocked { on } = &i.state
+                    && on.iter().all(|b| *b == Blocker::Action(*action))
+                {
+                    effects.push(Effect::new(Structure::ItemReady { item: i.id }));
+                }
+            }
+            Ok(effects)
+        }
+
+        Command::Pause { seats, actor } | Command::Resume { seats, actor } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::SeatControlIsForThePerson);
+            }
+            let pause = matches!(command, Command::Pause { .. });
+            Ok(seats
+                .iter()
+                .map(|seat| {
+                    Effect::new(if pause {
+                        Structure::SeatPaused { seat: seat.clone() }
+                    } else {
+                        Structure::SeatResumed { seat: seat.clone() }
+                    })
+                })
+                .collect())
+        }
+
         Command::Supersede { item, by, actor } => {
             if *actor != Actor::Person {
                 return Err(Refusal::SupersedeIsForThePerson(*item));
             }
             item_move(state, *item, kind)?;
             let replacement = state.items.get(by).ok_or(Refusal::UnknownItem(*by))?;
-            if by == item || matches!(replacement.state, ItemState::Superseded { .. }) {
+            if by == item
+                || matches!(replacement.state, ItemState::Superseded { .. })
+                || state.would_wait_on_itself(*item, *by)
+            {
                 return Err(Refusal::NotAReplacement {
                     item: *item,
                     by: *by,
@@ -771,6 +1041,13 @@ mod tests {
                 by: agent("wren"),
             },
             CommandKind::Supersede => supersede(item, ItemId(2), Actor::Person),
+            CommandKind::RaiseAction => Command::RaiseAction {
+                by: Actor::Person,
+                what: t("add the builder seat"),
+                done_when: t("ris status lists it"),
+                blocks: vec![item],
+                informs: vec![],
+            },
             // Decide acts on a decision, and reaches the item through
             // the blocker; covered by the decision table and a test
             // below.
@@ -779,6 +1056,12 @@ mod tests {
             | CommandKind::PhaseOpen
             | CommandKind::PhaseClose
             | CommandKind::ItemAdd
+            | CommandKind::Pause
+            | CommandKind::Resume
+            | CommandKind::ActionDone
+            | CommandKind::SetActionCheck
+            | CommandKind::RunStart
+            | CommandKind::RunStop
             | CommandKind::MessageSend => return None,
         })
     }
@@ -1144,7 +1427,7 @@ mod tests {
             h.must(Command::PhaseOpen { goal: t("index") });
             for _ in 0..60 {
                 let items = h.state.items.len() as u32;
-                match next(4) {
+                match next(6) {
                     0 | 1 => {
                         let depends_on = if items == 0 {
                             vec![]
@@ -1193,12 +1476,33 @@ mod tests {
                             Actor::Person,
                         ));
                     }
+                    4 if items > 0 => {
+                        // Refused when an item cannot take it.
+                        let _ = h.run(Command::RaiseAction {
+                            by: Actor::Person,
+                            what: t("do it"),
+                            done_when: t("done"),
+                            blocks: (0..next(2)).map(|_| ItemId(next(items) + 1)).collect(),
+                            informs: (0..next(3)).map(|_| ItemId(next(items) + 1)).collect(),
+                        });
+                    }
+                    5 if !h.state.actions.is_empty() => {
+                        let n = h.state.actions.len() as u32;
+                        let _ = h.run(Command::ActionDone {
+                            action: crate::ids::ActionId(next(n) + 1),
+                            by: Actor::Person,
+                            evidence: vec![],
+                            note: Some(t("did it")),
+                        });
+                    }
                     _ => {}
                 }
                 assert_eq!(h.state.check_index(), Ok(()), "seed {seed}");
             }
             assert!(
-                !h.state.index.replaced.is_empty() && !h.state.index.dependents.is_empty(),
+                !h.state.index.replaced.is_empty()
+                    && !h.state.index.dependents.is_empty()
+                    && !h.state.index.actions_about.is_empty(),
                 "seed {seed} exercised too little"
             );
             assert_eq!(State::fold(&h.log).unwrap(), h.state, "seed {seed}");
@@ -1212,6 +1516,222 @@ mod tests {
         assert_eq!(h.state.check_index(), Ok(()));
         h.state.index.replaced.clear();
         assert!(h.state.check_index().is_err());
+    }
+
+    #[test]
+    fn a_paused_seat_finishes_what_it_holds_and_takes_nothing_new() {
+        let mut h = item_in(ItemStateKind::Claimed);
+        let heron = agent("heron");
+        let pause = |actor| Command::Pause {
+            seats: vec![agent("heron"), agent("wren")],
+            actor,
+        };
+        assert_eq!(
+            h.run(pause(Actor::Agent(heron.clone()))),
+            Err(Refusal::SeatControlIsForThePerson)
+        );
+        h.must(pause(Actor::Person));
+        // What it holds, it finishes.
+        h.must(Command::Done {
+            item: ItemId(1),
+            by: heron.clone(),
+            evidence: vec![evidence(1)],
+        });
+        h.must(Command::Merge {
+            item: ItemId(1),
+            commit: CommitHash("abc".into()),
+        });
+        // Nothing new: no claim, and no audit for the paused auditor.
+        assert_eq!(
+            h.run(Command::Claim {
+                item: ItemId(2),
+                agent: heron.clone()
+            }),
+            Err(Refusal::SeatPaused(heron.clone()))
+        );
+        assert_eq!(
+            h.run(Command::Audit {
+                item: ItemId(1),
+                by: agent("wren")
+            }),
+            Err(Refusal::SeatPaused(agent("wren")))
+        );
+        h.must(Command::Resume {
+            seats: vec![heron.clone()],
+            actor: Actor::Person,
+        });
+        h.must(Command::Claim {
+            item: ItemId(2),
+            agent: heron,
+        });
+        assert!(h.state.paused.contains(&agent("wren")));
+        assert_eq!(State::fold(&h.log).unwrap(), h.state);
+    }
+
+    #[test]
+    fn a_person_action_blocks_or_informs_and_only_the_person_does_it() {
+        let mut h = item_in(ItemStateKind::Claimed);
+        let heron = Actor::Agent(agent("heron"));
+        let raise = |by: Actor, blocks: Vec<ItemId>, informs: Vec<ItemId>| Command::RaiseAction {
+            by,
+            what: t("add the builder seat"),
+            done_when: t("ris status lists it"),
+            blocks,
+            informs,
+        };
+        // An agent cannot raise one, blocking or not: the log is unchanged.
+        let before = h.log.len();
+        for (blocks, informs) in [(vec![ItemId(1)], vec![]), (vec![], vec![ItemId(2)])] {
+            assert_eq!(
+                h.run(raise(heron.clone(), blocks, informs)),
+                Err(Refusal::RaiseActionIsForThePerson)
+            );
+        }
+        assert_eq!(h.log.len(), before);
+        assert_eq!(
+            h.run(Command::RaiseAction {
+                by: Actor::Person,
+                what: t(" "),
+                done_when: t("x"),
+                blocks: vec![],
+                informs: vec![],
+            }),
+            Err(Refusal::MalformedAction)
+        );
+        // The person raises it: I-1 (claimed) is set aside, I-2 proceeds.
+        h.must(raise(Actor::Person, vec![ItemId(1)], vec![ItemId(2)]));
+        let a = crate::ids::ActionId(1);
+        assert_eq!(
+            h.state.items[&ItemId(1)].state,
+            ItemState::Blocked {
+                on: vec![Blocker::Action(a)]
+            }
+        );
+        assert_eq!(h.state.items[&ItemId(2)].state, ItemState::Ready);
+        assert_eq!(h.state.actions_about(ItemId(2)), &[a]);
+        // A second action also blocks I-1: both must clear.
+        h.must(Command::RaiseAction {
+            by: Actor::Person,
+            what: t("run the trial"),
+            done_when: t("the transcript is attached"),
+            blocks: vec![ItemId(1)],
+            informs: vec![],
+        });
+        let done = |action, by, note: Option<&str>| Command::ActionDone {
+            action,
+            by,
+            evidence: vec![],
+            note: note.map(t),
+        };
+        assert_eq!(
+            h.run(done(a, heron, Some("done"))),
+            Err(Refusal::ActionIsForThePerson(a))
+        );
+        assert_eq!(
+            h.run(done(a, Actor::Person, None)),
+            Err(Refusal::ActionNeedsResult(a))
+        );
+        h.must(done(a, Actor::Person, Some("rook added")));
+        assert!(matches!(
+            h.state.items[&ItemId(1)].state,
+            ItemState::Blocked { .. }
+        ));
+        assert!(matches!(
+            h.run(done(a, Actor::Person, Some("again"))),
+            Err(Refusal::IllegalActionTransition { .. })
+        ));
+        h.must(done(crate::ids::ActionId(2), Actor::Person, Some("ran it")));
+        assert_eq!(h.state.items[&ItemId(1)].state, ItemState::Ready);
+        assert_eq!(h.state.check_index(), Ok(()));
+        assert_eq!(State::fold(&h.log).unwrap(), h.state);
+    }
+
+    /// An item blocked on a decision and an action together becomes
+    /// ready only when both have cleared, in either order.
+    #[test]
+    fn a_decision_and_an_action_together_must_both_clear() {
+        let a = crate::ids::ActionId(1);
+        let d = DecisionId(1);
+        for decision_first in [true, false] {
+            // I-1 is claimed and set aside on D-1, a substantive decision.
+            let mut h = item_in(ItemStateKind::Blocked);
+            h.must(Command::RaiseAction {
+                by: Actor::Person,
+                what: t("run the trial"),
+                done_when: t("the transcript is attached"),
+                blocks: vec![ItemId(1)],
+                informs: vec![],
+            });
+            assert_eq!(
+                h.state.items[&ItemId(1)].state,
+                ItemState::Blocked {
+                    on: vec![Blocker::Decision(d), Blocker::Action(a)]
+                }
+            );
+            let decide = Command::Decide {
+                decision: d,
+                by: Actor::Person,
+                chosen: Choice::Option(0),
+                rationale: t("a"),
+            };
+            let done = Command::ActionDone {
+                action: a,
+                by: Actor::Person,
+                evidence: vec![],
+                note: Some(t("ran it")),
+            };
+            let (first, second, left) = if decision_first {
+                (decide, done, Blocker::Action(a))
+            } else {
+                (done, decide, Blocker::Decision(d))
+            };
+            h.must(first);
+            assert_eq!(
+                h.state.items[&ItemId(1)].state,
+                ItemState::Blocked { on: vec![left] },
+                "decision first: {decision_first}"
+            );
+            h.must(second);
+            assert_eq!(h.state.items[&ItemId(1)].state, ItemState::Ready);
+            assert_eq!(h.state.check_index(), Ok(()));
+            assert_eq!(State::fold(&h.log).unwrap(), h.state);
+        }
+    }
+
+    #[test]
+    fn a_run_is_started_and_stopped_by_the_person_once_at_a_time() {
+        let mut h = with_phase_and_item();
+        let start = |actor| Command::RunStart {
+            seat: agent("rook"),
+            actor,
+            runner: t("claude"),
+            model: None,
+        };
+        assert_eq!(
+            h.run(start(Actor::Agent(agent("heron")))),
+            Err(Refusal::SeatControlIsForThePerson)
+        );
+        h.must(start(Actor::Person));
+        assert!(matches!(
+            h.run(start(Actor::Person)),
+            Err(Refusal::AlreadyRunning { .. })
+        ));
+        let stop = Command::RunStop {
+            seat: agent("rook"),
+            actor: Actor::Person,
+            status: Some(0),
+        };
+        h.must(stop.clone());
+        assert_eq!(h.run(stop), Err(Refusal::NotRunning(agent("rook"))));
+        h.must(Command::Pause {
+            seats: vec![agent("rook")],
+            actor: Actor::Person,
+        });
+        assert_eq!(
+            h.run(start(Actor::Person)),
+            Err(Refusal::SeatPaused(agent("rook")))
+        );
+        assert_eq!(State::fold(&h.log).unwrap(), h.state);
     }
 
     #[test]

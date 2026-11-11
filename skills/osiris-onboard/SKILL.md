@@ -27,10 +27,13 @@ rules hold throughout:
    back. Then ask them to open a phase: `ris phase open "<goal>"`. That
    command refuses while the denylist is empty, which is the check that
    it was done.
-4. Ask the person for the agents' seat names (pseudonyms, one lead and
-   one auditor at least) and the role of each, and give them the
-   commands to run: `ris seat add <name> --role lead` (or `builder`,
-   `auditor`). Seats are the person's to add; `ris` refuses an agent.
+4. Draft the harness in `.osiris/config.toml` for the person to
+   approve: an `[agents.<name>]` table per seat (pseudonyms, never a
+   real name; one lead and one auditor at least, builders as wanted;
+   `role`, and `model` if they name one), and the `[runner]` lines the
+   project needs (`write` for the build tool's cache, `[runner.allow]`
+   for its build and test commands). Show the draft; write it once they
+   approve. The file is theirs: they change it, and `ris up` applies it.
 
 ## 2. Checks
 
@@ -117,15 +120,16 @@ rationale = "Why it is open and why you recommend that option, citing the docume
 2. Show the person a summary: the items with their checks and
    dependencies, and each decision with its source. Wait for approval;
    change what they ask.
-3. Run `ris import .osiris/import.toml` with `RIS_AGENT` unset: the
+3. Run `ris import .osiris/import.toml` with `RIS_AGENT=person`: the
    decisions are recorded as the person's, which their approval makes
    true.
 4. `ris summary` to show the result.
 
 ## 7. Hand over
 
-For each builder seat, `ris worktree <seat>` creates its worktree beside
-the repository with the rules loaded. Tell the person the command to
-start each agent there with `RIS_AGENT=<seat>`. The lead at width one
-works in the repository itself on the phase branch. The auditor needs
-no worktree: it reads and never writes.
+`ris up` brings the harness up: a worktree for each writing seat, the
+lead's included, then every seat's agent started unattended within its
+role. The main checkout is the person's and stays on the main line; the
+phase branch is checked out nowhere and moves only by merges. The
+auditor reads merged work from the phase branch and never writes. Tell the person that `ris summary` is where they check in
+and `ris down` stops the seats.

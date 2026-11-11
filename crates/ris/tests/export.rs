@@ -12,7 +12,7 @@ fn ris(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ris"))
         .args(args)
         .current_dir(dir)
-        .env_remove("RIS_AGENT")
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .output()
         .unwrap()
@@ -42,7 +42,10 @@ fn closed_phases_export_verify_and_replay() {
     let c = fs::read_to_string(&config).unwrap();
     fs::write(
         &config,
-        c.replace("denylist = []", "denylist = [\"example client\"]"),
+        c.replace(
+            "denylist = []",
+            "denylist = [\"example client\"]\ndocs_item = false",
+        ),
     )
     .unwrap();
     ok(&repo, &["phase", "open", "first"]);
@@ -81,9 +84,10 @@ fn closed_phases_export_verify_and_replay() {
 
     // A denylist that grew since the text went in stops the export
     // before anything is written.
-    let c = fs::read_to_string(&config)
-        .unwrap()
-        .replace("denylist = [\"example client\"]", "denylist = [\"acme\"]");
+    let c = fs::read_to_string(&config).unwrap().replace(
+        "denylist = [\"example client\"]\ndocs_item = false",
+        "denylist = [\"acme\"]",
+    );
     fs::write(&config, c).unwrap();
     let fresh = base.join("fresh");
     let r = ris(&repo, &["export", fresh.to_str().unwrap()]);

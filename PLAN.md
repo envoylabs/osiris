@@ -1,10 +1,8 @@
 # Osiris: a harness for parallel agent work
 
-**Status:** draft, 2026-11-03; amended 2026-11-05; brought in line
-with the built system 2026-11-10. The first slice is built and osiris
-is developed with itself. This document is the design; the work still
-to do is in the harness's own log (`ris ready`, `ris report`), not
-here.
+**Status:** draft, 2026-11-03; amended 2026-11-05 and 2026-11-11.
+This document is the design. What is built and what is left is in the
+harness's own log (`ris ready`, `ris report`), not here.
 
 ## Goal
 
@@ -224,7 +222,11 @@ The item is the unit of change in git, as it is in the harness. Each
 phase has one branch, and every item of the phase merges onto it.
 
 - **One branch per phase.** It starts from the main line when the phase
-  opens. Nothing is reconciled at the end of the window: reconciling
+  opens, and is checked out nowhere: every writer, the lead included,
+  works in a worktree of its own, and a merge moves the phase branch by
+  a compare-and-swap ref update, which needs only the git directory, so
+  a sandboxed seat can merge without writing the person's checkout. The
+  main checkout is the person's and stays on the main line. Nothing is reconciled at the end of the window: reconciling
   happens at each merge. Provided nothing else writes to the main
   line during the phase, the closing merge has no conflicts.
 - **Merging is a command, and the daemon takes one at a time.**
@@ -244,12 +246,11 @@ phase has one branch, and every item of the phase merges onto it.
 - **Only finished items merge.** Half-done work on the shared branch
   would leave other agents building on a tree whose failures are not
   theirs.
-- **At width one there are no item branches.** The one writer commits
-  straight onto the phase's branch. At width above one each builder
-  needs its own working tree, and git will not check one branch out in
-  two; so each has a working ref that lives for one item, on which it
-  commits, amends and rebases as it likes. The claim keeps other
-  writers off.
+- **Each writer has a working ref.** A writer's worktree is on a branch
+  of its own, on which it commits, amends and rebases as it likes, one
+  item at a time; the claim keeps other writers off. Only with phase
+  branches off does a single writer commit straight onto the main line
+  in the main checkout.
 - **One commit per item.** A finished item merges as a single commit
   with the item's id in its message, so `why <file>` can go from a line
   to its commit, its item, the decisions that touched it and its
@@ -795,16 +796,8 @@ What follows for the design:
 
 ## First slice
 
-**Done.** Steps 1 to 3 are built, and osiris is developed with itself;
-steps 4 to 6 are items in its log. Built beyond the slice: width above
-one with a worktree per seat, phase branches, roles enforced (an
-auditor cannot write), the exit scan on every merge, `ris import` with
-open decisions, `ris status` and `ris watch`, `ris eli5` for a
-decision's full case, and one versioned `--json` envelope for every
-command (`docs/json.md`).
-
-The aim was something minimal in the dev flow as soon as possible, then
-dogfood it from there.
+The aim is something minimal in the dev flow as soon as possible, then
+to dogfood it from there.
 
 1. The primitives as types, the pure core, and the event log behind the
    `Store` trait with one engine. Events have the two-part format from

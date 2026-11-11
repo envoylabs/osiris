@@ -29,6 +29,12 @@ pub struct State {
     pub last_report: Hash,
     /// The links read backwards, kept by the fold.
     pub index: Index,
+    /// Seats the person has paused.
+    pub paused: std::collections::BTreeSet<crate::ids::AgentName>,
+    pub actions: BTreeMap<crate::ids::ActionId, crate::primitives::Action>,
+    /// Seats whose agent the runner started and has not seen stop, with
+    /// the event that started it.
+    pub running: BTreeMap<crate::ids::AgentName, u64>,
 }
 
 /// The reverse index: links that events record in one direction, read
@@ -42,6 +48,9 @@ pub struct Index {
     pub decisions_about: BTreeMap<ItemId, Vec<DecisionId>>,
     /// For each item, the items it directly replaced, in id order.
     pub replaced: BTreeMap<ItemId, Vec<ItemId>>,
+    /// For each item, the person actions that block or inform it, in
+    /// the order raised.
+    pub actions_about: BTreeMap<ItemId, Vec<crate::ids::ActionId>>,
 }
 
 /// The index disagrees with a scan of the items and decisions: a bug in
@@ -63,9 +72,22 @@ impl std::error::Error for IndexMismatch {}
 /// A structural reference that the log should have made impossible.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FoldError {
-    UnknownItem { seq: u64, item: ItemId },
-    UnknownDecision { seq: u64, decision: DecisionId },
-    UnknownPhase { seq: u64, phase: PhaseId },
+    UnknownItem {
+        seq: u64,
+        item: ItemId,
+    },
+    UnknownDecision {
+        seq: u64,
+        decision: DecisionId,
+    },
+    UnknownPhase {
+        seq: u64,
+        phase: PhaseId,
+    },
+    UnknownAction {
+        seq: u64,
+        action: crate::ids::ActionId,
+    },
 }
 
 impl std::fmt::Display for FoldError {
@@ -76,6 +98,9 @@ impl std::fmt::Display for FoldError {
                 write!(f, "event {seq} refers to unknown {decision}")
             }
             Self::UnknownPhase { seq, phase } => write!(f, "event {seq} refers to unknown {phase}"),
+            Self::UnknownAction { seq, action } => {
+                write!(f, "event {seq} refers to unknown {action}")
+            }
         }
     }
 }
@@ -122,6 +147,35 @@ impl State {
             .collect()
     }
 
+    /// Whether superseding `item` by `by` would make `by` wait on
+    /// itself: its dependencies, followed through replacements with
+    /// `item` standing for `by`, reach `by` again. Items are added
+    /// depending only on items that exist, so a supersede is the only
+    /// way a cycle forms, and every cycle it forms passes through `by`.
+    pub fn would_wait_on_itself(&self, item: ItemId, by: ItemId) -> bool {
+        let after = |d: ItemId| {
+            let c = self.current(d);
+            if c == item { by } else { c }
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        let mut stack = vec![by];
+        while let Some(i) = stack.pop() {
+            let Some(it) = self.items.get(&i) else {
+                continue;
+            };
+            for d in &it.depends_on {
+                let d = after(*d);
+                if d == by {
+                    return true;
+                }
+                if seen.insert(d) {
+                    stack.push(d);
+                }
+            }
+        }
+        false
+    }
+
     /// The item that stands for `item` now: itself, or the end of its
     /// chain of replacements. The chain cannot loop: an item is only
     /// superseded by one that is not itself superseded.
@@ -146,6 +200,11 @@ impl State {
         for d in self.decisions.values() {
             if let Some(a) = d.about {
                 ix.decisions_about.entry(a).or_default().push(d.id);
+            }
+        }
+        for a in self.actions.values() {
+            for i in a.blocks.iter().chain(&a.informs) {
+                ix.actions_about.entry(*i).or_default().push(a.id);
             }
         }
         ix
@@ -208,6 +267,18 @@ impl State {
 
     pub fn next_decision_id(&self) -> DecisionId {
         DecisionId(self.decisions.len() as u32 + 1)
+    }
+
+    pub fn next_action_id(&self) -> crate::ids::ActionId {
+        crate::ids::ActionId(self.actions.len() as u32 + 1)
+    }
+
+    /// Person actions that block or inform `item`, in the order raised.
+    pub fn actions_about(&self, item: ItemId) -> &[crate::ids::ActionId] {
+        self.index
+            .actions_about
+            .get(&item)
+            .map_or(&[], Vec::as_slice)
     }
 
     pub fn next_message_id(&self) -> MessageId {
@@ -291,6 +362,73 @@ impl State {
                     evidence,
                     commit: commit.clone(),
                 };
+            }
+            Structure::ActionRaised {
+                action,
+                by,
+                blocks,
+                informs,
+            } => {
+                self.actions.insert(
+                    *action,
+                    crate::primitives::Action {
+                        id: *action,
+                        by: by.clone(),
+                        at: seq,
+                        blocks: blocks.clone(),
+                        informs: informs.clone(),
+                        check: None,
+                        state: crate::primitives::ActionState::Open,
+                    },
+                );
+                for i in blocks.iter().chain(informs) {
+                    self.index
+                        .actions_about
+                        .entry(*i)
+                        .or_default()
+                        .push(*action);
+                }
+            }
+            Structure::ActionCheckSet { action } => {
+                self.actions
+                    .get_mut(action)
+                    .ok_or(FoldError::UnknownAction {
+                        seq,
+                        action: *action,
+                    })?
+                    .check = Some(seq);
+            }
+            Structure::ActionDone { action, evidence } => {
+                let a = self
+                    .actions
+                    .get_mut(action)
+                    .ok_or(FoldError::UnknownAction {
+                        seq,
+                        action: *action,
+                    })?;
+                a.state = crate::primitives::ActionState::Done {
+                    at: seq,
+                    evidence: evidence.clone(),
+                };
+                // Clear it from any item blocked on it; the move back to
+                // Ready is its own event, emitted by apply.
+                for i in self.items.values_mut() {
+                    if let ItemState::Blocked { on } = &mut i.state {
+                        on.retain(|b| *b != Blocker::Action(*action));
+                    }
+                }
+            }
+            Structure::RunStarted { seat } => {
+                self.running.insert(seat.clone(), seq);
+            }
+            Structure::RunStopped { seat, .. } => {
+                self.running.remove(seat);
+            }
+            Structure::SeatPaused { seat } => {
+                self.paused.insert(seat.clone());
+            }
+            Structure::SeatResumed { seat } => {
+                self.paused.remove(seat);
             }
             Structure::ItemSuperseded { item, by } => {
                 self.item_mut(seq, *item)?.state = ItemState::Superseded { by: *by };

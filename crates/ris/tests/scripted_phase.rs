@@ -26,7 +26,7 @@ impl Sandbox {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let git = Command::new("git")
-            .args(["init", "-q"])
+            .args(["init", "-q", "-b", "main"])
             .current_dir(&dir)
             .status()
             .unwrap();
@@ -43,7 +43,8 @@ impl Sandbox {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_ris"));
         cmd.args(args)
             .current_dir(&self.dir)
-            .env_remove("RIS_AGENT");
+            .env_remove("RIS_ROOT")
+            .env("RIS_AGENT", "person");
         if let Some(a) = agent {
             cmd.env("RIS_AGENT", a);
         }
@@ -212,7 +213,10 @@ fn scripted_phase_matches_the_golden_transcript() {
     fs::write(
         &config,
         c.replace("phase_branches = true", "phase_branches = false")
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             // Two writers and a separate auditor.
             .replace(
                 "[agents.wren]\nrole = \"auditor\"",

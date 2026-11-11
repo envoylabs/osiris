@@ -47,7 +47,9 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
         .take(6)
         .map(|b| format!("{b:02x}"))
         .collect();
-    let phase = &l.state.phases[&i.phase];
+    // The open phase: an item carried over from an earlier one is
+    // worked under the current goal.
+    let phase = l.state.open_phase().unwrap_or(&l.state.phases[&i.phase]);
     let phase_goal = l.text(phase.at, "goal");
     let goal = l.text(i.at, "goal");
     let checks: Vec<String> = i.checks.iter().map(ToString::to_string).collect();
@@ -59,7 +61,7 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
     });
     head.push_str(&format!(
         "project: {} {phase_goal}\n         you are {role}\n",
-        i.phase
+        phase.id
     ));
     head.push_str(&format!("item:    {item} {goal}\n"));
     head.push_str(&format!(
@@ -98,6 +100,37 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
         .collect();
     let mut decisions: Vec<&Decision> = ids.iter().map(|d| &l.state.decisions[d]).collect();
     decisions.reverse();
+
+    // Person actions that touch the item, and whether it waits on them.
+    let actions: BTreeSet<_> = touching
+        .iter()
+        .flat_map(|t| l.state.actions_about(*t))
+        .copied()
+        .collect();
+    let mut actions_json = Vec::new();
+    if !actions.is_empty() {
+        head.push_str("  person actions:\n");
+    }
+    for a in &actions {
+        let act = &l.state.actions[a];
+        let how = if act.blocks.iter().any(|b| touching.contains(b)) {
+            "blocks"
+        } else {
+            "informs"
+        };
+        let state = match &act.state {
+            ris_core::primitives::ActionState::Open => "open".to_owned(),
+            ris_core::primitives::ActionState::Done { at, .. } => match l.log_text(*at, "note") {
+                Some(n) => format!("done: {n}"),
+                None => "done".to_owned(),
+            },
+        };
+        head.push_str(&format!(
+            "  {a} ({how}) {} → {state}\n",
+            l.text(act.at, "what")
+        ));
+        actions_json.push(json!({ "id": a.to_string(), "kind": how }));
+    }
 
     let mut lines = Vec::new();
     let mut decisions_json = Vec::new();
@@ -157,11 +190,12 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
 
     let json = json!({
         "rules": { "path": rules.path, "hash": rules_hash },
-        "project": { "phase": i.phase.to_string(), "goal": phase_goal, "role": role },
+        "project": { "phase": phase.id.to_string(), "goal": phase_goal, "role": role },
         "item": item.to_string(),
         "goal": goal,
         "checks": checks,
         "depends_on": deps_json,
+        "actions": actions_json,
         "decisions": decisions_json[..kept].to_vec(),
         "decisions_left_out": lines.len() - kept,
     });

@@ -90,6 +90,8 @@ mod tests {
         let n = N.fetch_add(1, Ordering::Relaxed);
         let dir =
             std::env::temp_dir().join(format!("ris-evidence-test-{}-{n}", std::process::id()));
+        // Process ids are reused; start from an empty store.
+        let _ = std::fs::remove_dir_all(&dir);
         EvidenceStore::open(dir).unwrap()
     }
 

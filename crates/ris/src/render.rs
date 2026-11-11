@@ -6,7 +6,8 @@
 use ris_core::command::report_hash;
 use ris_core::ids::{Actor, AgentName, Hash, PhaseId};
 use ris_core::primitives::{
-    Decision, DecisionClass, DecisionState, Item, ItemState, Message, PhaseState,
+    Action, ActionState, Decision, DecisionClass, DecisionState, Item, ItemState, Message,
+    PhaseState,
 };
 use serde_json::{Value, json};
 
@@ -57,6 +58,45 @@ impl Output {
     }
 }
 
+/// What a view covers: everything, or the open phase alone (nothing,
+/// when no phase is open).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    All,
+    Open(Option<PhaseId>),
+}
+
+impl Scope {
+    /// The open phase, or everything when `all` is asked for.
+    pub fn of(l: &Loaded, all: bool) -> Self {
+        if all {
+            Self::All
+        } else {
+            Self::Open(l.state.open_phase().map(|p| p.id))
+        }
+    }
+
+    pub fn item(self, i: &Item) -> bool {
+        match self {
+            Self::All => true,
+            Self::Open(p) => Some(i.phase) == p,
+        }
+    }
+
+    /// A decision belongs to the phase of the item it is about; one
+    /// about no item, to the phase open when it was raised.
+    pub fn decision(self, l: &Loaded, d: &Decision) -> bool {
+        match self {
+            Self::All => true,
+            Self::Open(None) => false,
+            Self::Open(Some(p)) => match d.about {
+                Some(i) => l.state.items.get(&i).is_some_and(|i| self.item(i)),
+                None => l.state.phases.get(&p).is_some_and(|ph| d.at >= ph.at),
+            },
+        }
+    }
+}
+
 fn state_name(s: &ItemState) -> &'static str {
     match s {
         ItemState::Ready => "ready",
@@ -65,6 +105,17 @@ fn state_name(s: &ItemState) -> &'static str {
         ItemState::Done { .. } => "done",
         ItemState::Merged { .. } => "merged",
         ItemState::Superseded { .. } => "superseded",
+    }
+}
+
+/// The state word the person and agents see for an item: its stored
+/// state, except that a ready item with an unmerged dependency is
+/// `waiting`, since `ris ready` does not offer it. The graph and the
+/// report both use this, so one screen never gives an item two states.
+pub(crate) fn shown_state(l: &Loaded, i: &Item) -> &'static str {
+    match i.state {
+        ItemState::Ready if !l.state.unlanded_dependencies(i).is_empty() => "waiting",
+        _ => state_name(&i.state),
     }
 }
 
@@ -80,9 +131,7 @@ fn item_json(l: &Loaded, i: &Item) -> Value {
     });
     match &i.state {
         ItemState::Claimed { agent } => v["agent"] = json!(agent.to_string()),
-        ItemState::Blocked { on } => {
-            v["blocked_on"] = json!(on.iter().map(|b| format!("{b:?}")).collect::<Vec<_>>())
-        }
+        ItemState::Blocked { on } => v["blocked_on"] = json!(on),
         ItemState::Done { evidence } => {
             v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>())
         }
@@ -91,7 +140,13 @@ fn item_json(l: &Loaded, i: &Item) -> Value {
             v["commit"] = json!(commit.to_string());
         }
         ItemState::Superseded { by } => v["superseded_by"] = json!(by.to_string()),
-        ItemState::Ready => {}
+        ItemState::Ready => {
+            let waiting = l.state.unlanded_dependencies(i);
+            if !waiting.is_empty() {
+                v["waiting_on"] =
+                    json!(waiting.iter().map(ToString::to_string).collect::<Vec<_>>());
+            }
+        }
     }
     v
 }
@@ -103,10 +158,13 @@ fn item_line(l: &Loaded, i: &Item) -> String {
         ItemState::Superseded { by } => format!(" (by {by})"),
         _ => String::new(),
     };
+    let state = shown_state(l, i);
     format!(
-        "{:<5} {} {}{}",
+        "{:<5} {}{} {}{}",
         i.id.to_string(),
-        style::state(&format!("{:<8}", state_name(&i.state))),
+        // Styled before padding: the style matches the bare word.
+        style::state(state),
+        " ".repeat(8usize.saturating_sub(state.len())),
         l.text(i.at, "goal"),
         who
     )
@@ -114,6 +172,103 @@ fn item_line(l: &Loaded, i: &Item) -> String {
 
 fn short(s: &str) -> &str {
     &s[..s.len().min(8)]
+}
+
+/// Items merged before a person action that informs them was done:
+/// work that went ahead of the person's input, for review.
+fn ahead_of_the_person(l: &Loaded) -> Vec<(ris_core::ids::ItemId, ris_core::ids::ActionId)> {
+    let merged_at: std::collections::BTreeMap<_, _> = l
+        .log
+        .iter()
+        .filter_map(|e| match &e.structure {
+            ris_core::event::Structure::ItemMerged { item, .. } => Some((*item, e.seq)),
+            _ => None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    for a in l.state.actions.values() {
+        let done_at = match a.state {
+            ActionState::Done { at, .. } => at,
+            ActionState::Open => u64::MAX,
+        };
+        for i in &a.informs {
+            if merged_at.get(i).is_some_and(|m| *m < done_at) {
+                out.push((*i, a.id));
+            }
+        }
+    }
+    out
+}
+
+/// A person action in full, for the inbox and `ris show`.
+fn action_block(l: &Loaded, a: &Action) -> String {
+    let mut s = format!(
+        "{} {}  (raised by {})\n     done when: {}\n",
+        a.id,
+        l.text(a.at, "what"),
+        a.by,
+        l.text(a.at, "done_when")
+    );
+    let ids = |v: &[ris_core::ids::ItemId]| {
+        v.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !a.blocks.is_empty() {
+        s.push_str(&format!("     blocks: {}\n", ids(&a.blocks)));
+    }
+    if !a.informs.is_empty() {
+        s.push_str(&format!("     informs: {}\n", ids(&a.informs)));
+    }
+    if let Some(at) = a.check {
+        s.push_str(&format!(
+            "     check: {} (passes when it is done)\n",
+            l.text(at, "check")
+        ));
+    }
+    match &a.state {
+        ActionState::Open => s.push_str(&format!(
+            "     open; when done: ris action done {} --note \"...\" or --evidence <file>\n",
+            a.id
+        )),
+        ActionState::Done { at, evidence } => {
+            s.push_str("     done");
+            if let Some(n) = l.log_text(*at, "note") {
+                s.push_str(&format!(": {n}"));
+            }
+            if !evidence.is_empty() {
+                s.push_str(&format!(
+                    " (evidence {})",
+                    evidence
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            s.push('\n');
+        }
+    }
+    s
+}
+
+fn action_json(l: &Loaded, a: &Action) -> Value {
+    let mut v = json!({
+        "id": a.id.to_string(),
+        "by": a.by,
+        "what": l.text(a.at, "what"),
+        "done_when": l.text(a.at, "done_when"),
+        "blocks": a.blocks.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "informs": a.informs.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "state": match a.state { ActionState::Open => "open", ActionState::Done { .. } => "done" },
+        "check": a.check.map(|at| l.text(at, "check")),
+    });
+    if let ActionState::Done { at, evidence } = &a.state {
+        v["note"] = json!(l.log_text(*at, "note"));
+        v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>());
+    }
+    v
 }
 
 fn decision_json(l: &Loaded, d: &Decision) -> Value {
@@ -305,9 +460,19 @@ fn message_json(l: &Loaded, m: &Message) -> Value {
     })
 }
 
-/// `ris ready`: what an agent may claim now.
+/// `ris ready`: what an agent may claim now, the open phase's own items
+/// first, then items carried over from earlier phases, each group in id
+/// order. A seat takes the first, so the phase's work comes before the
+/// backlog.
 pub fn ready(l: &Loaded) -> Output {
-    let items: Vec<&Item> = l.state.ready().collect();
+    ready_in(l, Scope::All)
+}
+
+/// What may be claimed now, within `scope`.
+fn ready_in(l: &Loaded, scope: Scope) -> Output {
+    let open = l.state.open_phase().map(|p| p.id);
+    let mut items: Vec<&Item> = l.state.ready().filter(|i| scope.item(i)).collect();
+    items.sort_by_key(|i| Some(i.phase) != open);
     let text = if items.is_empty() {
         "nothing ready".to_owned()
     } else {
@@ -328,19 +493,26 @@ const PERSON_FOOTER: &str = "\
 --
 answer:  ris decide D-n --choose <option number> --rationale \"...\"
      or  ris decide D-n --other \"your own answer\" --rationale \"...\"
+   and   ris action done A-n --note \"what happened\" (or --evidence <file>)
 look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
-ids:     I-n item   D-n decision   P-n phase   M-n message   E-<hash> evidence
+ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<hash> evidence
 ";
 
 /// `ris inbox`: for the person, the decision queue; for an agent, its
 /// messages and the items it holds.
 pub fn inbox(l: &Loaded, actor: &Actor) -> Output {
+    inbox_in(l, actor, Scope::All)
+}
+
+/// The inbox with the person's decisions limited to `scope`. Messages,
+/// held items and person actions are not phase work and always show.
+fn inbox_in(l: &Loaded, actor: &Actor, scope: Scope) -> Output {
     match actor {
         Actor::Person => {
             let open: Vec<&Decision> = l
                 .state
                 .open_decisions()
-                .filter(|d| d.class == DecisionClass::Substantive)
+                .filter(|d| d.class == DecisionClass::Substantive && scope.decision(l, d))
                 .collect();
             let mut text = if open.is_empty() {
                 "no decisions waiting\n".to_owned()
@@ -351,11 +523,29 @@ pub fn inbox(l: &Loaded, actor: &Actor) -> Output {
                 }
                 s
             };
+            let actions: Vec<&Action> = l
+                .state
+                .actions
+                .values()
+                .filter(|a| a.state == ActionState::Open)
+                .collect();
+            if !actions.is_empty() {
+                text.push_str(&format!(
+                    "\n{}\n",
+                    style::heading(&format!("{} action(s) for you", actions.len()))
+                ));
+                for a in &actions {
+                    text.push_str(&action_block(l, a));
+                }
+            }
             text.push_str(&style::dim(PERSON_FOOTER));
             let text = text.trim_end().to_owned();
             Output::new(
                 text,
-                json!({ "decisions": open.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>() }),
+                json!({
+                    "decisions": open.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
+                    "actions": actions.iter().map(|a| action_json(l, a)).collect::<Vec<_>>(),
+                }),
             )
         }
         Actor::Agent(name) => agent_inbox(l, name),
@@ -405,6 +595,13 @@ fn agent_inbox(l: &Loaded, name: &AgentName) -> Output {
 /// decisions in full, mechanical ones one line each, items by state,
 /// and the chain head.
 pub fn report(l: &Loaded) -> Output {
+    report_in(l, Scope::All)
+}
+
+/// The report with its items and decisions limited to `scope`. Under
+/// [`Scope::All`] it lists the latest phase's items and every item
+/// still in motion from earlier ones, and every decision.
+fn report_in(l: &Loaded, scope: Scope) -> Output {
     let Some(phase) = l.state.phases.values().last() else {
         return Output::new("no phase yet", json!({ "phase": null }));
     };
@@ -413,17 +610,19 @@ pub fn report(l: &Loaded) -> Output {
         .items
         .values()
         .filter(|i| {
-            i.phase == phase.id
-                || !matches!(
-                    i.state,
-                    ItemState::Merged { .. } | ItemState::Superseded { .. }
-                )
+            scope.item(i)
+                && (i.phase == phase.id
+                    || !matches!(
+                        i.state,
+                        ItemState::Merged { .. } | ItemState::Superseded { .. }
+                    ))
         })
         .collect();
     let (substantive, mechanical): (Vec<&Decision>, Vec<&Decision>) = l
         .state
         .decisions
         .values()
+        .filter(|d| scope.decision(l, d))
         .partition(|d| d.class == DecisionClass::Substantive);
     let mut s = format!(
         "{} {}: {}\n",
@@ -436,7 +635,7 @@ pub fn report(l: &Loaded) -> Output {
     );
     let mut counts = std::collections::BTreeMap::new();
     for i in &items {
-        *counts.entry(state_name(&i.state)).or_insert(0usize) += 1;
+        *counts.entry(shown_state(l, i)).or_insert(0usize) += 1;
     }
     s.push_str(&format!(
         "items: {}\n",
@@ -453,6 +652,7 @@ pub fn report(l: &Loaded) -> Output {
         .state
         .decisions
         .values()
+        .filter(|d| scope.decision(l, d))
         .filter(|d| matches!(&d.state, DecisionState::Taken { chosen, .. } if *chosen >= d.options))
         .count();
     if !substantive.is_empty() {
@@ -500,6 +700,17 @@ pub fn report(l: &Loaded) -> Output {
         .filter(|i| matches!(i.state, ItemState::Done { .. } | ItemState::Merged { .. }))
         .collect();
     let audited = finished.iter().filter(|i| !i.audited_by.is_empty()).count();
+    let ahead = ahead_of_the_person(l);
+    if !ahead.is_empty() {
+        s.push_str(&style::heading("merged ahead of the person:"));
+        s.push('\n');
+        for (item, action) in &ahead {
+            s.push_str(&format!(
+                "  {item} merged before {action} was done: {}\n",
+                l.text(l.state.actions[action].at, "what")
+            ));
+        }
+    }
     s.push_str(&format!(
         "audited: {audited} of {} done or merged\n",
         finished.len()
@@ -530,6 +741,10 @@ pub fn report(l: &Loaded) -> Output {
             "mechanical": mechanical.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
             "messages": l.state.messages.len(),
             "answered_outside_options": outside,
+            "merged_ahead": ahead
+                .iter()
+                .map(|(i, a)| json!({ "item": i.to_string(), "action": a.to_string() }))
+                .collect::<Vec<_>>(),
             "log": { "len": l.state.len, "head": l.state.head.to_string() },
             "report": report_hash.to_string(),
             "previous_report": previous_report(l, phase.id).to_string(),
@@ -571,6 +786,17 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
         let mut json = decision_json(l, d);
         json["raised_at_event"] = json!(d.at);
         return Ok(Output::new(decision_block(l, d).trim_end(), json));
+    }
+    if let Ok(action) = id.parse::<ris_core::ids::ActionId>() {
+        let a = l
+            .state
+            .actions
+            .get(&action)
+            .ok_or_else(|| format!("no action {action}"))?;
+        return Ok(Output::new(
+            action_block(l, a).trim_end(),
+            action_json(l, a),
+        ));
     }
     if let Ok(phase) = id.parse::<PhaseId>() {
         let p = l
@@ -638,7 +864,7 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
     let mut s = format!(
         "{} {}  (phase {})\n  {}\n",
         i.id,
-        state_name(&i.state),
+        shown_state(l, i),
         i.phase,
         l.text(i.at, "goal")
     );
@@ -685,6 +911,7 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
                 .map(|b| match b {
                     ris_core::primitives::Blocker::Decision(d) => d.to_string(),
                     ris_core::primitives::Blocker::Item(i) => i.to_string(),
+                    ris_core::primitives::Blocker::Action(a) => a.to_string(),
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -759,17 +986,56 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
 }
 
 /// `ris summary`: the check-in view. The decision queue first, since
-/// it is what blocks agents; then the report; then what is ready to
-/// claim. Each section is the same as its own command, so drilling
-/// down is a matter of running that command or `ris show <id>`.
-pub fn summary(l: &Loaded, actor: &Actor) -> Output {
-    let queue = inbox(l, actor);
-    let rep = report(l);
-    let rdy = ready(l);
+/// it is what blocks agents; then the graph, the report and what is
+/// ready to claim. By default each section covers the open phase alone,
+/// and what it leaves out from earlier phases is counted; `all` shows
+/// everything, each section then the same as its own command.
+pub fn summary(l: &Loaded, actor: &Actor, all: bool) -> Output {
+    let scope = Scope::of(l, all);
+    let queue = inbox_in(l, actor, scope);
+    let rep = report_in(l, scope);
+    let rdy = ready_in(l, scope);
+    let graph = crate::graph::Graph::of_scope(l, scope);
+    // Unsettled work outside the scope: items not merged or superseded,
+    // and open decisions.
+    let carried_items = l
+        .state
+        .items
+        .values()
+        .filter(|i| {
+            !scope.item(i)
+                && !matches!(
+                    i.state,
+                    ItemState::Merged { .. } | ItemState::Superseded { .. }
+                )
+        })
+        .count();
+    let carried_decisions = l
+        .state
+        .open_decisions()
+        .filter(|d| !scope.decision(l, d))
+        .count();
+    let mut head = String::new();
+    if scope == Scope::Open(None) {
+        head.push_str(
+            "no phase is open\n  next: open one with `ris phase open \"<goal>\"`, then bring items into it\n",
+        );
+    }
+    if carried_items + carried_decisions > 0 {
+        head.push_str(&format!(
+            "{carried_items} item(s) and {carried_decisions} open decision(s) from earlier phases are not shown\n  \
+             next: `ris summary --all` shows them\n"
+        ));
+    }
+    if !head.is_empty() {
+        head.push('\n');
+    }
     let text = format!(
-        "{}\n{}\n\n{}\n{}\n\n{}\n{}",
+        "{head}{}\n{}\n\n{}\n{}\n\n{}\n{}\n\n{}\n{}",
         style::header("== decisions =="),
         queue.text,
+        style::header("== what waits on what =="),
+        graph.draw(l),
         style::header("== report =="),
         rep.text,
         style::header("== ready =="),
@@ -777,7 +1043,14 @@ pub fn summary(l: &Loaded, actor: &Actor) -> Output {
     );
     Output::new(
         text,
-        json!({ "inbox": queue.json, "report": rep.json, "ready": rdy.json }),
+        json!({
+            "inbox": queue.json,
+            "graph": graph.json(l),
+            "report": rep.json,
+            "ready": rdy.json,
+            "all": all,
+            "carried_over": { "items": carried_items, "decisions": carried_decisions },
+        }),
     )
 }
 

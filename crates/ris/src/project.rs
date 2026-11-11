@@ -24,6 +24,10 @@ pub const DIR: &str = ".osiris";
 /// The rules file `ris init` writes at the project root.
 pub const RULES_FILE: &str = "OSIRIS.md";
 
+/// The value of `RIS_AGENT` that means the person. Reserved: no seat
+/// may take it.
+pub const PERSON: &str = "person";
+
 /// The agents' rules, generic to any project.
 pub const RULES: &str = include_str!("rules.md");
 
@@ -74,11 +78,17 @@ pub enum CliError {
     Config(String),
     /// `RIS_AGENT` names a seat `config.toml` does not.
     UnknownAgent(String),
+    /// `RIS_AGENT` is unset: nobody said who is acting. Never taken to
+    /// mean the person, so an agent that loses its seat is refused
+    /// rather than given the person's powers. Holds the seat names.
+    NoActor(Vec<String>),
     /// The seat's role does not do this: an auditor reads and never
-    /// writes to the tree. Exit status 2, like any refusal.
+    /// writes to the tree; an advisor adds items, sends messages and
+    /// raises decisions for the person, and nothing else. Exit status
+    /// 2, like any refusal.
     RoleForbids {
         seat: String,
-        role: &'static str,
+        role: crate::config::Role,
         what: &'static str,
     },
     /// Two writers kept colliding; the caller may retry.
@@ -125,12 +135,41 @@ impl std::fmt::Display for CliError {
             Self::Config(e) => write!(f, "{e}"),
             Self::UnknownAgent(a) => write!(
                 f,
-                "RIS_AGENT={a} is not a seat in {DIR}/config.toml\n  next: add [agents.{a}] there, or unset RIS_AGENT to act as the person"
+                "RIS_AGENT={a} is not a seat in {DIR}/config.toml\n  next: add the seat with `ris seat add`, or set RIS_AGENT={PERSON} to act as the person"
             ),
-            Self::RoleForbids { seat, role, what } => write!(
+            Self::NoActor(seats) => write!(
                 f,
-                "refused: {seat} is an {role}, and an {role} does not {what}\n  next: `ris audit` for the review queue; a builder or lead seat does this"
+                "refused: RIS_AGENT is not set, so ris does not know who is acting\n  next: set RIS_AGENT={PERSON} if you are the person (once, in your shell profile), or RIS_AGENT=<seat> for an agent{}",
+                if seats.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", seats.join(", "))
+                }
             ),
+            Self::RoleForbids { seat, role, what } => {
+                use crate::config::Role;
+                // Matched exhaustively, so a new role must say its own
+                // next step.
+                let (a, next) = match role {
+                    Role::Advisor => (
+                        "an",
+                        "`ris item add`, `ris send` or `ris decision raise --substantive`; \
+                         the person or a writing seat does this",
+                    ),
+                    Role::Auditor => (
+                        "an",
+                        "`ris audit` for the review queue; a builder or lead seat does this",
+                    ),
+                    Role::Lead | Role::Builder => (
+                        "a",
+                        "check the seat's role in .osiris/config.toml; `ris status` shows it",
+                    ),
+                };
+                write!(
+                    f,
+                    "refused: {seat} is {a} {role}, and {a} {role} does not {what}\n  next: {next}"
+                )
+            }
             Self::Contended => write!(f, "the log kept moving under this command; try again"),
             Self::Leak { what, hits } => {
                 writeln!(
@@ -204,6 +243,15 @@ impl Loaded {
     fn new(log: Vec<Event>, state: State) -> Self {
         let by_seq = log.iter().enumerate().map(|(i, e)| (e.seq, i)).collect();
         Self { state, log, by_seq }
+    }
+
+    /// A text field of the event at `seq`, if the event carries it and
+    /// it has not been removed: for optional fields.
+    pub fn log_text(&self, seq: u64, field: &str) -> Option<&str> {
+        self.by_seq
+            .get(&seq)
+            .and_then(|i| self.log[*i].text_field(field))
+            .map(Text::as_str)
     }
 
     /// A text field of the event at `seq`, or a marker if the text has
@@ -347,9 +395,11 @@ impl Project {
         })
     }
 
-    /// Who is acting: the agent named by `RIS_AGENT`, or the person.
+    /// Who is acting, as `RIS_AGENT` says: `person`, or a configured
+    /// seat. Unset is refused, never taken to mean the person.
     pub fn actor(&self) -> Result<Actor, CliError> {
         match env::var("RIS_AGENT") {
+            Ok(name) if name.trim() == PERSON => Ok(Actor::Person),
             Ok(name) if !name.trim().is_empty() => {
                 let name = name.trim().to_owned();
                 if !self.config.agents.contains_key(&name) {
@@ -357,7 +407,9 @@ impl Project {
                 }
                 Ok(Actor::Agent(AgentName(name)))
             }
-            _ => Ok(Actor::Person),
+            _ => Err(CliError::NoActor(
+                self.config.agents.keys().cloned().collect(),
+            )),
         }
     }
 
@@ -432,4 +484,38 @@ fn fresh_salt() -> Salt {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("the OS random source is available");
     Salt(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Role;
+
+    /// Each role's refusal names its own next step: only an auditor is
+    /// pointed at the review queue, only an advisor at what it may do.
+    #[test]
+    fn a_role_refusal_names_that_role_s_next_step() {
+        for &role in Role::ALL {
+            let text = CliError::RoleForbids {
+                seat: "kite".into(),
+                role,
+                what: "claim an item",
+            }
+            .to_string();
+            assert!(
+                text.contains(&format!("is an {role}")) || text.contains(&format!("is a {role}")),
+                "{text}"
+            );
+            assert!(
+                !text.contains("an lead") && !text.contains("an builder"),
+                "{text}"
+            );
+            assert_eq!(text.contains("ris audit"), role == Role::Auditor, "{text}");
+            assert_eq!(
+                text.contains("ris item add"),
+                role == Role::Advisor,
+                "{text}"
+            );
+        }
+    }
 }

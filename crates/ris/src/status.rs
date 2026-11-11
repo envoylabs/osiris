@@ -13,6 +13,7 @@ use std::process::Command;
 use serde::Serialize;
 use serde_json::json;
 
+use ris_core::ids::AgentName;
 use ris_core::primitives::ItemState;
 
 use crate::config::Role;
@@ -45,10 +46,14 @@ pub struct Seat {
     pub behind: Option<u32>,
     /// Files with uncommitted changes in its worktree.
     pub uncommitted: Option<u32>,
+    /// Paused by the person: takes nothing new until resumed.
+    pub paused: bool,
+    /// Started by the runner and not yet seen to stop.
+    pub running: bool,
 }
 
 /// `(path, branch)` for every worktree of the repository at `root`.
-fn worktrees(root: &Path) -> Vec<(PathBuf, String)> {
+pub fn worktrees(root: &Path) -> Vec<(PathBuf, String)> {
     let Some(list) = git(root, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
@@ -66,9 +71,40 @@ fn worktrees(root: &Path) -> Vec<(PathBuf, String)> {
     out
 }
 
+/// The open phase's branch, when phase branches are on and it exists.
+/// Merges land there. It is checked out in no worktree, and a merge
+/// moves it by a compare-and-swap ref update, which needs only the git
+/// directory; a project whose main checkout still has it checked out
+/// is moved there by a fast-forward instead.
+pub fn phase_branch(p: &Project, l: &Loaded) -> Option<String> {
+    if !p.config.phase_branches {
+        return None;
+    }
+    let name = format!("phase/{}", l.state.open_phase()?.id);
+    git(
+        &p.root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{name}"),
+        ],
+    )?;
+    Some(name)
+}
+
+/// The worktree that has `branch` checked out, if any.
+pub fn checked_out(root: &Path, branch: &str) -> Option<PathBuf> {
+    worktrees(root)
+        .into_iter()
+        .find(|(_, b)| b == branch)
+        .map(|(p, _)| p)
+}
+
 pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
     let trees = worktrees(&p.root);
-    let phase_branch = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    let here = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    let phase_branch = phase_branch(p, l).or_else(|| here.clone());
     p.config
         .agents
         .iter()
@@ -79,14 +115,13 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 .values()
                 .find(|i| matches!(&i.state, ItemState::Claimed { agent } if agent.0 == *name))
                 .map(|i| i.id.to_string());
-            // Its own worktree if it has one. Otherwise an auditor, and
-            // a lead working at width one, use the main checkout; a
-            // builder without one has nowhere to work yet.
+            // Its own worktree if it writes and has one. Otherwise an
+            // auditor, an advisor, and a lead working at width one, use
+            // the main checkout; a builder without one has nowhere to
+            // work yet.
             let (worktree, branch) = match trees.iter().find(|(_, b)| b == name) {
-                Some((path, b)) if cfg.role != Role::Auditor => {
-                    (Some(path.clone()), Some(b.clone()))
-                }
-                _ if cfg.role != Role::Builder => (Some(p.root.clone()), phase_branch.clone()),
+                Some((path, b)) if cfg.role.writes() => (Some(path.clone()), Some(b.clone())),
+                _ if cfg.role != Role::Builder => (Some(p.root.clone()), here.clone()),
                 _ => (None, None),
             };
             let (ahead, behind) = match (&branch, &phase_branch) {
@@ -119,30 +154,24 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 ahead,
                 behind,
                 uncommitted,
+                paused: l.state.paused.contains(&AgentName(name.clone())),
+                running: l.state.running.contains_key(&AgentName(name.clone())),
             }
         })
         .collect()
 }
 
 fn role_word(r: Role) -> &'static str {
-    match r {
-        Role::Lead => "lead",
-        Role::Builder => "builder",
-        Role::Auditor => "auditor",
-    }
+    r.as_str()
 }
 
-/// Paths are shown relative to the store root's parent, where `ris
-/// worktree` puts them, so no absolute path reaches the screen.
+/// Paths are shown relative to the main checkout, wherever `worktrees`
+/// puts them, so no absolute path reaches the screen.
 fn shown(p: &Project, path: &Path) -> String {
     if path == p.root {
         return "main checkout".into();
     }
-    let base = p.root.parent().unwrap_or(&p.root);
-    match path.strip_prefix(base) {
-        Ok(rel) => format!("../{}", rel.display()),
-        Err(_) => path.display().to_string(),
-    }
+    crate::config::relative(&p.root, path).display().to_string()
 }
 
 pub fn render(p: &Project, l: &Loaded) -> Output {
@@ -169,6 +198,12 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
             Some(c) => format!("  holds {c}"),
             None => "  idle".into(),
         });
+        if s.running {
+            line.push_str("  running");
+        }
+        if s.paused {
+            line.push_str("  paused");
+        }
         text.push_str(&line);
         text.push('\n');
     }
@@ -188,6 +223,8 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
                 "ahead": s.ahead,
                 "behind": s.behind,
                 "uncommitted": s.uncommitted,
+                "paused": s.paused,
+                "running": s.running,
             })
         })
         .collect();
