@@ -53,9 +53,10 @@ fn status_shows_where_each_seat_is() {
     let config = main.join(".osiris/config.toml");
     fs::write(
         &config,
-        fs::read_to_string(&config)
-            .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]"),
+        fs::read_to_string(&config).unwrap().replace(
+            "denylist = []",
+            "denylist = [\"example client\"]\ndocs_item = false",
+        ),
     )
     .unwrap();
     ok(&main, None, &["seat", "add", "rook", "--role", "builder"]);

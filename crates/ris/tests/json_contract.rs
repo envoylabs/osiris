@@ -80,7 +80,10 @@ fn project(name: &str) -> PathBuf {
         &config,
         fs::read_to_string(&config)
             .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             .replace("phase_branches = true", "phase_branches = false"),
     )
     .unwrap();

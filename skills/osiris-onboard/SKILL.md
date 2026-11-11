@@ -27,10 +27,13 @@ rules hold throughout:
    back. Then ask them to open a phase: `ris phase open "<goal>"`. That
    command refuses while the denylist is empty, which is the check that
    it was done.
-4. Ask the person for the agents' seat names (pseudonyms, one lead and
-   one auditor at least) and the role of each, and give them the
-   commands to run: `ris seat add <name> --role lead` (or `builder`,
-   `auditor`). Seats are the person's to add; `ris` refuses an agent.
+4. Draft the harness in `.osiris/config.toml` for the person to
+   approve: an `[agents.<name>]` table per seat (pseudonyms, never a
+   real name; one lead and one auditor at least, builders as wanted;
+   `role`, and `model` if they name one), and the `[runner]` lines the
+   project needs (`write` for the build tool's cache, `[runner.allow]`
+   for its build and test commands). Show the draft; write it once they
+   approve. The file is theirs: they change it, and `ris up` applies it.
 
 ## 2. Checks
 
@@ -124,8 +127,8 @@ rationale = "Why it is open and why you recommend that option, citing the docume
 
 ## 7. Hand over
 
-For each builder seat, `ris worktree <seat>` creates its worktree beside
-the repository with the rules loaded. Tell the person the command to
-start each agent there with `RIS_AGENT=<seat>`. The lead at width one
-works in the repository itself on the phase branch. The auditor needs
-no worktree: it reads and never writes.
+`ris up` brings the harness up: a worktree for each builder, then every
+seat's agent started unattended within its role. The lead works in the
+repository itself on the phase branch, and the auditor reads it and
+never writes. Tell the person that `ris summary` is where they check in
+and `ris down` stops the seats.

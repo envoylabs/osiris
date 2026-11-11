@@ -41,7 +41,7 @@ impl Rig {
         .unwrap();
         fs::write(
             rig.repo.join(".osiris/config.toml"),
-            "denylist = [\"example client\"]\n[runner]\nprogram = \"fake-agent\"\n\
+            "denylist = [\"example client\"]\ndocs_item = false\n[runner]\nprogram = \"fake-agent\"\n\
              [agents.heron]\nrole = \"lead\"\n[agents.rook]\nrole = \"builder\"\n\
              [agents.wren]\nrole = \"auditor\"\n",
         )

@@ -10,7 +10,7 @@ Working model and Confidentiality sections before the first item.
 Your seat is named in `.osiris/config.toml` and set in your environment:
 
 ```
-export RIS_AGENT=heron    # or wren
+export RIS_AGENT=heron    # or rook, or wren
 ```
 
 With it unset, `ris` refuses every command. Never set it to a name
@@ -30,6 +30,9 @@ Agent: heron"
 ris merge I-7                   # runs every project check, records the commit
 ris inbox                       # messages to you; read it between items
 ```
+
+A claim refused with "paused by the person" means stop: finish nothing
+new, and end the session. The person brings seats back with `ris up`.
 
 - `done` fails with exit 3 if a check fails. The output is evidence
   under `.osiris/evidence/`, named in the message. Fix and run again.

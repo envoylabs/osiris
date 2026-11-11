@@ -212,7 +212,10 @@ fn scripted_phase_matches_the_golden_transcript() {
     fs::write(
         &config,
         c.replace("phase_branches = true", "phase_branches = false")
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             // Two writers and a separate auditor.
             .replace(
                 "[agents.wren]\nrole = \"auditor\"",

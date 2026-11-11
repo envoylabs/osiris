@@ -95,7 +95,7 @@ fn a_lead_a_builder_and_an_auditor_finish_a_phase_together() {
     .unwrap();
     fs::write(
         main.join(".osiris/config.toml"),
-        "denylist = [\"example client\"]\n\
+        "denylist = [\"example client\"]\ndocs_item = false\n\
          [agents.heron]\nrole = \"lead\"\n\
          [agents.rook]\nrole = \"builder\"\n\
          [agents.wren]\nrole = \"auditor\"\n",

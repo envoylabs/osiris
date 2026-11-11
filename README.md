@@ -28,13 +28,12 @@ agents build and test in between. Design: `PLAN.md`.
 cargo install --path crates/ris
 export RIS_AGENT=person                  # you; agents get their seat's name
 cd your-repo && ris init --local         # nothing tracked changes
-# .osiris/config.toml: denylist first, then seats; .osiris/checks.toml
+# .osiris/config.toml: the denylist, the seats, what agents may do
 ris phase open "the goal"               # branches phase/P-1 from main
 ris item add "a task"                    # or: ris import backlog.toml
-ris worktree heron                       # ../your-repo-heron, rules loaded
-cd ../your-repo-heron && RIS_AGENT=heron claude
-ris summary          # check in; answer with ris decide
-ris phase close      # review; merges the phase branch into main
+ris up                                   # worktrees, then every seat's agent
+ris summary                              # check in: decisions, actions, the graph
+ris down && ris phase close              # review; merges the phase into main
 ```
 
 A lead, a builder and an auditor, step by step: `docs/quickstart.md`.

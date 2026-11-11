@@ -40,7 +40,10 @@ fn a_raiser_explains_and_the_person_drills_down() {
         &config,
         fs::read_to_string(&config)
             .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             .replace("phase_branches = true", "phase_branches = false"),
     )
     .unwrap();

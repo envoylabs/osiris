@@ -41,7 +41,10 @@ fn a_superseded_item_leaves_ready_and_its_dependents_wait_on_the_replacement() {
         &config,
         fs::read_to_string(&config)
             .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             .replace("phase_branches = true", "phase_branches = false"),
     )
     .unwrap();

@@ -63,7 +63,7 @@ fn setup(name: &str, checks: &str, agents: &[&str]) -> (PathBuf, Vec<PathBuf>) {
         .collect();
     fs::write(
         main.join(".osiris/config.toml"),
-        format!("denylist = [\"example client\"]\n{seats}"),
+        format!("denylist = [\"example client\"]\ndocs_item = false\n{seats}"),
     )
     .unwrap();
     ok(&main, None, &["phase", "open", "width test"]);

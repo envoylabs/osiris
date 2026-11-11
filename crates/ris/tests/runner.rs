@@ -70,7 +70,7 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
     .unwrap();
     fs::write(
         repo.join(".osiris/config.toml"),
-        "denylist = [\"example client\"]\n\
+        "denylist = [\"example client\"]\ndocs_item = false\n\
          [runner]\nprogram = \"fake-agent\"\nwrite = [\"~/.cargo\"]\n\
          [runner.allow]\nbuilder = [\"Bash(cargo *)\"]\n\
          [agents.rook]\nrole = \"builder\"\nmodel = \"some-model\"\n\

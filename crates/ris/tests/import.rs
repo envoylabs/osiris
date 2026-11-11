@@ -38,7 +38,10 @@ fn a_backlog_imports_whole_or_not_at_all() {
     let c = fs::read_to_string(&config).unwrap();
     fs::write(
         &config,
-        c.replace("denylist = []", "denylist = [\"example client\"]"),
+        c.replace(
+            "denylist = []",
+            "denylist = [\"example client\"]\ndocs_item = false",
+        ),
     )
     .unwrap();
     ok(&repo, &["phase", "open", "import"]);
@@ -238,7 +241,10 @@ fn an_item_with_no_checks_named_gets_every_declared_check_and_an_empty_list_gets
     let c = fs::read_to_string(&config).unwrap();
     fs::write(
         &config,
-        c.replace("denylist = []", "denylist = [\"example client\"]"),
+        c.replace(
+            "denylist = []",
+            "denylist = [\"example client\"]\ndocs_item = false",
+        ),
     )
     .unwrap();
     fs::write(

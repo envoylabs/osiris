@@ -40,7 +40,10 @@ fn a_paused_seat_finishes_its_item_and_takes_nothing_new() {
         &config,
         fs::read_to_string(&config)
             .unwrap()
-            .replace("denylist = []", "denylist = [\"example client\"]")
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
             .replace("phase_branches = true", "phase_branches = false"),
     )
     .unwrap();

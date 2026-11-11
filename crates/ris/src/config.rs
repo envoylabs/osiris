@@ -52,6 +52,10 @@ pub struct Config {
     /// How `ris seat start` runs agents unattended.
     #[serde(default)]
     pub runner: RunnerConfig,
+    /// Whether `ris phase open` adds an item to bring the docs up to
+    /// date, which `ris phase close` waits for. On unless turned off.
+    #[serde(default = "default_true")]
+    pub docs_item: bool,
 }
 
 /// The runner: which agent tool starts a seat's agent, and the line an
@@ -112,6 +116,7 @@ impl Default for Config {
             trailers: true,
             merge_on_close: true,
             runner: RunnerConfig::default(),
+            docs_item: true,
         }
     }
 }

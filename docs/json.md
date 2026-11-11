@@ -1,8 +1,10 @@
 # The `--json` contract
 
 Every `ris` command takes `--json`. The output is for programs: a GUI,
-a daemon, a script. Format 1 is described here; any change to a shape
-below is a new format number.
+a daemon, a script. Format 1 is described here. Within a format, keys
+may be added to `data`; a key is never removed, renamed or given a new
+shape without a new format number, so a client ignores keys it does
+not know.
 
 ## Envelope
 
@@ -52,6 +54,20 @@ event as `data`. Without `--json` they print bare event lines.
   `{"kind": "agent", "seat": "heron"}`.
 - Events are the stored form (event format 3): `structure.event` is a
   snake_case name such as `"decision_raised"`.
+
+## What a client reads most
+
+- `ris summary`: `inbox`, `report`, `ready`, `graph` (the nodes and
+  edges of work in motion) and `checks` (what running the person's
+  action checks did, often empty).
+- `ris inbox` as the person: `decisions` waiting, `actions` for the
+  person, and `checks`.
+- `ris status`: `seats`, each with its role, place, branch, claim,
+  `paused` and `running`.
+- `ris show A-n`: a person action, with `blocks`, `informs`, `state`
+  and, when it has one, its `check`.
+- `ris watch`: every event as it is appended, including `run_started`
+  and `run_stopped` when the runner starts and stops a seat's agent.
 
 `crates/ris/tests/json_contract.rs` pins the envelope and the top-level
 keys of the most-read commands' `data`.

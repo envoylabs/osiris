@@ -1,17 +1,19 @@
 # Quickstart: a lead, a builder and an auditor
 
-This sets up three agent seats on an existing git repository:
+You declare the harness in one file and bring it up with one command,
+as with docker compose. This sets up three agent seats on an existing
+git repository:
 
 | seat  | role      | works in                    |
 |-------|-----------|-----------------------------|
-| heron | `lead`    | its own worktree            |
+| heron | `lead`    | the main checkout           |
 | rook  | `builder` | its own worktree            |
 | wren  | `auditor` | the main checkout, read-only |
 
-The person works in the main checkout with `RIS_AGENT=person`. `ris`
-refuses every command when `RIS_AGENT` is unset, so an agent that loses
-its seat's name is stopped rather than taken for the person. Set it once
-in your shell profile:
+The person runs `ris` with `RIS_AGENT=person`. `ris` refuses every
+command when `RIS_AGENT` is unset, so an agent that loses its seat's
+name is stopped rather than taken for the person. Set it once in your
+shell profile:
 
 ```sh
 export RIS_AGENT=person
@@ -29,31 +31,41 @@ ris init --local
 listed in `.git/info/exclude`, which git never commits, and the rules
 the agents read go in `.osiris/OSIRIS.md`. `git status` is unchanged.
 
-## 2. Configure
+## 2. Declare the harness
 
-`.osiris/config.toml` holds the denylist and the seats. It stays on this
-machine and is never exported. Fill the denylist first:
+`.osiris/config.toml` is the one file you write. It stays on this
+machine and is never exported.
 
 ```toml
 # Words that must never appear in harness state or commits: your name,
 # the client's name, your machine's hostname. Case-insensitive.
 denylist = ["your surname", "client name"]
+
+[agents.heron]
+role = "lead"
+
+[agents.rook]
+role = "builder"
+model = "sonnet"                       # optional: the agent tool's own model name
+
+[agents.wren]
+role = "auditor"
+
+[runner]
+write = ["~/.cargo"]                   # more paths agents may write, e.g. a build cache
+network = []                           # hosts agents may reach
+
+[runner.allow]
+builder = ["Bash(cargo *)"]            # more tool permissions, in the agent tool's syntax
+lead = ["Bash(cargo *)"]
 ```
 
-The template comes with two seats, heron (lead) and wren (auditor).
-Add the builder:
-
-```sh
-ris seat add rook --role builder
-```
-
-A seat name is a pseudonym, refused if the scan or the denylist would
-refuse it, and never reused once it is in the log.
-
-Top-level keys such as `denylist` go above the first `[agents.*]` table.
-`ris phase open` refuses while the denylist is empty, because text is
-scanned as it is written and the log cannot be redacted; set
-`confirm_empty_denylist = true` if an empty list is deliberate.
+Top-level keys such as `denylist` go above the first table. `ris phase
+open` refuses while the denylist is empty, because text is scanned as
+it is written and the log cannot be redacted; set
+`confirm_empty_denylist = true` if an empty list is deliberate. A seat
+name is a pseudonym, never a real person's name, and `person` is
+reserved.
 
 For a repository merged through a git server's web interface, set
 `merge_on_close = false` (phase close leaves the branch for a pull or
@@ -74,84 +86,69 @@ command = "cargo clippy --workspace --all-targets -- -D warnings"
 ## 3. Open a phase and load the work
 
 ```sh
-ris phase open "the goal"              # creates phase/P-1 and switches to it
+ris phase open "the goal"              # creates phase/P-1, and a docs item for it
 ris item add "a task"                  # held to every check; --check names some
 ris item add "a review" --no-checks    # done on attached evidence instead
 ris import backlog.toml --dry-run      # a backlog file: validate,
 ris import backlog.toml                # then import
 ```
 
-The osiris-onboard skill (`skills/osiris-onboard`) drafts the import
-file from an existing project's backlog.
+Every phase gets an item to bring the docs up to date, and `ris phase
+close` waits for it (turn it off with `docs_item = false`). The
+osiris-onboard skill (`skills/osiris-onboard`) drafts the import file
+from an existing project's backlog.
 
-## 4. Give each writing seat a worktree
-
-```sh
-ris worktree heron                     # ../your-repo-heron, branch heron
-ris worktree rook                      # ../your-repo-rook, branch rook
-```
-
-Run this after `ris phase open`: a seat's branch starts from whatever the
-main checkout has checked out, which must be the phase branch. Each
-worktree gets an excluded `CLAUDE.local.md` importing the rules, and all
-worktrees share the one store.
-
-The auditor needs no worktree. It never writes, and every `ris merge`
-moves the main checkout's phase branch forward, so the main checkout
-always shows what has been merged.
-
-## 5. Start the agents
-
-One terminal each:
+## 4. Bring it up
 
 ```sh
-cd ../your-repo-heron && RIS_AGENT=heron claude
-cd ../your-repo-rook  && RIS_AGENT=rook  claude
-cd your-repo          && RIS_AGENT=wren  claude
+ris up                                 # make it so; safe to run again
+ris status                             # where each seat is, and what it holds
+ris logs rook --follow                 # what rook is doing
 ```
 
-The builders loop on `ris ready`, `ris claim`, `ris done`, a commit and
-`ris merge`. The auditor works through `ris audit`. The rules file
-(`ris rules` prints it) tells each seat what its role does.
+`ris up` compares the file with what exists and does only the
+difference: a worktree for each builder that has none, paused seats
+resumed, and each seat whose agent is not running started in the
+background. Run it again after any change to the file; with nothing to
+do, it says so.
 
-Or let the runner start them unattended, one terminal each:
+An unattended agent may do only what its role allows: reading and
+`ris`; for a writing seat, edits, `git` and the project's check
+commands; for an auditor, reading history. Anything else is refused
+rather than asked, and the agent tool's sandbox keeps it to its own
+directory and the shared store, with no network beyond `[runner]`.
+It can never write the files that set its limits: the configuration,
+the checks and the rules. Each run's output is kept under
+`.osiris/runs/`, and its start and stop are in the log.
+
+To run an agent yourself instead, start it in its seat's directory with
+its name set: `cd ../your-repo-rook && RIS_AGENT=rook claude`.
+
+## 5. Check in
 
 ```sh
-ris seat start rook                    # in its worktree, as rook, until it stops
-ris seat start wren                    # the auditor, in the main checkout
-```
-
-An unattended agent may do only what its role allows: reading, `ris`,
-and for a writing seat edits, `git` and the project's check commands.
-Anything else is refused rather than asked, and the agent tool's sandbox
-keeps it to its own directory and the shared store, with no network.
-Add what your project needs in `.osiris/config.toml`:
-
-```toml
-[runner]
-write = ["~/.cargo"]                   # a build tool's cache
-network = []                           # hosts agents may reach
-
-[runner.allow]
-builder = ["Bash(cargo *)"]            # in the agent tool's syntax
-lead = ["Bash(cargo *)"]
-```
-
-Each run's output is kept under `.osiris/runs/`, and its start and stop
-are in the log. `ris status` marks a seat that is running.
-
-## 6. Check in and close
-
-```sh
-ris summary                            # decisions waiting, the report, what is ready
-ris status                             # where each seat is: worktree, claim, +ahead -behind
+ris summary                            # decisions, your actions, what waits on what, the report
+ris eli5 D-3                           # a decision's full case
 ris decide D-3 --choose 1 --rationale "..."
-ris seat pause --all                   # each seat finishes its item, then stops
-ris phase close                        # review; merges phase/P-1 into main
-ris seat resume --all                  # after opening the next phase
+ris action done A-2 --note "what happened"
 ```
 
-A paused seat's next claim is refused with a message telling the agent
-to stop, so nobody has to type into an agent's prompt to halt it.
+The summary draws what waits on what: open decisions, actions and
+unmerged items, with hard edges (the item waits) solid and soft ones
+(it proceeds) dashed. Things only you can do arrive as person actions
+(A-n) in your inbox; one that names a check closes itself at your next
+check-in once the check passes.
 
-`ris show <id>` prints any item, decision, phase or message in full.
+## 6. Bring it down and close
+
+```sh
+ris down                               # each seat finishes its item, then stops
+ris phase close                        # review; merges phase/P-1 into main
+```
+
+`ris down` kills nothing: each agent stops at its next claim, and
+worktrees and the log are kept. `ris up` after the next `ris phase
+open` brings everything back.
+
+`ris show <id>` prints any item, decision, action, phase or message in
+full.

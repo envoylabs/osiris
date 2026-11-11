@@ -677,14 +677,29 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 }
                 let branch = open_phase_branch(&p, l.state.next_phase_id())?;
                 let (l, _) = p.run(&command)?;
-                let phase = l.state.open_phase().expect("just opened");
-                let text = match &branch {
-                    Some(b) => format!("opened {} on branch {b}", phase.id),
-                    None => format!("opened {}", phase.id),
+                let phase = l.state.open_phase().expect("just opened").id;
+                let mut text = match &branch {
+                    Some(b) => format!("opened {phase} on branch {b}"),
+                    None => format!("opened {phase}"),
                 };
+                // The standing rule: every phase ends with the docs
+                // describing what it built.
+                let mut docs = None;
+                if p.config.docs_item {
+                    let (l, _) = p.run(&Command::ItemAdd {
+                        goal: p.text("goal", DOCS_GOAL)?,
+                        checks: p.checks.for_item(None),
+                        depends_on: Vec::new(),
+                    })?;
+                    let id = *l.state.items.keys().last().expect("just added");
+                    text.push_str(&format!(
+                        "\n  {id} brings the docs up to date; close waits for it"
+                    ));
+                    docs = Some(id.to_string());
+                }
                 Ok(Output::new(
                     text,
-                    json!({ "phase": phase.id.to_string(), "branch": branch }),
+                    json!({ "phase": phase.to_string(), "branch": branch, "docs_item": docs }),
                 ))
             }
             PhaseCmd::Close => {
@@ -699,6 +714,23 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 l.state
                     .check_index()
                     .map_err(|e| CliError::Other(e.to_string()))?;
+                // The docs item, if this phase has one, is merged (or
+                // superseded) before the phase closes.
+                if let Some(docs) = l.state.items.values().find(|i| {
+                    i.phase == phase_id
+                        && l.text(i.at, "goal") == DOCS_GOAL
+                        && !matches!(
+                            i.state,
+                            ris_core::primitives::ItemState::Merged { .. }
+                                | ris_core::primitives::ItemState::Superseded { .. }
+                        )
+                }) {
+                    return Err(CliError::Other(format!(
+                        "refused: {} (the docs) is not merged, so the docs may not describe what this phase built\n  \
+                         next: bring them up to date and merge {}, or supersede it",
+                        docs.id, docs.id
+                    )));
+                }
                 let closing = closing_merge(&mut p, phase_id, &goal)?;
                 let (l, events) = p.run(&Command::PhaseClose)?;
                 let closed = events.last().expect("close emits one event");
@@ -1980,6 +2012,10 @@ fn shown_beside(p: &Project, path: &std::path::Path) -> String {
         .map(|r| format!("../{}", r.display()))
         .unwrap_or_else(|_| path.display().to_string())
 }
+
+/// The goal of the item every phase gets for its docs (`docs_item`).
+const DOCS_GOAL: &str = "Docs describe the system as built: the README, the quickstart, the \
+    JSON contract, the agents' rules and the design's status match this phase's work";
 
 /// `ris seat start`: run a seat's agent through the runner and record
 /// its start and stop around it.

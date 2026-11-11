@@ -74,7 +74,7 @@ fn setup() -> PathBuf {
     .unwrap();
     fs::write(
         dir.join(".osiris/config.toml"),
-        "denylist = [\"example client\"]\n[agents.heron]\nrole = \"lead\"\n",
+        "denylist = [\"example client\"]\ndocs_item = false\n[agents.heron]\nrole = \"lead\"\n",
     )
     .unwrap();
     // A commit on the main line before the phase opens is not counted.
