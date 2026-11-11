@@ -66,7 +66,9 @@ pub fn prompt(seat: &str, role: Role) -> String {
         "You are the {role} seat {seat} in a project directed with osiris. \
          RIS_AGENT is set to {seat} and `ris` is on your PATH: run `ris ...` \
          as it is, never with RIS_AGENT or a path in front, since the allow \
-         rules match `ris ...`. Your rules file has the rules; follow them. "
+         rules match `ris ...`. Your rules file has the rules; follow them. \
+         Learn the state from `ris inbox`, `ris ready` and `ris report`, run \
+         first, and from no status document. "
     );
     let work = match role {
         Role::Lead | Role::Builder => {
@@ -523,6 +525,11 @@ mod tests {
         for role in Role::ALL.iter().copied() {
             let p = prompt("rook", role);
             assert!(p.contains("RIS_AGENT is set to rook"), "{p}");
+            // What the cold-start drill (crate::drill) holds a seat to.
+            assert!(
+                p.contains("`ris inbox`, `ris ready` and `ris report`, run first"),
+                "{p}"
+            );
             assert!(p.contains("refused because you are paused"), "{p}");
             assert!(!p.contains("person action"), "{p}");
         }
