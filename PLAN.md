@@ -1,10 +1,8 @@
 # Osiris: a harness for parallel agent work
 
-**Status:** draft, 2026-11-03; amended 2026-11-05; brought in line
-with the built system 2026-11-11. The first slice is built and osiris
-is developed with itself, three seats at once. This document is the
-design; the work still to do is in the harness's own log (`ris ready`,
-`ris report`), not here.
+**Status:** draft, 2026-11-03; amended 2026-11-05 and 2026-11-11.
+This document is the design. What is built and what is left is in the
+harness's own log (`ris ready`, `ris report`), not here.
 
 ## Goal
 
@@ -798,21 +796,8 @@ What follows for the design:
 
 ## First slice
 
-**Done.** Steps 1 to 3 are built, and osiris is developed with itself;
-step 5's runner adapter is built (for Claude Code, sandboxed, with an
-allowlist per role); the project manifest and steps 4 and 6 are items
-in its log. Built beyond the slice: width above one with a worktree per
-seat, phase branches, roles enforced (an auditor cannot write), the
-exit scan on every merge, `ris import` with open decisions, `ris
-status` and `ris watch`, `ris eli5` for a decision's full case, one
-versioned `--json` envelope for every command (`docs/json.md`), a brief
-at claim time, person actions with hard and soft edges, a graph of what
-waits on what, a reverse index checked against a scan, and the harness
-declared in one file and brought up and down with `ris up` and `ris
-down` (`docs/quickstart.md`).
-
-The aim was something minimal in the dev flow as soon as possible, then
-dogfood it from there.
+The aim is something minimal in the dev flow as soon as possible, then
+to dogfood it from there.
 
 1. The primitives as types, the pure core, and the event log behind the
    `Store` trait with one engine. Events have the two-part format from
