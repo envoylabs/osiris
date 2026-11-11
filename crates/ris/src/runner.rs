@@ -62,8 +62,9 @@ pub fn allowlist(role: Role, checks: &ChecksConfig, extra: &[String]) -> Vec<Str
 pub fn prompt(seat: &str, role: Role) -> String {
     let common = format!(
         "You are the {role} seat {seat} in a project directed with osiris. \
-         RIS_AGENT is set to {seat}; never change it. Your rules file has the \
-         rules; follow them. "
+         RIS_AGENT is set to {seat} and `ris` is on your PATH: run `ris ...` \
+         as it is, never with RIS_AGENT or a path in front, since the allow \
+         rules match `ris ...`. Your rules file has the rules; follow them. "
     );
     let work = match role {
         Role::Lead | Role::Builder => {
@@ -183,14 +184,15 @@ pub fn run(
         std::fs::create_dir_all(parent)?;
     }
     let mut file = std::fs::File::create(log)?;
-    let mut child = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         .current_dir(dir)
         .env("RIS_AGENT", seat)
-        .env("RIS_ROOT", root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .spawn()?;
+        .env("RIS_ROOT", root);
+    if let Some(path) = path_with_ris(std::env::current_exe().ok().as_deref()) {
+        cmd.env("PATH", path);
+    }
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).spawn()?;
     let out = child.stdout.take().expect("piped");
     let stdout = std::io::stdout();
     for line in BufReader::new(out).lines() {
@@ -202,6 +204,16 @@ pub fn run(
         }
     }
     Ok(child.wait()?.code())
+}
+
+/// The seat's PATH: the directory of the `ris` that started it, ahead
+/// of the inherited PATH. A seat then runs the harness's own `ris` by
+/// name, which the `Bash(ris *)` rule matches, rather than a binary it
+/// may be rebuilding in its worktree. `None` when it cannot be formed.
+fn path_with_ris(exe: Option<&Path>) -> Option<std::ffi::OsString> {
+    let dir = exe?.parent()?.to_path_buf();
+    let rest = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(std::iter::once(dir).chain(std::env::split_paths(&rest))).ok()
 }
 
 /// One line of a run's output as text: the agent tool's stream JSON

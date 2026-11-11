@@ -2,8 +2,10 @@
 
 This repository is osiris, a harness for directing coding agents, and it
 is built with itself. Work here goes through the `ris` command, not
-through status documents. The design is `PLAN.md`; read its Principles,
-Working model and Confidentiality sections before the first item.
+through status documents: what there is to do, and what has been
+decided, is only in `ris`. `PLAN.md` describes the design as built;
+read its Principles, Working model and Confidentiality sections for
+background, but never take work from it.
 
 ## Who you are
 
@@ -14,7 +16,10 @@ export RIS_AGENT=heron    # or rook, or wren
 ```
 
 With it unset, `ris` refuses every command. Never set it to a name
-that is not your seat; `RIS_AGENT=person` is the person's alone. In a
+that is not your seat; `RIS_AGENT=person` is the person's alone. A seat
+started by `ris up` has it set already and finds the harness's `ris` on
+its PATH: run `ris ...` as it is, with no `RIS_AGENT=` or path in front,
+since the seat's allow rules match `ris ...`. Outside `ris up`, in a
 tool that starts a fresh shell per command, set it on each command
 (`RIS_AGENT=heron ris ...`) or launch the tool with it set.
 
@@ -42,8 +47,10 @@ new, and end the session. The person brings seats back with `ris up`.
   email address and no model name (the model behind a seat is in its
   binding). Add no other trailer that carries an address; the exit scan
   refuses them and has no exceptions.
-- Build `ris` with `cargo build -p ris`; the binary is
-  `target/debug/ris`.
+- Run the loop with the harness's `ris`, the one on a seat's PATH,
+  never a binary built in your worktree from code you are changing.
+  `cargo build -p ris` builds the code under work, at
+  `target/debug/ris`, for its tests.
 
 ## Decisions
 

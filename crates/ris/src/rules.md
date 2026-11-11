@@ -14,7 +14,10 @@ export RIS_AGENT=<your seat>
 ```
 
 With it unset, `ris` refuses every command. Use only your own seat;
-`RIS_AGENT=person` is the person's, never yours.
+`RIS_AGENT=person` is the person's, never yours. A seat started by
+`ris up` has it set already and finds `ris` on its PATH: run `ris ...`
+as it is, with no `RIS_AGENT=` or path in front, since the seat's
+allow rules match `ris ...`.
 
 ## The loop
 

@@ -52,6 +52,7 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
     fs::write(
         &fake,
         "#!/bin/sh\nprintf 'AGENT %s\\n' \"$RIS_AGENT\"\nprintf 'DIR %s\\n' \"$(basename \"$PWD\")\"\n\
+         printf 'RIS %s\\n' \"$(command -v ris)\"\n\
          for a in \"$@\"; do printf 'ARG %s\\n' \"$a\"; done\nexit 3\n",
     )
     .unwrap();
@@ -112,6 +113,17 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
     assert!(
         text.contains("DIR repo-rook"),
         "it runs in its worktree: {text}"
+    );
+    // `ris` on the seat's PATH is the ris that started it, so the
+    // `Bash(ris *)` rule matches the seat's loop commands.
+    let found = text
+        .lines()
+        .find_map(|l| l.strip_prefix("RIS "))
+        .unwrap_or_default();
+    assert!(!found.is_empty(), "ris is on the seat's PATH: {text}");
+    assert_eq!(
+        fs::canonicalize(found).unwrap(),
+        fs::canonicalize(env!("CARGO_BIN_EXE_ris")).unwrap()
     );
     assert_eq!(after("--permission-mode"), "dontAsk");
     assert_eq!(after("--permission-prompts"), "none");
