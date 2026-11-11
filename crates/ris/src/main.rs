@@ -228,7 +228,8 @@ enum ItemCmd {
 #[derive(Subcommand)]
 enum ActionCmd {
     /// Raise something only the person can do, linked to the items it
-    /// blocks (they wait) or informs (they proceed).
+    /// blocks (they wait) or informs (they proceed). The person's only:
+    /// a blocked agent raises an item or a decision instead.
     Raise {
         /// What to do, in a sentence.
         what: String,
@@ -1180,12 +1181,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     check,
                 },
         } => {
-            // A check is a command the person's own ris runs, so only the
-            // person may give one; refuse before anything is written.
-            if check.is_some() && actor != Actor::Person {
-                return Err(CliError::Refused(ris_core::Refusal::ActionIsForThePerson(
-                    l_next_action(&p)?,
-                )));
+            // An action is the person's own to-do; the core refuses an
+            // agent too, but refusing here first scans no text for it.
+            if actor != Actor::Person {
+                return Err(CliError::Refused(
+                    ris_core::Refusal::RaiseActionIsForThePerson,
+                ));
             }
             let check = check.as_deref().map(|c| p.text("check", c)).transpose()?;
             let (l, events) = p.run(&Command::RaiseAction {
@@ -1930,11 +1931,6 @@ fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) ->
         lines.push(line);
     }
     lines
-}
-
-/// The next action's id, for a refusal before one is raised.
-fn l_next_action(p: &Project) -> Result<ris_core::ids::ActionId, CliError> {
-    Ok(p.load()?.state.next_action_id())
 }
 
 /// Run the checks of open person actions, for the person only: their

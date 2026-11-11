@@ -103,7 +103,9 @@ pub enum Command {
     },
     /// Raise a person action: what to do and how to tell it is done,
     /// the items that wait for it (`blocks`) and those it shapes
-    /// without holding them up (`informs`). Raised by anyone.
+    /// without holding them up (`informs`). The person's only: an
+    /// action is their own to-do. An agent that is blocked raises an
+    /// item or a decision instead.
     RaiseAction {
         by: Actor,
         what: Text,
@@ -664,6 +666,9 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             blocks,
             informs,
         } => {
+            if *by != Actor::Person {
+                return Err(Refusal::RaiseActionIsForThePerson);
+            }
             if what.as_str().trim().is_empty() || done_when.as_str().trim().is_empty() {
                 return Err(Refusal::MalformedAction);
             }
@@ -1564,16 +1569,25 @@ mod tests {
     fn a_person_action_blocks_or_informs_and_only_the_person_does_it() {
         let mut h = item_in(ItemStateKind::Claimed);
         let heron = Actor::Agent(agent("heron"));
-        let raise = |blocks: Vec<ItemId>, informs: Vec<ItemId>| Command::RaiseAction {
-            by: Actor::Agent(agent("heron")),
+        let raise = |by: Actor, blocks: Vec<ItemId>, informs: Vec<ItemId>| Command::RaiseAction {
+            by,
             what: t("add the builder seat"),
             done_when: t("ris status lists it"),
             blocks,
             informs,
         };
+        // An agent cannot raise one, blocking or not: the log is unchanged.
+        let before = h.log.len();
+        for (blocks, informs) in [(vec![ItemId(1)], vec![]), (vec![], vec![ItemId(2)])] {
+            assert_eq!(
+                h.run(raise(heron.clone(), blocks, informs)),
+                Err(Refusal::RaiseActionIsForThePerson)
+            );
+        }
+        assert_eq!(h.log.len(), before);
         assert_eq!(
             h.run(Command::RaiseAction {
-                by: heron.clone(),
+                by: Actor::Person,
                 what: t(" "),
                 done_when: t("x"),
                 blocks: vec![],
@@ -1581,8 +1595,8 @@ mod tests {
             }),
             Err(Refusal::MalformedAction)
         );
-        // An agent raises it: I-1 (claimed) is set aside, I-2 proceeds.
-        h.must(raise(vec![ItemId(1)], vec![ItemId(2)]));
+        // The person raises it: I-1 (claimed) is set aside, I-2 proceeds.
+        h.must(raise(Actor::Person, vec![ItemId(1)], vec![ItemId(2)]));
         let a = crate::ids::ActionId(1);
         assert_eq!(
             h.state.items[&ItemId(1)].state,

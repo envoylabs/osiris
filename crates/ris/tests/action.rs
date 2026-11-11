@@ -1,5 +1,5 @@
-//! Person actions: something only the person can do, raised by anyone,
-//! done only by the person, blocking the items that wait for it and
+//! Person actions: something only the person can do, raised and done
+//! only by the person, blocking the items that wait for it and
 //! informing those that proceed without it.
 
 use std::fs;
@@ -71,22 +71,36 @@ fn an_action_blocks_and_informs_and_only_the_person_does_it() {
     ok(&dir, None, &["item", "add", "go"]);
     let heron = Some("heron");
 
-    // An agent raises it: I-1 waits, I-2 proceeds.
-    let out = ok(
-        &dir,
-        heron,
-        &[
-            "action",
-            "raise",
-            "add a builder seat",
-            "--done-when",
-            "ris status lists it",
-            "--blocks",
-            "I-1",
-            "--informs",
-            "i2",
-        ],
+    let raise: &[&str] = &[
+        "action",
+        "raise",
+        "add a builder seat",
+        "--done-when",
+        "ris status lists it",
+        "--blocks",
+        "I-1",
+        "--informs",
+        "i2",
+    ];
+    // An agent cannot raise one: it raises an item or a decision, and
+    // nothing is written.
+    let head = ok(&dir, None, &["verify"]);
+    let r = ris(&dir, heron, raise);
+    assert_eq!(r.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        err.contains("only the person raises a person action"),
+        "{err}"
     );
+    assert!(
+        err.contains("`ris item add`") && err.contains("`ris decision raise`"),
+        "{err}"
+    );
+    assert_eq!(ok(&dir, None, &["verify"]), head);
+    assert_eq!(json(&dir, &["show", "I-1"])["state"], "ready");
+
+    // The person raises it: I-1 waits, I-2 proceeds.
+    let out = ok(&dir, None, raise);
     assert!(
         out.contains("A-1 raised for the person; I-1 set aside"),
         "{out}"
@@ -182,7 +196,7 @@ fn an_action_with_a_check_closes_itself_at_a_check_in() {
     ok(&dir, None, &["phase", "open", "checks"]);
     ok(&dir, None, &["item", "add", "needs the seat"]);
 
-    // An agent may raise an action, but not give it a check.
+    // An agent can neither raise an action nor give one a check.
     let r = ris(
         &dir,
         Some("heron"),
@@ -199,7 +213,7 @@ fn an_action_with_a_check_closes_itself_at_a_check_in() {
     assert_eq!(r.status.code(), Some(2));
     ok(
         &dir,
-        Some("heron"),
+        None,
         &[
             "action",
             "raise",

@@ -163,9 +163,12 @@ ris action done A-2 --note "what happened"
 
 The summary draws what waits on what: open decisions, actions and
 unmerged items, with hard edges (the item waits) solid and soft ones
-(it proceeds) dashed. Things only you can do arrive as person actions
-(A-n) in your inbox; one that names a check closes itself at your next
-check-in once the check passes.
+(it proceeds) dashed. Person actions (A-n) are your own to-do list:
+only you raise them (`ris action raise "..." --done-when "..." --blocks
+I-7`), linked to the items they hold up. An agent that is blocked raises
+an item or a decision instead, and never an action. An action that
+names a check closes itself at your next check-in once the check
+passes.
 
 ## 6. Bring it down and close
 

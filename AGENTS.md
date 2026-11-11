@@ -83,17 +83,21 @@ The test is the cost of reversing, not whether reversal is possible.
 
 ## Person actions
 
-Something only the person can do (run a trial, grant access, add a
-seat, a chore) is an action, not an item: raise it, link it, and carry
-on. `--blocks` sets an item aside until it is done; `--informs` lets the
-item proceed, and the report shows anything merged before the action
-was done.
+A person action is the person's own to-do, raised only by the person
+and linked to the work it holds up; `ris` refuses an agent that raises
+one. An item may wait on an action or proceed under one; its brief
+names them.
 
-```
-ris action raise "add a builder seat" --done-when "ris status lists it" --blocks I-7
-```
+When you are blocked, raise one of two things and take another item:
 
-Never mark one done yourself; `ris` refuses. Never do the person's part
+- **An item**, for a fault in the harness or the code:
+  `ris item add "what is wrong and what fixes it"`.
+- **A decision**, for a judgement, as under Decisions. When what you
+  need is something only the person can do (grant access, add a seat,
+  run a trial), queue it as a substantive decision about your item and
+  say what is needed in the question.
+
+Never mark an action done; `ris` refuses. Never do the person's part
 of the work by another route.
 
 ## Confidentiality: the ground rule

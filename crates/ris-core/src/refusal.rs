@@ -92,6 +92,8 @@ pub enum Refusal {
     },
     /// Only the person does a person action.
     ActionIsForThePerson(ActionId),
+    /// Only the person raises a person action: it is their own to-do.
+    RaiseActionIsForThePerson,
     /// Done means a result: evidence, or a note.
     ActionNeedsResult(ActionId),
     /// An action says what to do and how to tell it is done.
@@ -178,6 +180,11 @@ impl Refusal {
             }
             Self::ActionIsForThePerson(_) => {
                 "leave it to the person; it shows in their inbox".into()
+            }
+            Self::RaiseActionIsForThePerson => {
+                "raise an item for a fault in the harness or the code (`ris item add`), \
+                 or a decision for a judgement (`ris decision raise`)"
+                    .into()
             }
             Self::ActionNeedsResult(_) => "attach --evidence <file>, or give --note".into(),
             Self::MalformedAction => "give what to do and --done-when".into(),
@@ -287,6 +294,9 @@ impl fmt::Display for Refusal {
                 "refused: {action} is {state}, which does not accept {command:?}"
             ),
             Self::ActionIsForThePerson(a) => write!(f, "refused: only the person does {a}"),
+            Self::RaiseActionIsForThePerson => {
+                f.write_str("refused: only the person raises a person action")
+            }
             Self::ActionNeedsResult(a) => {
                 write!(f, "refused: {a} needs evidence or a note to be done")
             }
