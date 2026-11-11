@@ -1969,7 +1969,9 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
     // A run the log holds whose process is gone is cleared, so the seat
     // is started again below rather than counted as running for good.
     let cleared = clear_gone_runs(p, actor, &l, &seats)?;
-    let l = if cleared.is_empty() { l } else { p.load()? };
+    // Read again whatever was cleared: a run may also have recorded its
+    // own stop since the first read, and its seat is then started below.
+    let l = p.load()?;
     changed.extend(cleared);
     // After the cleared runs, so a seat whose process is gone does not
     // count as running when its worktree is brought up.
@@ -2620,14 +2622,19 @@ fn clear_gone_runs(
         if !l.state.running.contains_key(&name) || run_alive(p, seat) {
             continue;
         }
-        p.run(&Command::RunStop {
+        match p.run(&Command::RunStop {
             seat: name,
             actor: actor.clone(),
             status: None,
-        })?;
-        lines.push(format!(
-            "{seat}: its last run ended without being recorded (its process is gone); cleared"
-        ));
+        }) {
+            Ok(_) => lines.push(format!(
+                "{seat}: its last run ended without being recorded (its process is gone); cleared"
+            )),
+            // `l` was read before this: the run recorded its own stop
+            // since, on its way out, and there is nothing left to clear.
+            Err(CliError::Refused(ris_core::Refusal::NotRunning(_))) => {}
+            Err(e) => return Err(e),
+        }
     }
     Ok(lines)
 }
