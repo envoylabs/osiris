@@ -1,9 +1,12 @@
-//! The three-seat drill: a lead in the main checkout, a builder in its
-//! own worktree and an auditor, working at once through ris on one
-//! shared store. Claims overlap, a substantive decision sets the
-//! builder's item aside until the person takes it, a dependency waits
-//! for its merge, the auditor reviews and sends a finding, and every
-//! seat is refused outside its role. The phase ends with every item
+//! The three-seat drill: a lead and a builder, each in its own
+//! worktree, and an auditor reading the main checkout, working at once
+//! through ris on one shared store. Claims overlap, a substantive
+//! decision sets the builder's item aside until the person takes it, a
+//! dependency waits for its merge, the lead's and the builder's merges
+//! race on two threads, the auditor reviews and sends a finding, and
+//! every seat is refused outside its role: the auditor writing, an
+//! agent taking a substantive decision, auditing its own work or
+//! recording a person action done. The phase ends with every item
 //! merged and reviewed and the chain verified.
 
 use std::fs;
@@ -174,14 +177,66 @@ fn a_lead_a_builder_and_an_auditor_finish_a_phase_together() {
     );
     ok(&rook, "rook", &["claim", "I-2"]);
 
-    // The lead finishes first; the builder merges on top from its
-    // worktree.
+    // Only the person records a person action done; an agent is
+    // refused, and the action stays open.
+    ok(
+        &main,
+        "person",
+        &[
+            "action",
+            "raise",
+            "add a fourth seat",
+            "--done-when",
+            "ris status lists it",
+            "--informs",
+            "I-2",
+        ],
+    );
+    for (dir, agent) in [(heron, "heron"), (rook.as_path(), "rook"), (wren, "wren")] {
+        refused(dir, agent, &["action", "done", "A-1", "--note", "done"]);
+    }
+    assert!(ok(&main, "person", &["show", "A-1"]).contains("open"));
+
+    // Lead and builder finish together, and their merges race on two
+    // threads for the one phase branch. Each lands, or the one that
+    // loses is refused cleanly and lands when run again.
     ok(heron, "heron", &["done", "I-1"]);
     commit(heron, "store.txt", "I-1", "heron");
-    ok(heron, "heron", &["merge", "I-1"]);
     ok(&rook, "rook", &["done", "I-2"]);
     commit(&rook, "cli.txt", "I-2", "rook");
-    ok(&rook, "rook", &["merge", "I-2"]);
+    let race: Vec<(PathBuf, &str, &str)> = vec![
+        (heron.to_path_buf(), "heron", "I-1"),
+        (rook.clone(), "rook", "I-2"),
+    ];
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(race.len()));
+    let handles: Vec<_> = race
+        .into_iter()
+        .map(|(dir, agent, item)| {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                (dir.clone(), agent, item, ris(&dir, agent, &["merge", item]))
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    assert!(
+        results.iter().any(|(.., out)| out.status.success()),
+        "one merge lands"
+    );
+    for (dir, agent, item, out) in &results {
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                matches!(out.status.code(), Some(1 | 2)) && !err.trim().is_empty(),
+                "{agent}'s losing merge says why: {err}"
+            );
+            ok(dir, agent, &["merge", item]);
+        }
+    }
+    // An agent never audits its own work, lead or builder.
+    refused(heron, "heron", &["audit", "I-1"]);
+    refused(&rook, "rook", &["audit", "I-2"]);
 
     // The auditor reviews both, and sends the builder a finding.
     let queue = ok(wren, "wren", &["audit"]);
