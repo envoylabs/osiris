@@ -402,8 +402,13 @@ fn message_json(l: &Loaded, m: &Message) -> Value {
 }
 
 /// `ris ready`: what an agent may claim now.
+/// `ris ready`: the open phase's own items first, then items carried
+/// over from earlier phases, each group in id order. A seat takes the
+/// first, so the phase's work comes before the backlog.
 pub fn ready(l: &Loaded) -> Output {
-    let items: Vec<&Item> = l.state.ready().collect();
+    let open = l.state.open_phase().map(|p| p.id);
+    let mut items: Vec<&Item> = l.state.ready().collect();
+    items.sort_by_key(|i| Some(i.phase) != open);
     let text = if items.is_empty() {
         "nothing ready".to_owned()
     } else {
