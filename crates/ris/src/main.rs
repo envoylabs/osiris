@@ -1923,6 +1923,10 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
             changed.push(format!("{seat}: worktree at {}", shown_beside(p, &path)));
         }
     }
+    // An attended seat has its worktree and nothing more: the person
+    // running it decides when it moves, pauses and runs.
+    let (seats, attended): (Vec<String>, Vec<String>) =
+        seats.into_iter().partition(|s| p.config.agents[s].start);
     changed.extend(bring_up_to_phase(p, &l, &seats));
     let name = |s: &String| AgentName(s.clone());
     let paused: Vec<AgentName> = seats
@@ -1974,9 +1978,15 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
             retired.join(", ")
         ));
     }
+    if !attended.is_empty() {
+        text.push_str(&format!(
+            "\nattended (start = false), left alone: {}",
+            attended.join(", ")
+        ));
+    }
     Ok(Output::new(
         text,
-        json!({ "changed": changed, "not_in_file": retired }),
+        json!({ "changed": changed, "not_in_file": retired, "attended": attended }),
     ))
 }
 
@@ -2100,6 +2110,17 @@ fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliE
     } else {
         named.iter().cloned().map(AgentName).collect()
     };
+    let (seats, attended): (Vec<AgentName>, Vec<AgentName>) =
+        seats.into_iter().partition(|s| p.config.agents[&s.0].start);
+    let attended: Vec<String> = attended.into_iter().map(|s| s.0).collect();
+    let note = if attended.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nattended (start = false), left alone: {}",
+            attended.join(", ")
+        )
+    };
     let l = p.load()?;
     let to_pause: Vec<AgentName> = seats
         .into_iter()
@@ -2107,8 +2128,8 @@ fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliE
         .collect();
     if to_pause.is_empty() {
         return Ok(Output::new(
-            "nothing to do: every seat named is already down",
-            json!({ "changed": [] }),
+            format!("nothing to do: every seat named is already down{note}"),
+            json!({ "changed": [], "attended": attended }),
         ));
     }
     let (l, _) = p.run(&Command::Pause {
@@ -2129,8 +2150,8 @@ fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliE
         })
         .collect();
     Ok(Output::new(
-        changed.join("\n"),
-        json!({ "changed": changed }),
+        format!("{}{note}", changed.join("\n")),
+        json!({ "changed": changed, "attended": attended }),
     ))
 }
 

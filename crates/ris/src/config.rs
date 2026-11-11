@@ -153,6 +153,16 @@ pub struct AgentConfig {
     /// Unset: the tool's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Whether `ris up` starts this seat's agent and `ris down` stops
+    /// it. `false` marks an attended seat, one a person runs
+    /// interactively beside the unattended ones: up still gives it a
+    /// worktree if it has none, and otherwise up and down leave it alone.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub start: bool,
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 /// What a seat does.

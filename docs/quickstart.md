@@ -73,6 +73,11 @@ what is written, and an alias moves to a newer model when one ships, so
 runs on different days would not be comparable. Two seats may name the
 same model.
 
+A seat you run yourself, interactively beside the unattended ones, is
+marked `start = false`. `ris up` gives it a worktree if it has none and
+otherwise leaves it alone: it is not fast-forwarded, resumed or started,
+and `ris down` does not pause it.
+
 Top-level keys such as `denylist` go above the first table. `ris phase
 open` refuses while the denylist is empty, because text is scanned as
 it is written and the log cannot be redacted; set

@@ -407,3 +407,60 @@ fn up_leaves_a_worktree_with_its_own_commits_alone() {
     );
     assert_eq!(rig.git_in(&wt, &["rev-parse", "HEAD"]), own);
 }
+
+/// A seat marked `start = false` is attended: a person runs it. Up gives
+/// it a worktree and nothing more; down does not pause it; a pause the
+/// person set on it is not undone by up.
+#[test]
+fn up_and_down_leave_an_attended_seat_alone() {
+    let rig = Rig::new("up-attended", WAITING_AGENT);
+    let config = rig.repo.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(
+        &config,
+        c.replace(
+            "[agents.rook]\nrole = \"builder\"\n",
+            "[agents.rook]\nrole = \"builder\"\nstart = false\n",
+        ),
+    )
+    .unwrap();
+    let seats_of = |r: &Rig, event: &str| -> Vec<String> {
+        r.events(event)
+            .iter()
+            .map(|e| e["structure"]["seat"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let rook = "rook".to_owned();
+
+    let out = rig.ok(None, &["up"]);
+    assert!(out.contains("rook: worktree at ../repo-rook"), "{out}");
+    assert!(!out.contains("rook: started"), "{out}");
+    assert!(
+        out.contains("attended (start = false), left alone: rook"),
+        "{out}"
+    );
+    rig.until("heron and wren started", |r| {
+        seats_of(r, "run_started").len() == 2
+    });
+    assert!(!seats_of(&rig, "run_started").contains(&rook));
+
+    // Down pauses the unattended seats only.
+    let out = rig.ok(None, &["down"]);
+    assert!(
+        out.contains("heron: paused") && out.contains("wren: paused"),
+        "{out}"
+    );
+    assert!(out.contains("left alone: rook"), "{out}");
+    assert!(!seats_of(&rig, "seat_paused").contains(&rook));
+
+    // The person pauses rook by hand; up resumes the others, not rook,
+    // and still starts nothing for it.
+    rig.ok(None, &["seat", "pause", "rook"]);
+    let out = rig.ok(None, &["up"]);
+    assert!(
+        out.contains("heron: resumed") && !out.contains("rook: resumed"),
+        "{out}"
+    );
+    assert!(!seats_of(&rig, "seat_resumed").contains(&rook));
+    assert!(!seats_of(&rig, "run_started").contains(&rook));
+}
