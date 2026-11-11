@@ -69,6 +69,17 @@ fn state_name(s: &ItemState) -> &'static str {
     }
 }
 
+/// The state word the person and agents see for an item: its stored
+/// state, except that a ready item with an unmerged dependency is
+/// `waiting`, since `ris ready` does not offer it. The graph and the
+/// report both use this, so one screen never gives an item two states.
+pub(crate) fn shown_state(l: &Loaded, i: &Item) -> &'static str {
+    match i.state {
+        ItemState::Ready if !l.state.unlanded_dependencies(i).is_empty() => "waiting",
+        _ => state_name(&i.state),
+    }
+}
+
 fn item_json(l: &Loaded, i: &Item) -> Value {
     let mut v = json!({
         "id": i.id.to_string(),
@@ -90,7 +101,13 @@ fn item_json(l: &Loaded, i: &Item) -> Value {
             v["commit"] = json!(commit.to_string());
         }
         ItemState::Superseded { by } => v["superseded_by"] = json!(by.to_string()),
-        ItemState::Ready => {}
+        ItemState::Ready => {
+            let waiting = l.state.unlanded_dependencies(i);
+            if !waiting.is_empty() {
+                v["waiting_on"] =
+                    json!(waiting.iter().map(ToString::to_string).collect::<Vec<_>>());
+            }
+        }
     }
     v
 }
@@ -102,10 +119,13 @@ fn item_line(l: &Loaded, i: &Item) -> String {
         ItemState::Superseded { by } => format!(" (by {by})"),
         _ => String::new(),
     };
+    let state = shown_state(l, i);
     format!(
-        "{:<5} {} {}{}",
+        "{:<5} {}{} {}{}",
         i.id.to_string(),
-        style::state(&format!("{:<8}", state_name(&i.state))),
+        // Styled before padding: the style matches the bare word.
+        style::state(state),
+        " ".repeat(8usize.saturating_sub(state.len())),
         l.text(i.at, "goal"),
         who
     )
@@ -556,7 +576,7 @@ pub fn report(l: &Loaded) -> Output {
     );
     let mut counts = std::collections::BTreeMap::new();
     for i in &items {
-        *counts.entry(state_name(&i.state)).or_insert(0usize) += 1;
+        *counts.entry(shown_state(l, i)).or_insert(0usize) += 1;
     }
     s.push_str(&format!(
         "items: {}\n",
@@ -784,7 +804,7 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
     let mut s = format!(
         "{} {}  (phase {})\n  {}\n",
         i.id,
-        state_name(&i.state),
+        shown_state(l, i),
         i.phase,
         l.text(i.at, "goal")
     );

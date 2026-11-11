@@ -47,6 +47,9 @@ event as `data`. Without `--json` they print bare event lines.
   `"M-3"`, and evidence as `"E-<64 hex>"`.
 - What an item is blocked on is typed: `{"kind": "decision", "id": "D-5"}`,
   `{"kind": "item", "id": "I-3"}` or `{"kind": "action", "id": "A-2"}`.
+- An item's `state` is its stored state. A `ready` item with an
+  unmerged dependency also has `waiting_on`, the ids it waits on; the
+  text output shows it as `waiting`, and `ris ready` leaves it out.
 - Graph edges (`ris summary`'s `graph`) have `from`, `to` and `kind`,
   either `blocks` (the target waits) or `informs` (it proceeds).
 - Hashes are 64 lowercase hex characters.

@@ -321,7 +321,10 @@ $ ris --json report
         "goal": "the fold",
         "id": "I-2",
         "phase": "P-1",
-        "state": "ready"
+        "state": "ready",
+        "waiting_on": [
+          "I-1"
+        ]
       },
       {
         "audited_by": [],
@@ -447,7 +450,10 @@ $ ris --json report
         "goal": "the fold",
         "id": "I-2",
         "phase": "P-1",
-        "state": "ready"
+        "state": "ready",
+        "waiting_on": [
+          "I-1"
+        ]
       },
       {
         "audited_by": [],
@@ -582,7 +588,10 @@ $ ris --json report
         "goal": "the fold",
         "id": "I-2",
         "phase": "P-1",
-        "state": "ready"
+        "state": "ready",
+        "waiting_on": [
+          "I-1"
+        ]
       },
       {
         "audited_by": [],

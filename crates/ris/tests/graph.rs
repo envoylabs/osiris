@@ -178,3 +178,66 @@ fn every_edge_is_drawn_once_and_matches_the_json() {
     }
     assert!(text.contains('…'), "the long goal is cut");
 }
+
+/// An item with an unmerged dependency is `waiting` everywhere the
+/// person reads it: the graph, the report's lines and counts, and
+/// `ris show`, matching `ris ready`, which leaves it out. The JSON
+/// keeps its stored state and adds the dependencies it waits on.
+#[test]
+fn a_waiting_item_has_one_state_on_every_screen() {
+    let dir = std::env::temp_dir().join(format!("ris-graph-waiting-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    ok(&dir, None, &["init"]);
+    let config = dir.join(".osiris/config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)
+            .unwrap()
+            .replace(
+                "denylist = []",
+                "denylist = [\"example client\"]\ndocs_item = false",
+            )
+            .replace("phase_branches = true", "phase_branches = false"),
+    )
+    .unwrap();
+    ok(&dir, None, &["phase", "open", "waiting"]);
+    ok(&dir, None, &["item", "add", "first"]);
+    ok(&dir, None, &["item", "add", "second", "--depends", "I-1"]);
+
+    let ready = ok(&dir, Some("heron"), &["ready"]);
+    assert!(!ready.contains("I-2"), "{ready}");
+    let text = ok(&dir, None, &["summary"]);
+    let graph = text
+        .split("== what waits on what ==")
+        .nth(1)
+        .unwrap()
+        .split("== report ==")
+        .next()
+        .unwrap();
+    assert!(graph.contains("I-2  waiting"), "{text}");
+    let report = ok(&dir, None, &["report"]);
+    assert!(report.contains("items: 1 ready, 1 waiting"), "{report}");
+    let line = report.lines().find(|l| l.contains("I-2")).unwrap();
+    assert!(line.contains("waiting"), "{report}");
+    assert!(!line.contains("ready"), "{report}");
+    let report_in_summary = text.split("== report ==").nth(1).unwrap();
+    let line = report_in_summary
+        .lines()
+        .find(|l| l.contains("I-2"))
+        .unwrap();
+    assert!(line.contains("waiting"), "{text}");
+    assert!(ok(&dir, None, &["show", "I-2"]).starts_with("I-2 waiting"));
+
+    let out = ris(&dir, None, &["--json", "report"]);
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let item = v["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == "I-2")
+        .unwrap()
+        .clone();
+    assert_eq!(item["state"], "ready", "the stored state is unchanged");
+    assert_eq!(item["waiting_on"], serde_json::json!(["I-1"]));
+}

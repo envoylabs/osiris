@@ -249,18 +249,7 @@ fn state(l: &Loaded, n: Node) -> &'static str {
             ActionState::Open => "for you",
             ActionState::Done { .. } => "done",
         },
-        Node::Item(i) => {
-            let item = &l.state.items[&i];
-            match &item.state {
-                ItemState::Ready if !l.state.unlanded_dependencies(item).is_empty() => "waiting",
-                ItemState::Ready => "ready",
-                ItemState::Claimed { .. } => "claimed",
-                ItemState::Blocked { .. } => "blocked",
-                ItemState::Done { .. } => "done",
-                ItemState::Merged { .. } => "merged",
-                ItemState::Superseded { .. } => "superseded",
-            }
-        }
+        Node::Item(i) => crate::render::shown_state(l, &l.state.items[&i]),
     }
 }
 
