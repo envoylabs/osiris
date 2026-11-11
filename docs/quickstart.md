@@ -128,8 +128,9 @@ from an existing project's backlog.
 
 ```sh
 ris up                                 # make it so; safe to run again
-ris status                             # where each seat is, and what it holds
+ris status                             # where each seat is, what it holds, what it last did
 ris logs rook --follow                 # what rook is doing
+ris logs -f                            # every seat at once, each line prefixed with its seat
 ```
 
 `ris up` compares the file with what exists and does only the

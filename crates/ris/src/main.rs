@@ -64,10 +64,12 @@ enum Cmd {
         /// Only these seats; all of them when none is named.
         seats: Vec<String>,
     },
-    /// A seat's latest run output, as text.
+    /// A seat's latest run output, as text. With no seat, every seat's,
+    /// each line prefixed with its seat.
     Logs {
-        seat: String,
-        /// Keep printing until the run stops.
+        seat: Option<String>,
+        /// Keep printing until the run stops; with no seat, until no
+        /// seat is running.
         #[arg(long, short)]
         follow: bool,
     },
@@ -588,7 +590,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Down { seats } => down(&mut p, &actor, seats),
 
-        Cmd::Logs { seat, follow } => logs(&p, seat, *follow, cli.json),
+        Cmd::Logs { seat, follow } => match seat {
+            Some(seat) => logs(&p, seat, *follow, cli.json),
+            None => logs_all(&p, *follow, cli.json),
+        },
 
         Cmd::Seat {
             action: SeatCmd::Add { name, role },
@@ -2188,22 +2193,7 @@ fn logs(p: &Project, seat: &str, follow: bool, json: bool) -> Result<Output, Cli
         return Err(CliError::UnknownAgent(seat.to_owned()));
     }
     let dir = p.root.join(ris::project::DIR).join("runs");
-    let prefix = format!("{seat}-");
-    let latest = std::fs::read_dir(&dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let n: u64 = name
-                .strip_prefix(&prefix)?
-                .strip_suffix(".jsonl")?
-                .parse()
-                .ok()?;
-            Some((n, e.path()))
-        })
-        .max();
-    let Some((_, path)) = latest else {
+    let Some(path) = ris::runner::latest_run(&dir, seat) else {
         return Ok(Output::new(
             format!("{seat} has not run yet\n  next: `ris up {seat}`"),
             json!({ "seat": seat, "lines": [] }),
@@ -2251,6 +2241,82 @@ fn logs(p: &Project, seat: &str, follow: bool, json: bool) -> Result<Output, Cli
         all.join("\n"),
         json!({ "seat": seat, "lines": all }),
     ))
+}
+
+/// `ris logs` with no seat: every configured seat's latest run, each
+/// line prefixed with its seat as `docker compose logs` does. Followed,
+/// each seat is read from where it was left, a seat's newer run is
+/// picked up when it starts, and it ends once no seat is running and
+/// what they wrote has been read.
+fn logs_all(p: &Project, follow: bool, json: bool) -> Result<Output, CliError> {
+    let dir = p.root.join(ris::project::DIR).join("runs");
+    let seats: Vec<String> = p.config.agents.keys().cloned().collect();
+    let width = seats.iter().map(|s| s.len()).max().unwrap_or(0);
+    // Per seat, the run file being read and how far.
+    let mut at: std::collections::BTreeMap<String, (std::path::PathBuf, usize)> =
+        std::collections::BTreeMap::new();
+    let mut all = Vec::new();
+    let mut text = Vec::new();
+    loop {
+        // As for one seat: who is running is read before the files.
+        let running = if follow {
+            p.load()?.state.running
+        } else {
+            Default::default()
+        };
+        for seat in &seats {
+            let Some(path) = ris::runner::latest_run(&dir, seat) else {
+                continue;
+            };
+            let from = match at.get(seat) {
+                Some((read, n)) if *read == path => *n,
+                _ => 0,
+            };
+            let Ok(file) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let live = running.contains_key(&AgentName(seat.clone()));
+            let (lines, next) = ris::runner::lines_from(&file, from, !live);
+            at.insert(seat.clone(), (path, next));
+            for line in lines {
+                let Some(shown) = ris::runner::render_line(line) else {
+                    continue;
+                };
+                for part in shown.lines() {
+                    let prefixed = format!("{seat:<width$} | {part}");
+                    if follow {
+                        if json {
+                            emit(
+                                &render::envelope(&json!({ "seat": seat, "line": part }))
+                                    .to_string(),
+                            );
+                        } else {
+                            emit(&prefixed);
+                        }
+                    }
+                    all.push(json!({ "seat": seat, "line": part }));
+                    text.push(prefixed);
+                }
+            }
+        }
+        if !seats
+            .iter()
+            .any(|s| running.contains_key(&AgentName(s.clone())))
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    if follow {
+        return Ok(Output::stream(String::new(), Vec::new()));
+    }
+    if text.is_empty() {
+        return Ok(Output::new(
+            "no seat has run yet\n  next: `ris up`".to_owned(),
+            json!({ "lines": [] }),
+        ));
+    }
+    Ok(Output::new(text.join("\n"), json!({ "lines": all })))
 }
 
 /// A path beside the repository, shown relative to its parent.

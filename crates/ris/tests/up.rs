@@ -541,3 +541,107 @@ fn up_and_down_leave_an_attended_seat_alone() {
     assert!(!seats_of(&rig, "seat_resumed").contains(&rook));
     assert!(!seats_of(&rig, "run_started").contains(&rook));
 }
+
+/// Watching the seats: `ris logs` with no seat prints every seat's
+/// output with its seat in front, and followed it streams them all
+/// until none is running; `ris status` shows what each running seat
+/// last did and how long ago, and marks one quiet for longer than
+/// `[runner] quiet_after_seconds` as possibly stuck.
+#[test]
+fn every_seat_is_watched_in_one_stream_and_a_quiet_one_is_marked() {
+    let rig = Rig::new("watch-seats", WAITING_AGENT);
+    let prefixed = [
+        "heron | hello from heron",
+        "rook  | hello from rook",
+        "wren  | hello from wren",
+    ];
+    rig.ok(None, &["up"]);
+    rig.until("every seat has spoken", |r| {
+        let out = r.ok(None, &["logs"]);
+        prefixed.iter().all(|p| out.lines().any(|l| l == *p))
+    });
+
+    // Status: each running seat's last activity, not stuck by default.
+    let status = |r: &Rig| -> Value {
+        serde_json::from_slice(&r.ris(None, &["--json", "status"]).stdout).unwrap()
+    };
+    let seat = |v: &Value, name: &str| -> Value {
+        v["data"]["seats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["seat"] == name)
+            .unwrap()
+            .clone()
+    };
+    let rook = seat(&status(&rig), "rook");
+    assert_eq!(rook["activity"]["last"], "hello from rook", "{rook}");
+    assert_eq!(rook["activity"]["stuck"], false, "{rook}");
+    assert!(rook["activity"]["quiet_seconds"].is_u64(), "{rook}");
+    let text = rig.ok(None, &["status"]);
+    assert!(text.contains("ago: hello from rook"), "{text}");
+    assert!(!text.contains("possibly stuck"), "{text}");
+
+    // With no quiet time allowed, a seat that has said nothing since is
+    // marked.
+    let config = rig.repo.join(".osiris/config.toml");
+    let c = fs::read_to_string(&config).unwrap();
+    fs::write(
+        &config,
+        c.replace("[runner]\n", "[runner]\nquiet_after_seconds = 0\n"),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    let rook = seat(&status(&rig), "rook");
+    assert_eq!(rook["activity"]["stuck"], true, "{rook}");
+    let text = rig.ok(None, &["status"]);
+    assert!(text.contains("possibly stuck: quiet"), "{text}");
+
+    // Followed with no seat: one stream of every seat, which ends once
+    // no seat is running. With --json, one envelope per line.
+    let path = format!(
+        "{}:{}",
+        rig.bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let follow = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ris"))
+            .args(args)
+            .current_dir(&rig.repo)
+            .env("RIS_AGENT", "person")
+            .env_remove("RIS_ROOT")
+            .env("NO_COLOR", "1")
+            .env("PATH", &path)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let text = follow(&["logs", "-f"]);
+    let json = follow(&["--json", "logs", "--follow"]);
+    std::thread::sleep(Duration::from_millis(300));
+    rig.stop_all();
+    let text = String::from_utf8(text.wait_with_output().unwrap().stdout).unwrap();
+    for p in prefixed {
+        assert!(text.lines().any(|l| l == p), "{p} in:\n{text}");
+    }
+    let json = String::from_utf8(json.wait_with_output().unwrap().stdout).unwrap();
+    let seats: Vec<String> = json
+        .lines()
+        .map(|l| {
+            let v: Value = serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}"));
+            assert_eq!(v["ok"], true, "{l}");
+            assert!(v["data"]["line"].is_string(), "{l}");
+            v["data"]["seat"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    for s in ["heron", "rook", "wren"] {
+        assert!(seats.iter().any(|x| x == s), "{s} in:\n{json}");
+    }
+
+    // Nothing running: no activity is shown.
+    assert!(
+        ["heron", "rook", "wren"]
+            .iter()
+            .all(|s| seat(&status(&rig), s)["activity"].is_null())
+    );
+}
