@@ -102,8 +102,7 @@ pub enum Blocker {
 }
 
 /// Something only the person can do: run a trial, provide a
-/// prerequisite, do a chore. Raised by an agent or the person; done
-/// only by the person.
+/// prerequisite, do a chore. Raised and done only by the person.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Action {
     pub id: ActionId,
