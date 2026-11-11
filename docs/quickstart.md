@@ -46,7 +46,7 @@ role = "lead"
 
 [agents.rook]
 role = "builder"
-model = "sonnet"                       # optional: the agent tool's own model name
+model = "claude-sonnet-5-5"            # optional: a full model name, not an alias
 
 [agents.wren]
 role = "auditor"
@@ -59,6 +59,12 @@ network = []                           # hosts agents may reach
 builder = ["Bash(cargo *)"]            # more tool permissions, in the agent tool's syntax
 lead = ["Bash(cargo *)"]
 ```
+
+`model` is passed to the agent tool as it is. Write a full name such as
+`claude-opus-5-5` rather than an alias such as `opus`: the log records
+what is written, and an alias moves to a newer model when one ships, so
+runs on different days would not be comparable. Two seats may name the
+same model.
 
 Top-level keys such as `denylist` go above the first table. `ris phase
 open` refuses while the denylist is empty, because text is scanned as
