@@ -185,6 +185,8 @@ mod tests {
     #[test]
     fn a_check_records_its_output_as_evidence() {
         let dir = std::env::temp_dir().join(format!("ris-checks-test-{}", std::process::id()));
+        // Process ids are reused; start from an empty directory.
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let store = EvidenceStore::open(dir.join("evidence")).unwrap();
         let ok = run_check(
