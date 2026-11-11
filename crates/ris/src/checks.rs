@@ -116,9 +116,13 @@ pub fn run_limited(
     };
     let Some(status) = status else {
         // The whole group, so a child the shell started (which holds
-        // the pipes open) goes too.
+        // the pipes open) goes too. The signal is named with `-s` and
+        // the negative pid follows `--`, the form POSIX specifies for a
+        // process group: util-linux and procps `kill`, as found on
+        // Linux, may read a bare `-<pid>` as an option or a signal
+        // number, while macOS's `kill` accepts either form.
         let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{}", child.id())])
+            .args(["-s", "KILL", "--", &format!("-{}", child.id())])
             .status();
         let _ = child.kill();
         let _ = child.wait();
