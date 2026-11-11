@@ -302,6 +302,37 @@ fn decision_json(l: &Loaded, d: &Decision) -> Value {
 /// and how to answer. Without an explanation, says so and who can give
 /// one.
 pub fn eli5(l: &Loaded, d: &Decision) -> Output {
+    let mut out = eli5_case(l, d);
+    if d.explained.is_none() {
+        out.text.push_str(&format!(
+            "  next: ask {} for one (`ris decision explain {}`), or decide from the above\n",
+            match &d.by {
+                Actor::Person => "yourself".to_owned(),
+                Actor::Agent(a) => a.to_string(),
+            },
+            d.id
+        ));
+        return out;
+    }
+    match &d.state {
+        DecisionState::Open => out.text.push_str(&format!(
+            "--\nanswer:  ris decide {0} --choose <option number> --rationale \"...\"\n     or  ris decide {0} --other \"your own answer\" --rationale \"...\"",
+            d.id
+        )),
+        _ => {
+            out.text.push_str("--\n");
+            out.text
+                .push_str(decision_block(l, d).lines().last().unwrap_or("").trim());
+        }
+    }
+    out
+}
+
+/// A decision's case and nothing else: what `ris eli5` prints without
+/// the lines on how to answer, which `ris decide` shows before its
+/// prompt. Without an explanation, the decision and a line saying none
+/// is recorded.
+pub fn eli5_case(l: &Loaded, d: &Decision) -> Output {
     let class = match d.class {
         DecisionClass::Mechanical => "mechanical",
         DecisionClass::Substantive => "substantive",
@@ -315,14 +346,7 @@ pub fn eli5(l: &Loaded, d: &Decision) -> Output {
     let Some(e) = &d.explained else {
         s.push('\n');
         s.push_str(&decision_block(l, d));
-        s.push_str(&format!(
-            "\nno explanation recorded\n  next: ask {} for one (`ris decision explain {}`), or decide from the above\n",
-            match &d.by {
-                Actor::Person => "yourself".to_owned(),
-                Actor::Agent(a) => a.to_string(),
-            },
-            d.id
-        ));
+        s.push_str("\nno explanation recorded\n");
         return Output::new(
             s,
             json!({ "decision": decision_json(l, d), "explanation": null }),
@@ -360,16 +384,6 @@ pub fn eli5(l: &Loaded, d: &Decision) -> Output {
         l.text(e.at, "why")
     ));
     s.push_str(&format!("explained by {}\n", e.by));
-    match &d.state {
-        DecisionState::Open => s.push_str(&format!(
-            "--\nanswer:  ris decide {0} --choose <option number> --rationale \"...\"\n     or  ris decide {0} --other \"your own answer\" --rationale \"...\"",
-            d.id
-        )),
-        _ => {
-            s.push_str("--\n");
-            s.push_str(decision_block(l, d).lines().last().unwrap_or("").trim());
-        }
-    }
     Output::new(
         s,
         json!({

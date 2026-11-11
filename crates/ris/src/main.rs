@@ -121,15 +121,19 @@ enum Cmd {
     /// each option, and why the recommendation is what it is.
     Eli5 { decision: DecisionId },
     /// Take a queued decision: one of its options, or your own answer.
+    /// With no decision, walk the queue of open substantive decisions,
+    /// one per screen: a key picks an option, Enter skips the rationale.
+    /// With --json and no decision, print the queue.
     Decide {
-        decision: DecisionId,
+        decision: Option<DecisionId>,
         /// The option number.
-        #[arg(long, conflicts_with = "other", required_unless_present = "other")]
+        #[arg(long, conflicts_with = "other", requires = "decision")]
         choose: Option<usize>,
         /// An answer that is not among the options.
-        #[arg(long)]
+        #[arg(long, requires = "decision")]
         other: Option<String>,
-        #[arg(long)]
+        /// Why; optional.
+        #[arg(long, requires = "decision", default_value = "")]
         rationale: String,
     },
     /// Run the project's checks here, recording nothing.
@@ -951,11 +955,23 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             other,
             rationale,
         } => {
+            let Some(decision) = decision else {
+                return if cli.json {
+                    Ok(ris::decide::queue_output(&p.load()?))
+                } else {
+                    ris::decide::walk_stdin(&mut p, &actor)
+                };
+            };
             let rationale = p.text("rationale", rationale)?;
             let chosen = match (choose, other) {
                 (Some(n), None) => Choice::Option(*n),
                 (None, Some(answer)) => Choice::Other(p.text("other", answer)?),
-                _ => unreachable!("clap requires exactly one of --choose and --other"),
+                (None, None) => {
+                    return Err(CliError::Other(format!(
+                        "ris decide {decision} needs --choose <option number> or --other \"your own answer\"; `ris decide` alone walks the queue"
+                    )));
+                }
+                (Some(_), Some(_)) => unreachable!("clap refuses --choose with --other"),
             };
             let (l, events) = p.run(&Command::Decide {
                 decision: *decision,

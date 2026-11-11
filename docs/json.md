@@ -85,6 +85,11 @@ line of output per envelope, and ends once no seat is running; without
   `[runner] quiet_after_seconds`); null otherwise.
 - `ris show A-n`: a person action, with `blocks`, `informs`, `state`
   and, when it has one, its `check`.
+- `ris decide` with no decision: `queue`, the open substantive
+  decisions oldest first, whatever phase raised them, each entry the
+  `data` that `ris eli5 D-n` gives (`decision`, and `explanation` or
+  null). A client shows each and answers with
+  `ris decide D-n --choose <k>`; `--rationale` is optional.
 - `ris watch`: every event as it is appended, including `run_started`
   and `run_stopped` when the runner starts and stops a seat's agent.
 

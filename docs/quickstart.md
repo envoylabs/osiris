@@ -188,7 +188,8 @@ tries it again.
 
 ```sh
 ris summary                            # decisions, your actions, what waits on what, the report
-ris eli5 D-3                           # a decision's full case
+ris decide                             # each open decision's case, then pick with one key
+ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
 ```
