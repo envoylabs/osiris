@@ -1909,9 +1909,12 @@ fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result
         .cloned()
         .unwrap_or_default();
     let allow = ris::runner::allowlist(cfg.role, &p.checks, &extra);
-    let settings = ris::runner::sandbox_settings(&write, &p.config.runner.network);
+    let protected = ris::runner::protected(&p.root, &p.rules_path(), &dir);
+    let deny = ris::runner::deny_edits(&protected);
+    let protected: Vec<String> = protected.iter().map(|w| w.display().to_string()).collect();
+    let settings = ris::runner::sandbox_settings(&write, &protected, &p.config.runner.network);
     let prompt = ris::runner::prompt(seat, cfg.role);
-    let args = ris::runner::claude_args(&prompt, &allow, &settings, cfg.model.as_deref());
+    let args = ris::runner::claude_args(&prompt, &allow, &deny, &settings, cfg.model.as_deref());
 
     let name = AgentName(seat.to_owned());
     let (l, _) = p.run(&Command::RunStart {

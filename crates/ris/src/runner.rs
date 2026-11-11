@@ -89,18 +89,44 @@ pub fn prompt(seat: &str, role: Role) -> String {
 }
 
 /// The agent tool's sandbox settings, as JSON: on, with no way out,
-/// writing only where the seat works and where `ris` and `git` must.
-pub fn sandbox_settings(write: &[String], network: &[String]) -> String {
+/// writing only where the seat works and where `ris` and `git` must,
+/// and never to `protected`.
+pub fn sandbox_settings(write: &[String], protected: &[String], network: &[String]) -> String {
     json!({
         "sandbox": {
             "enabled": true,
             "failIfUnavailable": true,
             "allowUnsandboxedCommands": false,
-            "filesystem": { "allowWrite": write },
+            "filesystem": { "allowWrite": write, "denyWrite": protected },
             "network": { "allowedDomains": network },
         }
     })
     .to_string()
+}
+
+/// The files that set an agent's limits, which it must never write:
+/// the configuration (its allowlist, sandbox and denylist), the
+/// checks, and the rules it reads. The store and evidence beside them
+/// stay writable; the chain shows any tampering with the store.
+pub fn protected(root: &Path, rules: &Path, dir: &Path) -> Vec<PathBuf> {
+    let osiris = root.join(crate::project::DIR);
+    let mut out = vec![
+        osiris.join("config.toml"),
+        osiris.join("checks.toml"),
+        rules.to_path_buf(),
+        dir.join(crate::project::LOCAL_IMPORT_FILE),
+    ];
+    out.dedup();
+    out
+}
+
+/// Deny rules for the agent tool's own file tools, by absolute path.
+/// Deny rules are checked before allow rules.
+pub fn deny_edits(protected: &[PathBuf]) -> Vec<String> {
+    protected
+        .iter()
+        .map(|p| format!("Edit(/{})", p.display()))
+        .collect()
 }
 
 /// Claude Code's command line for an unattended run: print mode,
@@ -108,6 +134,7 @@ pub fn sandbox_settings(write: &[String], network: &[String]) -> String {
 pub fn claude_args(
     prompt: &str,
     allow: &[String],
+    deny: &[String],
     settings: &str,
     model: Option<&str>,
 ) -> Vec<String> {
@@ -127,6 +154,10 @@ pub fn claude_args(
     .map(|s| (*s).to_owned())
     .collect();
     args.push(allow.join(","));
+    if !deny.is_empty() {
+        args.push("--disallowedTools".into());
+        args.push(deny.join(","));
+    }
     args.push("--settings".into());
     args.push(settings.to_owned());
     if let Some(m) = model {
@@ -258,7 +289,8 @@ mod tests {
     #[test]
     fn the_sandbox_has_no_way_out() {
         let s: serde_json::Value =
-            serde_json::from_str(&sandbox_settings(&["x".into()], &[])).unwrap();
+            serde_json::from_str(&sandbox_settings(&["x".into()], &["y".into()], &[])).unwrap();
+        assert_eq!(s["sandbox"]["filesystem"]["denyWrite"], json!(["y"]));
         assert_eq!(s["sandbox"]["enabled"], true);
         assert_eq!(s["sandbox"]["failIfUnavailable"], true);
         assert_eq!(s["sandbox"]["allowUnsandboxedCommands"], false);
@@ -270,8 +302,13 @@ mod tests {
         let args = claude_args(
             "go",
             &["Read".into(), "Bash(ris *)".into()],
+            &["Edit(//r/c)".into()],
             "{}",
             Some("m"),
+        );
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "--disallowedTools" && w[1] == "Edit(//r/c)")
         );
         let has = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
         assert!(has("-p", "go"));
@@ -296,6 +333,24 @@ mod tests {
             "== success =="
         );
         assert_eq!(render_line("plain text").unwrap(), "plain text");
+    }
+
+    #[test]
+    fn the_files_that_set_limits_are_denied_by_absolute_path() {
+        let p = protected(
+            Path::new("/r"),
+            Path::new("/r/.osiris/OSIRIS.md"),
+            Path::new("/r-rook"),
+        );
+        let d = deny_edits(&p);
+        for want in [
+            "Edit(//r/.osiris/config.toml)",
+            "Edit(//r/.osiris/checks.toml)",
+            "Edit(//r/.osiris/OSIRIS.md)",
+            "Edit(//r-rook/CLAUDE.local.md)",
+        ] {
+            assert!(d.contains(&want.to_owned()), "{want} in {d:?}");
+        }
     }
 
     #[test]

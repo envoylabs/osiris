@@ -137,6 +137,30 @@ fn a_seat_runs_in_its_directory_as_itself_within_its_role() {
     assert!(write.iter().any(|w| w.ends_with("/.osiris")), "{write:?}");
     assert!(write.iter().any(|w| w.ends_with(".git")), "{write:?}");
     assert!(write.contains(&"~/.cargo"), "{write:?}");
+    // The files that set its limits are denied, at both levels.
+    let deny_write: Vec<&str> = settings["sandbox"]["filesystem"]["denyWrite"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    for f in [
+        ".osiris/config.toml",
+        ".osiris/checks.toml",
+        "repo-rook/CLAUDE.local.md",
+    ] {
+        assert!(
+            deny_write.iter().any(|w| w.ends_with(f)),
+            "{f} in {deny_write:?}"
+        );
+    }
+    let denied = after("--disallowedTools");
+    assert!(
+        denied
+            .split(',')
+            .any(|d| d.starts_with("Edit(//") && d.ends_with("/.osiris/config.toml)")),
+        "{denied}"
+    );
     assert!(args.iter().any(|a| a.contains("RIS_AGENT is set to rook")));
     assert!(text.contains("rook stopped (exit 3)"), "{text}");
 
