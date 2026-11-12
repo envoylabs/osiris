@@ -111,7 +111,13 @@ line of output per envelope, and ends once no seat is running; without
   decisions oldest first, whatever phase raised them, each entry the
   `data` that `ris eli5 D-n` gives (`decision`, and `explanation` or
   null). A client shows each and answers with
-  `ris decide D-n --choose <k>`; `--rationale` is optional.
+  `ris decide D-n --choose <k>`, or with
+  `ris decide D-n --other "<an answer that is none of the options>"`,
+  which it should always offer; `--rationale` is optional. Either
+  gives `decision` and `unblocked`, the items the decision alone had
+  set aside. An answer outside the options is recorded as one more
+  option: `chosen` is its number, one past those offered, and `other`
+  its text.
 - `ris watch`: every event as it is appended, including `run_started`
   and `run_stopped` when the runner starts and stops a seat's agent,
   and `setup_fault` (with `seat`) when a seat reports a fault in its

@@ -311,5 +311,15 @@ closed now.
 worktrees and the log are kept. `ris up` after the next `ris phase
 open` brings everything back.
 
+`ris` makes commits of its own: the closing merge, the rebase inside a
+seat's `ris merge`, and the rebase `ris up` does over a change to the
+rules file. Each needs a git identity. Where git has none, the command
+is refused before anything is touched and names what to run (`git
+config user.name` and `git config user.email`), and the phase or the
+item stays as it was.
+
+After the close, `ris map` and `ris map --html map.html` show the
+phase just closed, and `ris report` its report.
+
 `ris show <id>` prints any item, decision, action, phase or message in
 full.
