@@ -12,3 +12,9 @@ serde_json.workspace = true
 sha2.workspace = true
 regex.workspace = true
 toml.workspace = true
+schemars = { workspace = true, optional = true }
+
+[features]
+# JSON Schema for the serialised types, for the shell's `--json`
+# contract. Derives only: the core's behaviour does not change.
+schema = ["dep:schemars"]

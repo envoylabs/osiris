@@ -11,6 +11,8 @@ pub mod ids;
 pub mod primitives;
 pub mod refusal;
 pub mod rules;
+#[cfg(feature = "schema")]
+mod schema;
 pub mod state;
 pub mod store;
 pub mod text;

@@ -17,5 +17,6 @@ pub mod preflight;
 pub mod project;
 pub mod render;
 pub mod runner;
+pub mod schema;
 pub mod status;
 pub mod style;

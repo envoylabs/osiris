@@ -212,7 +212,7 @@ fn is_true(b: &bool) -> bool {
 }
 
 /// What a seat does.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Lead,

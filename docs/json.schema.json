@@ -1,0 +1,4056 @@
+{
+  "$defs": {
+    "Action": {
+      "description": "A person action.",
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        },
+        "by": {
+          "$ref": "#/$defs/Actor"
+        },
+        "check": {
+          "description": "The command that closes it when it passes, if it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "done_when": {
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceId"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "informs": {
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        },
+        "note": {
+          "description": "Present once done; null when it was closed without a note.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "`open` or `done`.",
+          "type": "string"
+        },
+        "what": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "by",
+        "what",
+        "done_when",
+        "blocks",
+        "informs",
+        "state",
+        "check"
+      ],
+      "type": "object"
+    },
+    "ActionChecked": {
+      "description": "`ris action check`.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "checks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "checks"
+      ],
+      "type": "object"
+    },
+    "ActionDone": {
+      "description": "`ris action done`.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "ready": {
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "ready"
+      ],
+      "type": "object"
+    },
+    "ActionId": {
+      "description": "A person action's id, such as A-2.",
+      "pattern": "^A-[0-9]+$",
+      "type": "string"
+    },
+    "ActionRaised": {
+      "description": "`ris action raise`.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "blocked": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "blocked"
+      ],
+      "type": "object"
+    },
+    "Activity": {
+      "description": "What a running seat last did, read from its run's output file.",
+      "properties": {
+        "last": {
+          "description": "The tool it last ran or what it last said, on one line; `None`\nbefore it has said anything.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quiet_seconds": {
+          "description": "Seconds since its output last changed.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stuck": {
+          "description": "Quiet for longer than `[runner] quiet_after_seconds`.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "last",
+        "quiet_seconds",
+        "stuck"
+      ],
+      "type": "object"
+    },
+    "Actor": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "person",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "agent",
+              "type": "string"
+            },
+            "seat": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "kind",
+            "seat"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AgentName": {
+      "description": "An agent's configured name: a durable pseudonym for a seat, never a\nreal person's name. The configuration that declares it is scanned\nlike any other free text.",
+      "type": "string"
+    },
+    "Audit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuditQueue"
+        },
+        {
+          "$ref": "#/$defs/Audited"
+        }
+      ],
+      "description": "`ris audit`: the queue, or the review recorded."
+    },
+    "AuditQueue": {
+      "description": "`ris audit` with no item.",
+      "properties": {
+        "queue": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "queue"
+      ],
+      "type": "object"
+    },
+    "Audited": {
+      "description": "`ris audit I-n`.",
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/AgentName"
+        },
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "required": [
+        "item",
+        "by"
+      ],
+      "type": "object"
+    },
+    "Blocker": {
+      "description": "What an item can be blocked on.",
+      "oneOf": [
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/DecisionId"
+            },
+            "kind": {
+              "const": "decision",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/ItemId"
+            },
+            "kind": {
+              "const": "item",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "kind": {
+              "const": "action",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Brief": {
+      "description": "`ris claim`: the brief.",
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/BriefAction"
+          },
+          "type": "array"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/CheckId"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/BriefDecision"
+          },
+          "type": "array"
+        },
+        "decisions_left_out": {
+          "description": "Older decisions the brief had no room for.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "depends_on": {
+          "items": {
+            "$ref": "#/$defs/BriefDependency"
+          },
+          "type": "array"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "project": {
+          "$ref": "#/$defs/BriefProject"
+        },
+        "rules": {
+          "$ref": "#/$defs/BriefRules"
+        }
+      },
+      "required": [
+        "rules",
+        "project",
+        "item",
+        "goal",
+        "checks",
+        "depends_on",
+        "actions",
+        "decisions",
+        "decisions_left_out"
+      ],
+      "type": "object"
+    },
+    "BriefAction": {
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "kind": {
+          "description": "`blocks` or `informs`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "BriefDecision": {
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/DecisionId"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "state"
+      ],
+      "type": "object"
+    },
+    "BriefDependency": {
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "state"
+      ],
+      "type": "object"
+    },
+    "BriefProject": {
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "goal",
+        "role"
+      ],
+      "type": "object"
+    },
+    "BriefRules": {
+      "properties": {
+        "hash": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Relative to the project root; null when the built-in rules are\nmeant.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "hash"
+      ],
+      "type": "object"
+    },
+    "CarriedOver": {
+      "properties": {
+        "decisions": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "decisions"
+      ],
+      "type": "object"
+    },
+    "Case": {
+      "description": "A decision's full case.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/Decision"
+        },
+        "explanation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Explanation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null when no explanation is recorded."
+        }
+      },
+      "required": [
+        "decision",
+        "explanation"
+      ],
+      "type": "object"
+    },
+    "Category": {
+      "description": "What the scan found.",
+      "oneOf": [
+        {
+          "const": "Secret",
+          "description": "A credential in a known format: an access key, an API token, a\nbearer token, a JWT, or a long high-entropy string.",
+          "type": "string"
+        },
+        {
+          "const": "PrivateKey",
+          "description": "A PEM private-key block.",
+          "type": "string"
+        },
+        {
+          "const": "CredentialAssignment",
+          "description": "`password=`, `token:` and the like, followed by a value.",
+          "type": "string"
+        },
+        {
+          "const": "Email",
+          "description": "An email address.",
+          "type": "string"
+        },
+        {
+          "const": "AbsolutePath",
+          "description": "An absolute path under a home directory or a drive root, which\ncarries a username or identifies a machine.",
+          "type": "string"
+        },
+        {
+          "const": "Denylisted",
+          "description": "An entry from the local denylist: the person's name, a client's\nname, the home directory, whatever the configuration lists.",
+          "type": "string"
+        }
+      ]
+    },
+    "CheckId": {
+      "description": "A check's name, as declared in the project's checks file.",
+      "type": "string"
+    },
+    "CheckResult": {
+      "properties": {
+        "check": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "check",
+        "passed"
+      ],
+      "type": "object"
+    },
+    "CheckRun": {
+      "description": "One run of a check against an item.",
+      "properties": {
+        "check": {
+          "$ref": "#/$defs/CheckId"
+        },
+        "evidence": {
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "passed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "check",
+        "passed",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "Checks": {
+      "description": "`ris check`.",
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/CheckResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "checks"
+      ],
+      "type": "object"
+    },
+    "CommandKind": {
+      "description": "The commands of the first slice, by kind.",
+      "oneOf": [
+        {
+          "enum": [
+            "PhaseOpen",
+            "PhaseClose",
+            "ItemAdd",
+            "Claim",
+            "Decide",
+            "Done",
+            "Merge",
+            "MessageSend",
+            "Resume",
+            "RunStop"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "RaiseMechanical",
+          "description": "Raising a mechanical decision: logged, the item carries on.",
+          "type": "string"
+        },
+        {
+          "const": "RaiseSubstantive",
+          "description": "Raising a substantive decision: queued, the item is set aside.",
+          "type": "string"
+        },
+        {
+          "const": "CheckRan",
+          "description": "Recording a check's run against an item.",
+          "type": "string"
+        },
+        {
+          "const": "Release",
+          "description": "Returning a claimed item to ready: by its holder, or the person.",
+          "type": "string"
+        },
+        {
+          "const": "Audit",
+          "description": "An auditor recording that it has reviewed an item.",
+          "type": "string"
+        },
+        {
+          "const": "Explain",
+          "description": "Attaching the full case for an open decision: pros and cons per\noption and why the recommendation holds.",
+          "type": "string"
+        },
+        {
+          "const": "Supersede",
+          "description": "The person replacing an item that has not been started with\nanother.",
+          "type": "string"
+        },
+        {
+          "const": "Pause",
+          "description": "The person pausing seats, or resuming them.",
+          "type": "string"
+        },
+        {
+          "const": "RunStart",
+          "description": "The runner recording that a seat's agent started or stopped.",
+          "type": "string"
+        },
+        {
+          "const": "SetupFault",
+          "description": "A seat reporting a fault in its setup.",
+          "type": "string"
+        },
+        {
+          "const": "RaiseAction",
+          "description": "Raising a person action; it sets aside the items it blocks.",
+          "type": "string"
+        },
+        {
+          "const": "ActionDone",
+          "description": "The person recording an action done; items blocked only on it\nreturn to ready.",
+          "type": "string"
+        },
+        {
+          "const": "SetActionCheck",
+          "description": "The person giving an open action a check that closes it.",
+          "type": "string"
+        }
+      ]
+    },
+    "CommitHash": {
+      "description": "A git commit, by its full hash as git prints it.",
+      "type": "string"
+    },
+    "Decide": {
+      "anyOf": [
+        {
+          "properties": {
+            "decision": {
+              "$ref": "#/$defs/DecisionId"
+            },
+            "unblocked": {
+              "description": "Items the decision alone had set aside, ready again.",
+              "items": {
+                "$ref": "#/$defs/ItemId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "decision",
+            "unblocked"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "open": {
+              "items": {
+                "$ref": "#/$defs/DecisionId"
+              },
+              "type": "array"
+            },
+            "taken": {
+              "items": {
+                "$ref": "#/$defs/DecisionId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "taken",
+            "open"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "queue": {
+              "items": {
+                "$ref": "#/$defs/Case"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "queue"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "`ris decide`: a named decision taken, the walk's outcome, or with\n`--json` and no decision the queue."
+    },
+    "Decision": {
+      "description": "A decision.",
+      "properties": {
+        "about": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "by": {
+          "$ref": "#/$defs/Actor"
+        },
+        "chosen": {
+          "description": "The option taken; one past the offered options for an answer\noutside them, which is then in `other`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "class": {
+          "$ref": "#/$defs/DecisionClass"
+        },
+        "explained": {
+          "description": "Whether it has a full case (`ris eli5`).",
+          "type": "boolean"
+        },
+        "id": {
+          "$ref": "#/$defs/DecisionId"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "other": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question": {
+          "type": "string"
+        },
+        "raised_at_event": {
+          "description": "The sequence number of the event that raised it; in\n`ris show D-n` only.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rationale": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recommended": {
+          "description": "The recommended option's number.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "description": "`open`, `taken` or `superseded`.",
+          "type": "string"
+        },
+        "taken_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Actor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "class",
+        "by",
+        "about",
+        "question",
+        "options",
+        "recommended",
+        "state",
+        "explained"
+      ],
+      "type": "object"
+    },
+    "DecisionClass": {
+      "description": "The decision rule: the test is the cost of reversing.",
+      "oneOf": [
+        {
+          "const": "mechanical",
+          "description": "The agent goes ahead and logs it.",
+          "type": "string"
+        },
+        {
+          "const": "substantive",
+          "description": "Expensive to reverse: queued for the person.",
+          "type": "string"
+        }
+      ]
+    },
+    "DecisionId": {
+      "description": "A decision's id, such as D-4.",
+      "pattern": "^D-[0-9]+$",
+      "type": "string"
+    },
+    "DecisionRef": {
+      "description": "`ris decision raise` and `ris decision explain`.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/DecisionId"
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "type": "object"
+    },
+    "Done": {
+      "description": "`ris done`.",
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceId"
+          },
+          "type": "array"
+        },
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "required": [
+        "item",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "Down": {
+      "description": "`ris down`.",
+      "properties": {
+        "attended": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "changed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "changed",
+        "attended"
+      ],
+      "type": "object"
+    },
+    "Edge": {
+      "description": "One connection, from the file that names the other.",
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "The kind of line that makes it: `mod` or `use` for Rust.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "Error": {
+      "description": "A failure: `error` in the envelope.",
+      "properties": {
+        "failed": {
+          "items": {
+            "$ref": "#/$defs/FailedCheck"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "hits": {
+          "description": "`leak`: where, and never the matched text.",
+          "items": {
+            "$ref": "#/$defs/Hit"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "item": {
+          "description": "`checks_failed`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ErrorKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "next": {
+          "description": "The suggested next step.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Refusal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`refused`: the core's reason."
+        },
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Role"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scanned": {
+          "description": "`leak`: what was scanned.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seat": {
+          "description": "`role_forbids`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "message",
+        "next"
+      ],
+      "type": "object"
+    },
+    "ErrorKind": {
+      "enum": [
+        "refused",
+        "leak",
+        "role_forbids",
+        "check_failed",
+        "checks_failed",
+        "not_a_project",
+        "already_a_project",
+        "config",
+        "unknown_agent",
+        "no_actor",
+        "contended",
+        "store",
+        "io",
+        "other"
+      ],
+      "type": "string"
+    },
+    "Event": {
+      "description": "One entry in the log.",
+      "properties": {
+        "at": {
+          "description": "When the shell appended it, in milliseconds since the Unix epoch;\n0 when unknown (an event upgraded from format version 1).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hash": {
+          "$ref": "#/$defs/Hash",
+          "description": "The chain hash of this event."
+        },
+        "prev": {
+          "$ref": "#/$defs/Hash",
+          "description": "The previous event's `hash`; all zeros for the first."
+        },
+        "salt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Salt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` once the text has been removed."
+        },
+        "seq": {
+          "description": "Position in the log, from 1.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "structure": {
+          "$ref": "#/$defs/Structure"
+        },
+        "text": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Text"
+          },
+          "description": "`None` once the text has been removed.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "text_hash": {
+          "$ref": "#/$defs/Hash",
+          "description": "`H(salt, text)`, kept after the text is removed."
+        },
+        "version": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seq",
+        "version",
+        "prev",
+        "at",
+        "structure",
+        "text_hash",
+        "salt",
+        "text",
+        "hash"
+      ],
+      "type": "object"
+    },
+    "EvidenceContent": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "evidence": {
+          "description": "`E-` and the hash, in full.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence",
+        "content"
+      ],
+      "type": "object"
+    },
+    "EvidenceId": {
+      "description": "A piece of evidence, addressed by the hash of its content.",
+      "pattern": "^E-[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "ExplainedOption": {
+      "properties": {
+        "cons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "option": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pros": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "option",
+        "text",
+        "pros",
+        "cons"
+      ],
+      "type": "object"
+    },
+    "Explanation": {
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/Actor"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/ExplainedOption"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "why": {
+          "description": "Why the recommendation is the recommendation.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "by",
+        "summary",
+        "options",
+        "why"
+      ],
+      "type": "object"
+    },
+    "Exported": {
+      "description": "`ris export`.",
+      "properties": {
+        "new": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "phases",
+        "new"
+      ],
+      "type": "object"
+    },
+    "FailedCheck": {
+      "properties": {
+        "check": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "check",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "Graph": {
+      "description": "What waits on what.",
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/GraphNode"
+          },
+          "type": "array"
+        },
+        "unlinked": {
+          "description": "How many nodes have no edge.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "nodes",
+        "edges",
+        "unlinked"
+      ],
+      "type": "object"
+    },
+    "GraphEdge": {
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "`blocks`, `informs` or `met`.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "GraphNode": {
+      "properties": {
+        "id": {
+          "description": "An item's, decision's or action's id.",
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "An item's phase."
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "state"
+      ],
+      "type": "object"
+    },
+    "Hash": {
+      "description": "A SHA-256 hash: 64 lowercase hex characters.",
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "Hit": {
+      "properties": {
+        "category": {
+          "description": "What kind of thing the scan found, in words.",
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "description": "Null when the hit is not on a line of the file (its name, say).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "file",
+        "line",
+        "category"
+      ],
+      "type": "object"
+    },
+    "Imported": {
+      "description": "`ris import`.",
+      "properties": {
+        "decisions": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "open": {
+          "description": "How many of `decisions` are open.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "written": {
+          "description": "False for a dry run.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "items",
+        "decisions",
+        "open",
+        "written"
+      ],
+      "type": "object"
+    },
+    "Inbox": {
+      "anyOf": [
+        {
+          "properties": {
+            "actions": {
+              "items": {
+                "$ref": "#/$defs/Action"
+              },
+              "type": "array"
+            },
+            "checks": {
+              "description": "What running the person's action checks did; in the\ncommand's own data, not where an inbox is part of another.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "decisions": {
+              "items": {
+                "$ref": "#/$defs/Decision"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "decisions",
+            "actions"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "checks": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "holding": {
+              "items": {
+                "$ref": "#/$defs/Item"
+              },
+              "type": "array"
+            },
+            "messages": {
+              "items": {
+                "$ref": "#/$defs/Message"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "holding",
+            "messages"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "`ris inbox`: the person's, or a seat's."
+    },
+    "Init": {
+      "description": "`ris init`.",
+      "properties": {
+        "local": {
+          "type": "boolean"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "local"
+      ],
+      "type": "object"
+    },
+    "Installed": {
+      "description": "`ris install`.",
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "commit",
+        "to"
+      ],
+      "type": "object"
+    },
+    "Item": {
+      "description": "An item.",
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The seat holding it, when claimed."
+        },
+        "audited_by": {
+          "items": {
+            "$ref": "#/$defs/AgentName"
+          },
+          "type": "array"
+        },
+        "blocked_on": {
+          "description": "What it waits on, when blocked.",
+          "items": {
+            "$ref": "#/$defs/Blocker"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "check_runs": {
+          "description": "Each run of one of its checks; in `ris show I-n` only.",
+          "items": {
+            "$ref": "#/$defs/CheckRun"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/CheckId"
+          },
+          "type": "array"
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommitHash"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its commit, when merged."
+        },
+        "decisions": {
+          "description": "The decisions about it; in `ris show I-n` only.",
+          "items": {
+            "$ref": "#/$defs/Decision"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "depends_on": {
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "description": "Its evidence, when done or merged.",
+          "items": {
+            "$ref": "#/$defs/EvidenceId"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "goal": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "state": {
+          "description": "`ready`, `claimed`, `blocked`, `done`, `merged` or `superseded`.",
+          "type": "string"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "waiting_on": {
+          "description": "The unmerged items a ready item depends on, when there are any.",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "phase",
+        "goal",
+        "state",
+        "checks",
+        "depends_on",
+        "audited_by"
+      ],
+      "type": "object"
+    },
+    "ItemId": {
+      "description": "An item's id, such as I-7.",
+      "pattern": "^I-[0-9]+$",
+      "type": "string"
+    },
+    "ItemRef": {
+      "description": "A command that names one item.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "type": "object"
+    },
+    "LogHead": {
+      "properties": {
+        "head": {
+          "$ref": "#/$defs/Hash"
+        },
+        "len": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "len",
+        "head"
+      ],
+      "type": "object"
+    },
+    "Logs": {
+      "anyOf": [
+        {
+          "properties": {
+            "lines": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "seat": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "seat",
+            "lines"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "lines": {
+              "items": {
+                "$ref": "#/$defs/SeatLine"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "lines"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/SeatLine"
+        }
+      ],
+      "description": "`ris logs`: one seat's lines, every seat's, or when followed one\nline per envelope."
+    },
+    "Map": {
+      "description": "`ris map`: the graph document (`docs/json.md`).",
+      "properties": {
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/Edge"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": "array"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tip": {
+          "type": "string"
+        },
+        "tip_ref": {
+          "type": "string"
+        },
+        "totals": {
+          "$ref": "#/$defs/MapTotals"
+        }
+      },
+      "required": [
+        "phase",
+        "base",
+        "tip",
+        "tip_ref",
+        "totals",
+        "nodes",
+        "edges"
+      ],
+      "type": "object"
+    },
+    "MapTotals": {
+      "properties": {
+        "added": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "changed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "files": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outside": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "files",
+        "changed",
+        "added",
+        "removed",
+        "outside"
+      ],
+      "type": "object"
+    },
+    "Merged": {
+      "description": "`ris merge`.",
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "required": [
+        "item",
+        "commit"
+      ],
+      "type": "object"
+    },
+    "MergedAhead": {
+      "description": "An item merged before a person action that informs it was done.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "required": [
+        "item",
+        "action"
+      ],
+      "type": "object"
+    },
+    "Message": {
+      "description": "A message to a seat.",
+      "properties": {
+        "about": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "body": {
+          "type": "string"
+        },
+        "from": {
+          "$ref": "#/$defs/Actor"
+        },
+        "id": {
+          "$ref": "#/$defs/MessageId"
+        },
+        "kind": {
+          "description": "`handoff`, `interfacechanged`, `question` or `finding`.",
+          "type": "string"
+        },
+        "to": {
+          "$ref": "#/$defs/AgentName"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "kind",
+        "about",
+        "body"
+      ],
+      "type": "object"
+    },
+    "MessageId": {
+      "description": "A message's id, such as M-2.",
+      "pattern": "^M-[0-9]+$",
+      "type": "string"
+    },
+    "MessageKind": {
+      "description": "What a message is for. No broadcasts and no free chat.",
+      "oneOf": [
+        {
+          "const": "handoff",
+          "description": "Work passed from one agent to another.",
+          "type": "string"
+        },
+        {
+          "const": "interface_changed",
+          "description": "Something a dependent item relies on changed.",
+          "type": "string"
+        },
+        {
+          "const": "question",
+          "description": "A question to an item's owner.",
+          "type": "string"
+        },
+        {
+          "const": "finding",
+          "description": "An auditor's finding on an item.",
+          "type": "string"
+        }
+      ]
+    },
+    "Missing": {
+      "description": "One thing a writing seat would lack. In `--json` output it is an\nobject whose `kind` is `program`, `write` or `network`.",
+      "oneOf": [
+        {
+          "description": "A check's program is not on the PATH a seat inherits.",
+          "properties": {
+            "check": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "program",
+              "type": "string"
+            },
+            "program": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "check",
+            "program"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A build tool's cache that `[runner] write` does not cover.",
+          "properties": {
+            "kind": {
+              "const": "write",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "tool": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "tool",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A registry host that `[runner] network` does not allow.",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "network",
+              "type": "string"
+            },
+            "tool": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "tool",
+            "host"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Node": {
+      "description": "One source file.",
+      "properties": {
+        "added": {
+          "description": "Lines the phase added and removed.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "contract": {
+          "description": "Whether a `[map] contracts` pattern names it.",
+          "type": "boolean"
+        },
+        "external": {
+          "description": "How it touches the outside; empty when it does not.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "language": {
+          "description": "The language its extension names; null for a contract file that\nis not source code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Relative to the repository root.",
+          "type": "string"
+        },
+        "removed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "description": "`added`, `modified`, `deleted` or `unchanged`, in the phase.",
+          "type": "string"
+        },
+        "weight": {
+          "description": "How much it should draw the eye: grows with the diff's size and\nwith being external or a contract.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "path",
+        "language",
+        "status",
+        "added",
+        "removed",
+        "external",
+        "contract",
+        "weight"
+      ],
+      "type": "object"
+    },
+    "Phase": {
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "goal",
+        "state",
+        "items"
+      ],
+      "type": "object"
+    },
+    "PhaseClosed": {
+      "description": "`ris phase close`.",
+      "properties": {
+        "closing_merge": {
+          "description": "What the closing merge did, in words.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/Report"
+        },
+        "report": {
+          "$ref": "#/$defs/Hash",
+          "description": "The report's hash."
+        }
+      },
+      "required": [
+        "report",
+        "phase",
+        "closing_merge"
+      ],
+      "type": "object"
+    },
+    "PhaseHead": {
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "state": {
+          "description": "`open` or `closed`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "goal",
+        "state"
+      ],
+      "type": "object"
+    },
+    "PhaseId": {
+      "description": "A phase's id, such as P-3.",
+      "pattern": "^P-[0-9]+$",
+      "type": "string"
+    },
+    "PhaseOpened": {
+      "description": "`ris phase open`.",
+      "properties": {
+        "branch": {
+          "description": "The phase's branch; null when phase branches are off.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "docs_item": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The item added to bring the docs up to date, if one was."
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "preflight": {
+          "description": "What the writing seats would lack to run the checks.",
+          "items": {
+            "$ref": "#/$defs/Missing"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "phase",
+        "branch",
+        "docs_item",
+        "preflight"
+      ],
+      "type": "object"
+    },
+    "PhaseReport": {
+      "properties": {
+        "answered_outside_options": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        },
+        "log": {
+          "$ref": "#/$defs/LogHead"
+        },
+        "mechanical": {
+          "items": {
+            "$ref": "#/$defs/Decision"
+          },
+          "type": "array"
+        },
+        "merged_ahead": {
+          "items": {
+            "$ref": "#/$defs/MergedAhead"
+          },
+          "type": "array"
+        },
+        "messages": {
+          "description": "How many messages the log holds.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseHead"
+        },
+        "previous_report": {
+          "$ref": "#/$defs/Hash"
+        },
+        "report": {
+          "$ref": "#/$defs/Hash"
+        },
+        "substantive": {
+          "items": {
+            "$ref": "#/$defs/Decision"
+          },
+          "type": "array"
+        },
+        "tally": {
+          "$ref": "#/$defs/Tally"
+        }
+      },
+      "required": [
+        "phase",
+        "items",
+        "tally",
+        "substantive",
+        "mechanical",
+        "messages",
+        "answered_outside_options",
+        "merged_ahead",
+        "log",
+        "report",
+        "previous_report"
+      ],
+      "type": "object"
+    },
+    "Ready": {
+      "description": "`ris ready`.",
+      "properties": {
+        "ready": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ready"
+      ],
+      "type": "object"
+    },
+    "Refusal": {
+      "description": "Why a command was not applied.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A free-text field failed the confidentiality scan. The match is\nnever echoed: only the field and the category are named.",
+          "properties": {
+            "confidential": {
+              "properties": {
+                "category": {
+                  "$ref": "#/$defs/Category",
+                  "description": "What kind of thing the scan found."
+                },
+                "field": {
+                  "description": "The field that was refused, as the caller named it.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "field",
+                "category"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "confidential"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "no_open_phase",
+          "description": "The command needs an open phase and there is none.",
+          "type": "string"
+        },
+        {
+          "const": "phase_already_open",
+          "description": "Only one phase is open at a time.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No item has this id.",
+          "properties": {
+            "unknown_item": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "unknown_item"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No decision has this id.",
+          "properties": {
+            "unknown_decision": {
+              "$ref": "#/$defs/DecisionId"
+            }
+          },
+          "required": [
+            "unknown_decision"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The command is not allowed from the item's current state. The\ntransition table is the specification.",
+          "properties": {
+            "illegal_item_transition": {
+              "properties": {
+                "command": {
+                  "$ref": "#/$defs/CommandKind"
+                },
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                },
+                "state": {
+                  "description": "The item's state, as the table names it.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "item",
+                "state",
+                "command"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "illegal_item_transition"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The command is not allowed from the decision's current state.",
+          "properties": {
+            "illegal_decision_transition": {
+              "properties": {
+                "command": {
+                  "$ref": "#/$defs/CommandKind"
+                },
+                "decision": {
+                  "$ref": "#/$defs/DecisionId"
+                },
+                "state": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision",
+                "state",
+                "command"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "illegal_decision_transition"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The item depends on items that have not merged.",
+          "properties": {
+            "dependencies_open": {
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                },
+                "waiting_on": {
+                  "items": {
+                    "$ref": "#/$defs/ItemId"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "item",
+                "waiting_on"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "dependencies_open"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Only the agent holding an item may act on it.",
+          "properties": {
+            "not_the_claimant": {
+              "properties": {
+                "holder": {
+                  "$ref": "#/$defs/AgentName"
+                },
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                }
+              },
+              "required": [
+                "item",
+                "holder"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "not_the_claimant"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Done means evidence; none was attached.",
+          "properties": {
+            "no_evidence": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "no_evidence"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The chosen option is out of range.",
+          "properties": {
+            "no_such_option": {
+              "properties": {
+                "chosen": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "decision": {
+                  "$ref": "#/$defs/DecisionId"
+                },
+                "options": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "decision",
+                "chosen",
+                "options"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "no_such_option"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "malformed_decision",
+          "description": "A decision needs at least two options, and the recommendation\nmust be one of them.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A substantive decision is the person's to take.",
+          "properties": {
+            "substantive_is_for_the_person": {
+              "$ref": "#/$defs/DecisionId"
+            }
+          },
+          "required": [
+            "substantive_is_for_the_person"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "message_to_self",
+          "description": "A message must go to a named agent other than its sender.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An agent cannot audit an item it authored.",
+          "properties": {
+            "audit_own_work": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "audit_own_work"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "This agent has already reviewed this item.",
+          "properties": {
+            "already_audited": {
+              "properties": {
+                "by": {
+                  "$ref": "#/$defs/AgentName"
+                },
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                }
+              },
+              "required": [
+                "item",
+                "by"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "already_audited"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Only the decision's raiser, or the person, explains it.",
+          "properties": {
+            "not_the_raiser": {
+              "$ref": "#/$defs/DecisionId"
+            }
+          },
+          "required": [
+            "not_the_raiser"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An explanation needs a summary, a reason for the recommendation,\nand at least one pro or con for every option.",
+          "properties": {
+            "thin_explanation": {
+              "$ref": "#/$defs/DecisionId"
+            }
+          },
+          "required": [
+            "thin_explanation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Replacing an item is the person's to do.",
+          "properties": {
+            "supersede_is_for_the_person": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "supersede_is_for_the_person"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The seat is paused: it takes nothing new until resumed.",
+          "properties": {
+            "seat_paused": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "seat_paused"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "seat_control_is_for_the_person",
+          "description": "Pausing and resuming seats is the person's to do.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No action has this id.",
+          "properties": {
+            "unknown_action": {
+              "$ref": "#/$defs/ActionId"
+            }
+          },
+          "required": [
+            "unknown_action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The command is not allowed from the action's current state.",
+          "properties": {
+            "illegal_action_transition": {
+              "properties": {
+                "action": {
+                  "$ref": "#/$defs/ActionId"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandKind"
+                },
+                "state": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "state",
+                "command"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "illegal_action_transition"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Only the person does a person action.",
+          "properties": {
+            "action_is_for_the_person": {
+              "$ref": "#/$defs/ActionId"
+            }
+          },
+          "required": [
+            "action_is_for_the_person"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "raise_action_is_for_the_person",
+          "description": "Only the person raises a person action: it is their own to-do.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Done means a result: evidence, or a note.",
+          "properties": {
+            "action_needs_result": {
+              "$ref": "#/$defs/ActionId"
+            }
+          },
+          "required": [
+            "action_needs_result"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "malformed_action",
+          "description": "An action says what to do and how to tell it is done.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A merged or superseded item is settled; nothing new attaches to it.",
+          "properties": {
+            "settled_item": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "settled_item"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The seat's agent is already running, since the given event.",
+          "properties": {
+            "already_running": {
+              "properties": {
+                "seat": {
+                  "$ref": "#/$defs/AgentName"
+                },
+                "since": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "seat",
+                "since"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "already_running"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No run of the seat's agent is recorded as running.",
+          "properties": {
+            "not_running": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "not_running"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An item is replaced by another item that is not itself replaced\nand does not depend, directly or through other items, on it.",
+          "properties": {
+            "not_a_replacement": {
+              "properties": {
+                "by": {
+                  "$ref": "#/$defs/ItemId"
+                },
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                }
+              },
+              "required": [
+                "item",
+                "by"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "not_a_replacement"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Report": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PhaseReport"
+        },
+        {
+          "properties": {
+            "phase": {
+              "description": "Null: no phase has been opened.",
+              "type": "null"
+            }
+          },
+          "required": [
+            "phase"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "`ris report`: the phase report, or that there is no phase yet."
+    },
+    "Role": {
+      "description": "What a seat does.",
+      "oneOf": [
+        {
+          "enum": [
+            "lead",
+            "builder",
+            "auditor"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "advisor",
+          "description": "Works beside the person: adds items, sends messages and raises\ndecisions for the person, and nothing else.",
+          "type": "string"
+        }
+      ]
+    },
+    "Rules": {
+      "description": "`ris rules`.",
+      "properties": {
+        "rules": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rules"
+      ],
+      "type": "object"
+    },
+    "Salt": {
+      "description": "An event's salt: 32 lowercase hex characters.",
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "Scanned": {
+      "description": "`ris scan`, clean. A hit is the `leak` error instead.",
+      "properties": {
+        "files": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hits": {
+          "description": "Always empty.",
+          "items": {
+            "$ref": "#/$defs/Hit"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "files",
+        "hits"
+      ],
+      "type": "object"
+    },
+    "SeatAdded": {
+      "description": "`ris seat add`.",
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "seat": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seat",
+        "role"
+      ],
+      "type": "object"
+    },
+    "SeatLine": {
+      "properties": {
+        "line": {
+          "type": "string"
+        },
+        "seat": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seat",
+        "line"
+      ],
+      "type": "object"
+    },
+    "SeatRef": {
+      "description": "A command that names one seat.",
+      "properties": {
+        "seat": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seat"
+      ],
+      "type": "object"
+    },
+    "SeatStatus": {
+      "properties": {
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Activity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ahead": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "behind": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claim": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "faults": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "seat": {
+          "type": "string"
+        },
+        "uncommitted": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "worktree": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "seat",
+        "role",
+        "worktree",
+        "branch",
+        "claim",
+        "ahead",
+        "behind",
+        "uncommitted",
+        "paused",
+        "running",
+        "activity",
+        "faults"
+      ],
+      "type": "object"
+    },
+    "SeatStopped": {
+      "description": "`ris seat start`: the run it waited for, once it has stopped.",
+      "properties": {
+        "log": {
+          "type": "string"
+        },
+        "seat": {
+          "type": "string"
+        },
+        "status": {
+          "description": "The agent's exit status; null when a signal ended it.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "seat",
+        "status",
+        "log"
+      ],
+      "type": "object"
+    },
+    "SeatsSet": {
+      "description": "`ris seat pause` and `ris seat resume`: one of `paused` and\n`resumed`, the seats named.",
+      "properties": {
+        "finishing": {
+          "description": "What each paused seat holding an item finishes first.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "paused": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "resumed": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "finishing"
+      ],
+      "type": "object"
+    },
+    "Sent": {
+      "description": "`ris send`.",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/MessageId"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
+    "Show": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Item"
+        },
+        {
+          "$ref": "#/$defs/Decision"
+        },
+        {
+          "$ref": "#/$defs/Action"
+        },
+        {
+          "$ref": "#/$defs/Phase"
+        },
+        {
+          "$ref": "#/$defs/Message"
+        },
+        {
+          "$ref": "#/$defs/EvidenceContent"
+        }
+      ],
+      "description": "`ris show <id>`: the record the id names."
+    },
+    "Status": {
+      "description": "`ris status`.",
+      "properties": {
+        "seats": {
+          "items": {
+            "$ref": "#/$defs/SeatStatus"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "seats"
+      ],
+      "type": "object"
+    },
+    "Structure": {
+      "description": "The structural part of an event: everything the fold reads. No free\ntext lives here, by construction: none of these fields is a `Text`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "phase_opened",
+              "type": "string"
+            },
+            "phase": {
+              "$ref": "#/$defs/PhaseId"
+            }
+          },
+          "required": [
+            "event",
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "phase_closed",
+              "type": "string"
+            },
+            "phase": {
+              "$ref": "#/$defs/PhaseId"
+            },
+            "report": {
+              "$ref": "#/$defs/Hash",
+              "description": "Taken over the log's head at close, not over the rendering."
+            }
+          },
+          "required": [
+            "event",
+            "phase",
+            "report"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "checks": {
+              "items": {
+                "$ref": "#/$defs/CheckId"
+              },
+              "type": "array"
+            },
+            "depends_on": {
+              "items": {
+                "$ref": "#/$defs/ItemId"
+              },
+              "type": "array"
+            },
+            "event": {
+              "const": "item_added",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            },
+            "phase": {
+              "$ref": "#/$defs/PhaseId"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "phase",
+            "checks",
+            "depends_on"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "agent": {
+              "$ref": "#/$defs/AgentName"
+            },
+            "event": {
+              "const": "item_claimed",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "agent"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A substantive decision was raised about a claimed item, which is\nset aside until it is taken.",
+          "properties": {
+            "event": {
+              "const": "item_blocked",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            },
+            "on": {
+              "items": {
+                "$ref": "#/$defs/Blocker"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "on"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An item's blockers all cleared.",
+          "properties": {
+            "event": {
+              "const": "item_ready",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "event",
+            "item"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "item_done",
+              "type": "string"
+            },
+            "evidence": {
+              "items": {
+                "$ref": "#/$defs/EvidenceId"
+              },
+              "type": "array"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "commit": {
+              "$ref": "#/$defs/CommitHash"
+            },
+            "event": {
+              "const": "item_merged",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "commit"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The person replaced a ready or blocked item with another.",
+          "properties": {
+            "by": {
+              "$ref": "#/$defs/ItemId"
+            },
+            "event": {
+              "const": "item_superseded",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "by"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A person action. The text part carries `what` and `done_when`.\nItems it blocks are set aside by `ItemBlocked` events emitted\nwith it.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "blocks": {
+              "items": {
+                "$ref": "#/$defs/ItemId"
+              },
+              "type": "array"
+            },
+            "by": {
+              "$ref": "#/$defs/Actor"
+            },
+            "event": {
+              "const": "action_raised",
+              "type": "string"
+            },
+            "informs": {
+              "items": {
+                "$ref": "#/$defs/ItemId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "action",
+            "by",
+            "blocks",
+            "informs"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The person gave the action a check: a shell command that passes\nonce the action is done. The text part carries `check`.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "event": {
+              "const": "action_check_set",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The person did it. The text part carries `note`, if given.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/ActionId"
+            },
+            "event": {
+              "const": "action_done",
+              "type": "string"
+            },
+            "evidence": {
+              "items": {
+                "$ref": "#/$defs/EvidenceId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "action",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The runner started a seat's agent. The text part carries\n`runner` and, when configured, `model`: the binding behind the\nseat's name for this run.",
+          "properties": {
+            "event": {
+              "const": "run_started",
+              "type": "string"
+            },
+            "seat": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "event",
+            "seat"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The seat's agent stopped, with its exit status when it had one.",
+          "properties": {
+            "event": {
+              "const": "run_stopped",
+              "type": "string"
+            },
+            "seat": {
+              "$ref": "#/$defs/AgentName"
+            },
+            "status": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "event",
+            "seat",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A seat reported a fault in its setup: something its sandbox or\npermissions do not let it do, for the person to fix in the\nconfiguration. The text part carries `what`. The seat's next run\nstart clears it.",
+          "properties": {
+            "event": {
+              "const": "setup_fault",
+              "type": "string"
+            },
+            "seat": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "event",
+            "seat"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The person paused a seat: its next claim or audit is refused\nuntil it is resumed. What it holds now it finishes.",
+          "properties": {
+            "event": {
+              "const": "seat_paused",
+              "type": "string"
+            },
+            "seat": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "event",
+            "seat"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "const": "seat_resumed",
+              "type": "string"
+            },
+            "seat": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "event",
+            "seat"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An auditor reviewed a done or merged item. Findings travel as\nmessages; this records only that the review happened.",
+          "properties": {
+            "by": {
+              "$ref": "#/$defs/AgentName"
+            },
+            "event": {
+              "const": "item_audited",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "by"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "about": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ItemId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "by": {
+              "$ref": "#/$defs/Actor"
+            },
+            "class": {
+              "$ref": "#/$defs/DecisionClass"
+            },
+            "decision": {
+              "$ref": "#/$defs/DecisionId"
+            },
+            "event": {
+              "const": "decision_raised",
+              "type": "string"
+            },
+            "options": {
+              "description": "How many options the text part carries, as `option.0` and so\non.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "recommended": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "decision",
+            "class",
+            "by",
+            "about",
+            "options",
+            "recommended"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "by": {
+              "$ref": "#/$defs/Actor"
+            },
+            "chosen": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "decision": {
+              "$ref": "#/$defs/DecisionId"
+            },
+            "event": {
+              "const": "decision_taken",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "decision",
+            "by",
+            "chosen"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The full case for an open decision. The text part carries\n`summary`, `why`, and `option.{n}.pro.{k}` and `option.{n}.con.{k}`\nfor the counts given here, one entry per option.",
+          "properties": {
+            "by": {
+              "$ref": "#/$defs/Actor"
+            },
+            "cons": {
+              "items": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "decision": {
+              "$ref": "#/$defs/DecisionId"
+            },
+            "event": {
+              "const": "decision_explained",
+              "type": "string"
+            },
+            "pros": {
+              "items": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "decision",
+            "by",
+            "pros",
+            "cons"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "check": {
+              "$ref": "#/$defs/CheckId"
+            },
+            "event": {
+              "const": "check_ran",
+              "type": "string"
+            },
+            "evidence": {
+              "$ref": "#/$defs/EvidenceId"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "check",
+            "passed",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "about": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ItemId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "event": {
+              "const": "message_sent",
+              "type": "string"
+            },
+            "from": {
+              "$ref": "#/$defs/Actor"
+            },
+            "kind": {
+              "$ref": "#/$defs/MessageKind"
+            },
+            "message": {
+              "$ref": "#/$defs/MessageId"
+            },
+            "to": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "event",
+            "message",
+            "from",
+            "to",
+            "kind",
+            "about"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Summary": {
+      "description": "`ris summary`.",
+      "properties": {
+        "all": {
+          "description": "Whether `--all` was given.",
+          "type": "boolean"
+        },
+        "carried_over": {
+          "$ref": "#/$defs/CarriedOver"
+        },
+        "checks": {
+          "description": "What running the person's action checks did.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "graph": {
+          "$ref": "#/$defs/Graph"
+        },
+        "inbox": {
+          "$ref": "#/$defs/Inbox"
+        },
+        "ready": {
+          "$ref": "#/$defs/Ready"
+        },
+        "report": {
+          "$ref": "#/$defs/Report"
+        }
+      },
+      "required": [
+        "inbox",
+        "graph",
+        "report",
+        "ready",
+        "all",
+        "carried_over",
+        "checks"
+      ],
+      "type": "object"
+    },
+    "Superseded": {
+      "description": "`ris item supersede`.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "superseded_by": {
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "required": [
+        "item",
+        "superseded_by"
+      ],
+      "type": "object"
+    },
+    "Tally": {
+      "description": "What a phase came to: the items planned in it, the merges made while\nit was open (an item carried in from an earlier phase counts where\nit merged), and the items left unsettled, neither merged nor\nsuperseded, which the next phase inherits.",
+      "properties": {
+        "carried_over": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "merged": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "planned": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "planned",
+        "merged",
+        "carried_over"
+      ],
+      "type": "object"
+    },
+    "Text": {
+      "description": "Free text that has passed the confidentiality scan.",
+      "type": "string"
+    },
+    "Up": {
+      "description": "`ris up`.",
+      "properties": {
+        "attended": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "changed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "not_in_file": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "changed",
+        "not_in_file",
+        "attended"
+      ],
+      "type": "object"
+    },
+    "Verified": {
+      "description": "`ris verify`.",
+      "properties": {
+        "head": {
+          "$ref": "#/$defs/Hash"
+        },
+        "len": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "missing_text": {
+          "description": "The sequence numbers of events whose text has been removed.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "len",
+        "head",
+        "missing_text"
+      ],
+      "type": "object"
+    },
+    "Worktree": {
+      "description": "`ris worktree`.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "seat": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "seat",
+        "path"
+      ],
+      "type": "object"
+    },
+    "data.action_check": {
+      "$ref": "#/$defs/ActionChecked"
+    },
+    "data.action_done": {
+      "$ref": "#/$defs/ActionDone"
+    },
+    "data.action_raise": {
+      "$ref": "#/$defs/ActionRaised"
+    },
+    "data.audit": {
+      "$ref": "#/$defs/Audit"
+    },
+    "data.check": {
+      "$ref": "#/$defs/Checks"
+    },
+    "data.claim": {
+      "$ref": "#/$defs/Brief"
+    },
+    "data.decide": {
+      "$ref": "#/$defs/Decide"
+    },
+    "data.decision_explain": {
+      "$ref": "#/$defs/DecisionRef"
+    },
+    "data.decision_raise": {
+      "$ref": "#/$defs/DecisionRef"
+    },
+    "data.done": {
+      "$ref": "#/$defs/Done"
+    },
+    "data.down": {
+      "$ref": "#/$defs/Down"
+    },
+    "data.eli5": {
+      "$ref": "#/$defs/Case"
+    },
+    "data.export": {
+      "$ref": "#/$defs/Exported"
+    },
+    "data.import": {
+      "$ref": "#/$defs/Imported"
+    },
+    "data.inbox": {
+      "$ref": "#/$defs/Inbox"
+    },
+    "data.init": {
+      "$ref": "#/$defs/Init"
+    },
+    "data.install": {
+      "$ref": "#/$defs/Installed"
+    },
+    "data.item_add": {
+      "$ref": "#/$defs/ItemRef"
+    },
+    "data.item_supersede": {
+      "$ref": "#/$defs/Superseded"
+    },
+    "data.log": {
+      "$ref": "#/$defs/Event"
+    },
+    "data.logs": {
+      "$ref": "#/$defs/Logs"
+    },
+    "data.map": {
+      "$ref": "#/$defs/Map"
+    },
+    "data.merge": {
+      "$ref": "#/$defs/Merged"
+    },
+    "data.phase_close": {
+      "$ref": "#/$defs/PhaseClosed"
+    },
+    "data.phase_open": {
+      "$ref": "#/$defs/PhaseOpened"
+    },
+    "data.ready": {
+      "$ref": "#/$defs/Ready"
+    },
+    "data.release": {
+      "$ref": "#/$defs/ItemRef"
+    },
+    "data.report": {
+      "$ref": "#/$defs/Report"
+    },
+    "data.rules": {
+      "$ref": "#/$defs/Rules"
+    },
+    "data.scan": {
+      "$ref": "#/$defs/Scanned"
+    },
+    "data.schema": {
+      "description": "This document: the JSON Schema of format 1.",
+      "type": "object"
+    },
+    "data.seat_add": {
+      "$ref": "#/$defs/SeatAdded"
+    },
+    "data.seat_fault": {
+      "$ref": "#/$defs/SeatRef"
+    },
+    "data.seat_pause": {
+      "$ref": "#/$defs/SeatsSet"
+    },
+    "data.seat_resume": {
+      "$ref": "#/$defs/SeatsSet"
+    },
+    "data.seat_start": {
+      "$ref": "#/$defs/SeatStopped"
+    },
+    "data.seat_stopped": {
+      "$ref": "#/$defs/SeatRef"
+    },
+    "data.send": {
+      "$ref": "#/$defs/Sent"
+    },
+    "data.show": {
+      "$ref": "#/$defs/Show"
+    },
+    "data.status": {
+      "$ref": "#/$defs/Status"
+    },
+    "data.summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "data.up": {
+      "$ref": "#/$defs/Up"
+    },
+    "data.verify": {
+      "$ref": "#/$defs/Verified"
+    },
+    "data.watch": {
+      "$ref": "#/$defs/Event"
+    },
+    "data.worktree": {
+      "$ref": "#/$defs/Worktree"
+    },
+    "envelope.failure": {
+      "description": "A failure. The exit status is not zero.",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/Error"
+        },
+        "format": {
+          "const": 1
+        },
+        "ok": {
+          "const": false
+        }
+      },
+      "required": [
+        "format",
+        "ok",
+        "error"
+      ],
+      "type": "object"
+    },
+    "envelope.success": {
+      "description": "A successful outcome. `data` is the command's own: `#/$defs/data.<command>`.",
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/data.init"
+            },
+            {
+              "$ref": "#/$defs/data.worktree"
+            },
+            {
+              "$ref": "#/$defs/data.up"
+            },
+            {
+              "$ref": "#/$defs/data.down"
+            },
+            {
+              "$ref": "#/$defs/data.logs"
+            },
+            {
+              "$ref": "#/$defs/data.rules"
+            },
+            {
+              "$ref": "#/$defs/data.seat_add"
+            },
+            {
+              "$ref": "#/$defs/data.seat_start"
+            },
+            {
+              "$ref": "#/$defs/data.seat_stopped"
+            },
+            {
+              "$ref": "#/$defs/data.seat_pause"
+            },
+            {
+              "$ref": "#/$defs/data.seat_resume"
+            },
+            {
+              "$ref": "#/$defs/data.seat_fault"
+            },
+            {
+              "$ref": "#/$defs/data.phase_open"
+            },
+            {
+              "$ref": "#/$defs/data.phase_close"
+            },
+            {
+              "$ref": "#/$defs/data.item_add"
+            },
+            {
+              "$ref": "#/$defs/data.item_supersede"
+            },
+            {
+              "$ref": "#/$defs/data.ready"
+            },
+            {
+              "$ref": "#/$defs/data.claim"
+            },
+            {
+              "$ref": "#/$defs/data.release"
+            },
+            {
+              "$ref": "#/$defs/data.audit"
+            },
+            {
+              "$ref": "#/$defs/data.action_raise"
+            },
+            {
+              "$ref": "#/$defs/data.action_check"
+            },
+            {
+              "$ref": "#/$defs/data.action_done"
+            },
+            {
+              "$ref": "#/$defs/data.decision_raise"
+            },
+            {
+              "$ref": "#/$defs/data.decision_explain"
+            },
+            {
+              "$ref": "#/$defs/data.eli5"
+            },
+            {
+              "$ref": "#/$defs/data.decide"
+            },
+            {
+              "$ref": "#/$defs/data.check"
+            },
+            {
+              "$ref": "#/$defs/data.done"
+            },
+            {
+              "$ref": "#/$defs/data.merge"
+            },
+            {
+              "$ref": "#/$defs/data.inbox"
+            },
+            {
+              "$ref": "#/$defs/data.send"
+            },
+            {
+              "$ref": "#/$defs/data.show"
+            },
+            {
+              "$ref": "#/$defs/data.summary"
+            },
+            {
+              "$ref": "#/$defs/data.report"
+            },
+            {
+              "$ref": "#/$defs/data.map"
+            },
+            {
+              "$ref": "#/$defs/data.status"
+            },
+            {
+              "$ref": "#/$defs/data.scan"
+            },
+            {
+              "$ref": "#/$defs/data.verify"
+            },
+            {
+              "$ref": "#/$defs/data.schema"
+            },
+            {
+              "$ref": "#/$defs/data.install"
+            },
+            {
+              "$ref": "#/$defs/data.import"
+            },
+            {
+              "$ref": "#/$defs/data.export"
+            },
+            {
+              "$ref": "#/$defs/data.log"
+            },
+            {
+              "$ref": "#/$defs/data.watch"
+            }
+          ]
+        },
+        "format": {
+          "const": 1
+        },
+        "ok": {
+          "const": true
+        }
+      },
+      "required": [
+        "format",
+        "ok",
+        "data"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Every outcome of every ris command run with --json is one envelope on stdout; a stream prints one envelope per line. The data of each command is under $defs as data.<command>, with _ for a space in the command. Objects are open: within a format keys are added, never removed, renamed or reshaped.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/envelope.success"
+    },
+    {
+      "$ref": "#/$defs/envelope.failure"
+    }
+  ],
+  "title": "ris --json, format 1"
+}

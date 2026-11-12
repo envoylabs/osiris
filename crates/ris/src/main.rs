@@ -18,6 +18,7 @@ use serde_json::json;
 use ris::checks;
 use ris::project::{CliError, Project};
 use ris::render::{self, Output};
+use ris::schema;
 
 #[derive(Parser)]
 #[command(
@@ -205,6 +206,12 @@ enum Cmd {
     Scan { paths: Vec<String> },
     /// Verify the chain and print the head.
     Verify,
+    /// Print the JSON Schema of the `--json` contract: the envelope,
+    /// the error, and every command's data. Not listed in help, which
+    /// must fit one screen: `docs/json.md` names it for the clients
+    /// that validate against it.
+    #[command(hide = true)]
+    Schema,
     /// Build the last merged commit (the last build that passed every
     /// check) and install it where `[install]` in config.toml says. Also
     /// done on the person's next command after a merge, so not listed
@@ -459,37 +466,51 @@ fn error_envelope(e: &CliError) -> serde_json::Value {
             None => message.push(line),
         }
     }
-    let mut error = json!({
-        "kind": match e {
-            CliError::Refused(_) => "refused",
-            CliError::Leak { .. } => "leak",
-            CliError::RoleForbids { .. } => "role_forbids",
-            CliError::CheckFailed { .. } => "check_failed",
-            CliError::ChecksFailed { .. } => "checks_failed",
-            CliError::NotAProject(_) => "not_a_project",
-            CliError::AlreadyAProject(_) => "already_a_project",
-            CliError::Config(_) => "config",
-            CliError::UnknownAgent(_) => "unknown_agent",
-            CliError::NoActor(_) => "no_actor",
-            CliError::Contended => "contended",
-            CliError::Store(_) => "store",
-            CliError::Io(_) => "io",
-            CliError::Other(_) => "other",
+    use ris::schema::ErrorKind;
+    let mut error = schema::Error {
+        kind: match e {
+            CliError::Refused(_) => ErrorKind::Refused,
+            CliError::Leak { .. } => ErrorKind::Leak,
+            CliError::RoleForbids { .. } => ErrorKind::RoleForbids,
+            CliError::CheckFailed { .. } => ErrorKind::CheckFailed,
+            CliError::ChecksFailed { .. } => ErrorKind::ChecksFailed,
+            CliError::NotAProject(_) => ErrorKind::NotAProject,
+            CliError::AlreadyAProject(_) => ErrorKind::AlreadyAProject,
+            CliError::Config(_) => ErrorKind::Config,
+            CliError::UnknownAgent(_) => ErrorKind::UnknownAgent,
+            CliError::NoActor(_) => ErrorKind::NoActor,
+            CliError::Contended => ErrorKind::Contended,
+            CliError::Store(_) => ErrorKind::Store,
+            CliError::Io(_) => ErrorKind::Io,
+            CliError::Other(_) => ErrorKind::Other,
         },
-        "message": message.join("\n"),
-        "next": if next.is_empty() { serde_json::Value::Null } else { json!(next.join("; ")) },
-    });
+        message: message.join("\n"),
+        next: (!next.is_empty()).then(|| next.join("; ")),
+        refusal: None,
+        scanned: None,
+        hits: None,
+        item: None,
+        stage: None,
+        failed: None,
+        seat: None,
+        role: None,
+    };
     match e {
         CliError::Refused(r) => {
-            error["refusal"] = json!(r);
-            error["next"] = json!(r.next_step());
+            error.next = Some(r.next_step());
+            error.refusal = Some(r.clone());
         }
         CliError::Leak { what, hits } => {
-            error["scanned"] = json!(what);
-            error["hits"] = hits
-                .iter()
-                .map(|h| json!({ "file": h.file, "line": h.line, "category": h.category.description() }))
-                .collect();
+            error.scanned = Some(what.to_string());
+            error.hits = Some(
+                hits.iter()
+                    .map(|h| schema::Hit {
+                        file: h.file.clone(),
+                        line: h.line,
+                        category: h.category.description().to_owned(),
+                    })
+                    .collect(),
+            );
         }
         CliError::ChecksFailed {
             item,
@@ -497,16 +518,21 @@ fn error_envelope(e: &CliError) -> serde_json::Value {
             failed,
             ..
         } => {
-            error["item"] = json!(item);
-            error["stage"] = json!(stage);
-            error["failed"] = failed
-                .iter()
-                .map(|(check, evidence)| json!({ "check": check, "evidence": evidence }))
-                .collect();
+            error.item = Some(item.to_string());
+            error.stage = Some(stage.to_string());
+            error.failed = Some(
+                failed
+                    .iter()
+                    .map(|(check, evidence)| schema::FailedCheck {
+                        check: check.to_string(),
+                        evidence: evidence.to_string(),
+                    })
+                    .collect(),
+            );
         }
         CliError::RoleForbids { seat, role, .. } => {
-            error["seat"] = json!(seat);
-            error["role"] = json!(role.as_str());
+            error.seat = Some(seat.clone());
+            error.role = Some(*role);
         }
         _ => {}
     }
@@ -559,6 +585,15 @@ fn main() -> ExitCode {
     }
 }
 
+/// Item ids as a line of text reads them: `I-3, I-7`.
+fn id_list(items: &[ItemId]) -> String {
+    items
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn agent_only(actor: &Actor) -> Result<AgentName, CliError> {
     match actor {
         Actor::Agent(name) => Ok(name.clone()),
@@ -584,13 +619,26 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
              set the denylist and seats in .osiris/config.toml and checks in .osiris/checks.toml,\n        \
              then `ris phase open <goal>`"
         };
-        return Ok(Output::new(text, json!({ "root": p.root, "local": local })));
+        return Ok(Output::of(
+            text,
+            &schema::Init {
+                root: p.root.to_string_lossy().into_owned(),
+                local,
+            },
+        ));
     }
     if let Cmd::Rules = cli.command {
-        return Ok(Output::new(
+        return Ok(Output::of(
             ris::project::RULES.trim_end(),
-            json!({ "rules": ris::project::RULES }),
+            &schema::Rules {
+                rules: ris::project::RULES.to_owned(),
+            },
         ));
+    }
+    if let Cmd::Schema = cli.command {
+        // The contract is the program's, not a project's: it prints
+        // anywhere, for anyone.
+        return Ok(Output::of(schema::text().trim_end(), &schema::document()));
     }
     let mut p = Project::find(&cwd)?;
     let actor = p.actor()?;
@@ -608,16 +656,19 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     }
 
     match &cli.command {
-        Cmd::Init { .. } | Cmd::Rules => unreachable!(),
+        Cmd::Init { .. } | Cmd::Rules | Cmd::Schema => unreachable!(),
 
         Cmd::Worktree { seat } => {
             let path = make_worktree(&p, seat)?;
-            Ok(Output::new(
+            Ok(Output::of(
                 format!(
                     "worktree for {seat} at {}\n  next: cd there and start the agent with RIS_AGENT={seat}",
                     path.display()
                 ),
-                json!({ "seat": seat, "path": path }),
+                &schema::Worktree {
+                    seat: seat.clone(),
+                    path: path.to_string_lossy().into_owned(),
+                },
             ))
         }
 
@@ -653,9 +704,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             } else {
                 format!("`ris worktree {name}`, then start it there with RIS_AGENT={name}")
             };
-            Ok(Output::new(
+            Ok(Output::of(
                 format!("seat {name} added\n  next: {next}"),
-                json!({ "seat": name, "role": role }),
+                &schema::SeatAdded {
+                    seat: name.clone(),
+                    role,
+                },
             ))
         }
 
@@ -671,9 +725,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 actor: actor.clone(),
                 status: None,
             })?;
-            Ok(Output::new(
+            Ok(Output::of(
                 format!("{seat} recorded as stopped"),
-                json!({ "seat": seat }),
+                &schema::SeatRef { seat: seat.clone() },
             ))
         }
 
@@ -716,9 +770,13 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             if !holding.is_empty() {
                 text.push_str(&format!("\n  {}", holding.join("; ")));
             }
-            Ok(Output::new(
+            Ok(Output::of(
                 text,
-                json!({ verb: names, "finishing": holding }),
+                &schema::SeatsSet {
+                    paused: pause.then(|| names.clone()),
+                    resumed: (!pause).then(|| names.clone()),
+                    finishing: holding,
+                },
             ))
         }
 
@@ -758,7 +816,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     text.push_str(&format!(
                         "\n  {id} brings the docs up to date; close waits for it"
                     ));
-                    docs = Some(id.to_string());
+                    docs = Some(id);
                 }
                 // Said now, so the configuration is fixed before `ris
                 // up`, which refuses to start seats until it is.
@@ -767,14 +825,14 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     text.push('\n');
                     text.push_str(&ris::preflight::render(&missing));
                 }
-                Ok(Output::new(
+                Ok(Output::of(
                     text,
-                    json!({
-                        "phase": phase.to_string(),
-                        "branch": branch,
-                        "docs_item": docs,
-                        "preflight": ris::preflight::json(&missing),
-                    }),
+                    &schema::PhaseOpened {
+                        phase,
+                        branch,
+                        docs_item: docs,
+                        preflight: missing,
+                    },
                 ))
             }
             PhaseCmd::Close => {
@@ -810,16 +868,19 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 let (l, events) = p.run(&Command::PhaseClose)?;
                 let closed = events.last().expect("close emits one event");
                 let report = match &closed.structure {
-                    ris_core::event::Structure::PhaseClosed { report, .. } => report.to_string(),
+                    ris_core::event::Structure::PhaseClosed { report, .. } => *report,
                     _ => unreachable!(),
                 };
-                let out = render::report(&l);
-                Ok(Output::new(
+                let (text, phase) = render::report_data(&l);
+                Ok(Output::of(
                     format!(
-                        "{}\n{closing}\nthe change set as a map of the source: `ris map --html <file>`",
-                        out.text
+                        "{text}\n{closing}\nthe change set as a map of the source: `ris map --html <file>`"
                     ),
-                    json!({ "report": report, "phase": out.json, "closing_merge": closing }),
+                    &schema::PhaseClosed {
+                        report,
+                        phase,
+                        closing_merge: closing,
+                    },
                 ))
             }
         },
@@ -845,10 +906,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     }),
                     depends_on: a.depends_on.clone(),
                 })?;
-                let id = l.state.items.keys().last().expect("just added");
-                Ok(Output::new(
+                let id = *l.state.items.keys().last().expect("just added");
+                Ok(Output::of(
                     format!("added {id}"),
-                    json!({ "item": id.to_string() }),
+                    &schema::ItemRef { item: id },
                 ))
             }
             ItemCmd::Supersede { item, by } => {
@@ -857,9 +918,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     by: *by,
                     actor: actor.clone(),
                 })?;
-                Ok(Output::new(
+                Ok(Output::of(
                     format!("{item} superseded by {by}"),
-                    json!({ "item": item.to_string(), "superseded_by": by.to_string() }),
+                    &schema::Superseded {
+                        item: *item,
+                        superseded_by: *by,
+                    },
                 ))
             }
         },
@@ -895,12 +959,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     content,
                 },
             );
-            Ok(Output::new(
+            Ok(Output::of(
                 format!(
                     "claimed {item}
 {text}"
                 ),
-                data,
+                &data,
             ))
         }
 
@@ -942,12 +1006,14 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         cons,
                         why,
                     })?;
-                    Ok(Output::new(
+                    Ok(Output::of(
                         format!(
                             "{} explained\n  next: `ris eli5 {}` shows it",
                             e.decision, e.decision
                         ),
-                        json!({ "decision": e.decision.to_string() }),
+                        &schema::DecisionRef {
+                            decision: e.decision,
+                        },
                     ))
                 }
                 DecisionCmd::Raise(d) => {
@@ -976,7 +1042,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         recommended: d.recommend,
                         rationale,
                     })?;
-                    let id = l.state.decisions.keys().last().expect("just raised");
+                    let id = *l.state.decisions.keys().last().expect("just raised");
                     let text = match class {
                         DecisionClass::Mechanical => format!("{id} taken: option {}", d.recommend),
                         DecisionClass::Substantive => format!(
@@ -986,7 +1052,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                                 .unwrap_or_default()
                         ),
                     };
-                    Ok(Output::new(text, json!({ "decision": id.to_string() })))
+                    Ok(Output::of(text, &schema::DecisionRef { decision: id }))
                 }
             }
         }
@@ -1021,10 +1087,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 chosen,
                 rationale,
             })?;
-            let unblocked: Vec<String> = events
+            let unblocked: Vec<ItemId> = events
                 .iter()
                 .filter_map(|e| match &e.structure {
-                    ris_core::event::Structure::ItemReady { item } => Some(item.to_string()),
+                    ris_core::event::Structure::ItemReady { item } => Some(*item),
                     _ => None,
                 })
                 .collect();
@@ -1033,16 +1099,19 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 Some(n) => format!("option {n}"),
                 None => "your own answer, recorded as a new option".to_owned(),
             };
-            Ok(Output::new(
+            Ok(Output::of(
                 format!(
                     "{decision} taken: {picked}{}",
                     if unblocked.is_empty() {
                         String::new()
                     } else {
-                        format!("; ready again: {}", unblocked.join(", "))
+                        format!("; ready again: {}", id_list(&unblocked))
                     }
                 ),
-                json!({ "decision": decision.to_string(), "unblocked": unblocked }),
+                &schema::Decide::Taken {
+                    decision: *decision,
+                    unblocked,
+                },
             ))
         }
 
@@ -1095,9 +1164,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 "{item} done with {} piece(s) of evidence\n  next: {commit_hint}, then `ris merge {item}`",
                 ids.len()
             ));
-            Ok(Output::new(
+            Ok(Output::of(
                 text,
-                json!({ "item": item.to_string(), "evidence": ids.iter().map(ToString::to_string).collect::<Vec<_>>() }),
+                &schema::Done {
+                    item: *item,
+                    evidence: ids,
+                },
             ))
         }
 
@@ -1153,9 +1225,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 text.push('\n');
             }
             text.push_str(&format!("{item} merged at {commit}"));
-            Ok(Output::new(
+            Ok(Output::of(
                 text,
-                json!({ "item": item.to_string(), "commit": commit }),
+                &schema::Merged {
+                    item: *item,
+                    commit,
+                },
             ))
         }
 
@@ -1183,12 +1258,18 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         lines.push(format!("  | {l}"));
                     }
                 }
-                results.push(json!({ "check": name, "passed": passed }));
+                results.push(schema::CheckResult {
+                    check: name.clone(),
+                    passed,
+                });
             }
             if failed {
                 return Err(CliError::CheckFailed { lines });
             }
-            Ok(Output::new(lines.join("\n"), json!({ "checks": results })))
+            Ok(Output::of(
+                lines.join("\n"),
+                &schema::Checks { checks: results },
+            ))
         }
 
         Cmd::Audit { item: None, all } => {
@@ -1205,9 +1286,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 item: *item,
                 by: by.clone(),
             })?;
-            Ok(Output::new(
+            Ok(Output::of(
                 format!("{item} reviewed by {by}"),
-                json!({ "item": item.to_string(), "by": by.to_string() }),
+                &schema::Audit::Recorded(schema::Audited { item: *item, by }),
             ))
         }
 
@@ -1216,15 +1297,15 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 item: *item,
                 by: actor.clone(),
             })?;
-            Ok(Output::new(
+            Ok(Output::of(
                 format!("released {item}; it is ready again"),
-                json!({ "item": item.to_string() }),
+                &schema::ItemRef { item: *item },
             ))
         }
 
         Cmd::Inbox => {
             let closed = close_checked(&mut p, &actor)?;
-            Ok(with_checks(render::inbox(&p.load()?, &actor), closed))
+            Ok(render::inbox(&p.load()?, &actor, closed))
         }
 
         Cmd::Send {
@@ -1245,9 +1326,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 body,
             })?;
             let id = l.state.messages.last().expect("just sent").id;
-            Ok(Output::new(
+            Ok(Output::of(
                 format!("sent {id} to {to}"),
-                json!({ "message": id.to_string() }),
+                &schema::Sent { message: id },
             ))
         }
 
@@ -1260,12 +1341,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 seat: seat.clone(),
                 what,
             })?;
-            Ok(Output::new(
+            Ok(Output::of(
                 format!(
                     "{seat}: setup fault recorded; `ris status` shows it to the person\n  \
                      next: take another item that does not need it, or stop if none can be done"
                 ),
-                json!({ "seat": seat.0 }),
+                &schema::SeatRef { seat: seat.0 },
             ))
         }
 
@@ -1330,9 +1411,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     blocked.join(", ")
                 ));
             }
-            Ok(Output::new(
+            Ok(Output::of(
                 text,
-                json!({ "action": id.to_string(), "blocked": blocked }),
+                &schema::ActionRaised {
+                    action: id,
+                    blocked,
+                },
             ))
         }
 
@@ -1355,20 +1439,23 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 evidence: ids,
                 note,
             })?;
-            let ready: Vec<String> = events
+            let ready: Vec<ItemId> = events
                 .iter()
                 .filter_map(|e| match &e.structure {
-                    ris_core::event::Structure::ItemReady { item } => Some(item.to_string()),
+                    ris_core::event::Structure::ItemReady { item } => Some(*item),
                     _ => None,
                 })
                 .collect();
             let mut text = format!("{action} done");
             if !ready.is_empty() {
-                text.push_str(&format!("; ready again: {}", ready.join(", ")));
+                text.push_str(&format!("; ready again: {}", id_list(&ready)));
             }
-            Ok(Output::new(
+            Ok(Output::of(
                 text,
-                json!({ "action": action.to_string(), "ready": ready }),
+                &schema::ActionDone {
+                    action: *action,
+                    ready,
+                },
             ))
         }
 
@@ -1381,22 +1468,22 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 check: p.text("check", command)?,
             })?;
             let closed = close_checked(&mut p, &actor)?;
-            Ok(Output::new(
+            Ok(Output::of(
                 if closed.is_empty() {
                     format!("{action} has a check now")
                 } else {
                     closed.join("\n")
                 },
-                json!({ "action": action.to_string(), "checks": closed }),
+                &schema::ActionChecked {
+                    action: *action,
+                    checks: closed,
+                },
             ))
         }
 
         Cmd::Summary { all } => {
             let closed = close_checked(&mut p, &actor)?;
-            Ok(with_checks(
-                render::summary(&p.load()?, &actor, *all),
-                closed,
-            ))
+            Ok(render::summary(&p.load()?, &actor, *all, closed))
         }
 
         Cmd::Report => Ok(render::report(&p.load()?)),
@@ -1424,9 +1511,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     hits,
                 });
             }
-            Ok(Output::new(
+            Ok(Output::of(
                 format!("clean: {} file(s) scanned", files.len()),
-                json!({ "files": files.len(), "hits": [] }),
+                &schema::Scanned {
+                    files: files.len(),
+                    hits: Vec::new(),
+                },
             ))
         }
 
@@ -1456,13 +1546,19 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     problems.join("\n  ")
                 ))
             })?;
+            let imported = |written: bool| schema::Imported {
+                items: plan.items,
+                decisions: plan.decisions,
+                open: plan.open,
+                written,
+            };
             if *dry_run {
-                return Ok(Output::new(
+                return Ok(Output::of(
                     format!(
                         "valid: would import {} item(s) and {} decision(s), {} of them open; nothing written",
                         plan.items, plan.decisions, plan.open
                     ),
-                    json!({ "items": plan.items, "decisions": plan.decisions, "open": plan.open, "written": false }),
+                    &imported(false),
                 ));
             }
             let first_item = l.state.next_item_id().0;
@@ -1475,7 +1571,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 1 => format!("{prefix}-{first}"),
                 _ => format!("{prefix}-{first} to {prefix}-{}", first + n as u32 - 1),
             };
-            Ok(Output::new(
+            Ok(Output::of(
                 format!(
                     "imported items {} and decisions {}{}",
                     range("I", first_item, plan.items),
@@ -1485,7 +1581,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         n => format!("; {n} open, waiting in ris inbox"),
                     }
                 ),
-                json!({ "items": plan.items, "decisions": plan.decisions, "open": plan.open, "written": true }),
+                &imported(true),
             ))
         }
 
@@ -1501,13 +1597,16 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             }
             let files = ris::export::phase_files(&l.log)?;
             let new = ris::export::write(dir, &files)?;
-            Ok(Output::new(
+            Ok(Output::of(
                 format!(
                     "exported {} closed phase(s) to {} ({new} new)",
                     files.len(),
                     dir.display()
                 ),
-                json!({ "phases": files.iter().map(|f| f.name.clone()).collect::<Vec<_>>(), "new": new }),
+                &schema::Exported {
+                    phases: files.iter().map(|f| f.name.clone()).collect(),
+                    new,
+                },
             ))
         }
 
@@ -1518,7 +1617,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             l.state
                 .check_index()
                 .map_err(|e| CliError::Other(e.to_string()))?;
-            Ok(Output::new(
+            Ok(Output::of(
                 format!(
                     "ok: {} events, head {}{}",
                     v.len,
@@ -1529,7 +1628,11 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         format!("; text removed from {} event(s)", v.missing_text.len())
                     }
                 ),
-                json!({ "len": v.len, "head": v.head.to_string(), "missing_text": v.missing_text }),
+                &schema::Verified {
+                    len: v.len,
+                    head: v.head,
+                    missing_text: v.missing_text,
+                },
             ))
         }
 
@@ -1572,14 +1675,11 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         .collect();
                     (len, head) = (v.len, v.head);
                     if *once {
-                        return Ok(Output::stream(
-                            lines.join("\n"),
-                            new.iter().map(|e| json!(e)).collect(),
-                        ));
+                        return Ok(Output::stream(lines.join("\n"), &new));
                     }
                     for (line, e) in lines.iter().zip(&new) {
                         if cli.json {
-                            emit(&render::envelope(&json!(e)).to_string());
+                            emit(&render::envelope(e).to_string());
                         } else {
                             emit(line);
                         }
@@ -1596,10 +1696,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 .iter()
                 .map(|e| serde_json::to_string(e).unwrap())
                 .collect();
-            Ok(Output::stream(
-                lines.join("\n"),
-                events.iter().map(|e| json!(e)).collect(),
-            ))
+            Ok(Output::stream(lines.join("\n"), &events))
         }
     }
 }
@@ -1773,9 +1870,12 @@ fn show_evidence(p: &Project, hex: &str) -> Result<Output, CliError> {
         )));
     }
     let text = String::from_utf8_lossy(&bytes).into_owned();
-    Ok(Output::new(
+    Ok(Output::of(
         text.trim_end().to_owned(),
-        json!({ "evidence": format!("E-{name}"), "content": text }),
+        &schema::Show::Evidence(schema::EvidenceContent {
+            evidence: format!("E-{name}"),
+            content: text.clone(),
+        }),
     ))
 }
 
@@ -1987,13 +2087,17 @@ fn install(p: &Project, actor: &Actor) -> Result<Output, CliError> {
         ));
     };
     let commit = ris::install::install(&p.root, cfg, &commit)?;
-    Ok(Output::new(
+    Ok(Output::of(
         format!(
             "installed ris from {} ({item}, the last merge) to {}",
             ris::install::short(&commit),
             cfg.to
         ),
-        json!({ "item": item.to_string(), "commit": commit, "to": cfg.to }),
+        &schema::Installed {
+            item,
+            commit: commit.clone(),
+            to: cfg.to.clone(),
+        },
     ))
 }
 
@@ -2163,9 +2267,13 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
             attended.join(", ")
         ));
     }
-    Ok(Output::new(
+    Ok(Output::of(
         text,
-        json!({ "changed": changed, "not_in_file": retired, "attended": attended }),
+        &schema::Up {
+            changed,
+            not_in_file: retired,
+            attended,
+        },
     ))
 }
 
@@ -2354,16 +2462,6 @@ fn close_checked(p: &mut Project, actor: &Actor) -> Result<Vec<String>, CliError
     Ok(lines)
 }
 
-/// An output with what the checks did, ahead of it.
-fn with_checks(out: Output, closed: Vec<String>) -> Output {
-    let mut json = out.json;
-    json["checks"] = json!(closed);
-    if closed.is_empty() {
-        return Output::new(out.text, json);
-    }
-    Output::new(format!("{}\n\n{}", closed.join("\n"), out.text), json)
-}
-
 /// `ris down`: pause each seat, so it finishes what it holds and its
 /// agent stops at its next claim. Nothing is killed and nothing lost.
 fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliError> {
@@ -2399,9 +2497,12 @@ fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliE
         .filter(|s| !l.state.paused.contains(s))
         .collect();
     if to_pause.is_empty() {
-        return Ok(Output::new(
+        return Ok(Output::of(
             format!("nothing to do: every seat named is already down{note}"),
-            json!({ "changed": [], "attended": attended }),
+            &schema::Down {
+                changed: Vec::new(),
+                attended,
+            },
         ));
     }
     let (l, _) = p.run(&Command::Pause {
@@ -2421,9 +2522,9 @@ fn down(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliE
             }
         })
         .collect();
-    Ok(Output::new(
+    Ok(Output::of(
         format!("{}{note}", changed.join("\n")),
-        json!({ "changed": changed, "attended": attended }),
+        &schema::Down { changed, attended },
     ))
 }
 
@@ -2435,9 +2536,12 @@ fn logs(p: &Project, seat: &str, follow: bool, json: bool) -> Result<Output, Cli
     }
     let dir = p.root.join(ris::project::DIR).join("runs");
     let Some(path) = ris::runner::latest_run(&dir, seat) else {
-        return Ok(Output::new(
+        return Ok(Output::of(
             format!("{seat} has not run yet\n  next: `ris up {seat}`"),
-            json!({ "seat": seat, "lines": [] }),
+            &schema::Logs::Seat {
+                seat: seat.to_owned(),
+                lines: Vec::new(),
+            },
         ));
     };
     let mut at = 0;
@@ -2462,7 +2566,13 @@ fn logs(p: &Project, seat: &str, follow: bool, json: bool) -> Result<Output, Cli
                 // Followed output goes out as it comes: with --json, one
                 // envelope per line, as `ris watch` streams events.
                 if json {
-                    emit(&render::envelope(&json!({ "seat": seat, "line": shown })).to_string());
+                    emit(
+                        &render::envelope(&schema::Logs::Line(schema::SeatLine {
+                            seat: seat.to_owned(),
+                            line: shown.clone(),
+                        }))
+                        .to_string(),
+                    );
                 } else {
                     emit(&shown);
                 }
@@ -2476,11 +2586,14 @@ fn logs(p: &Project, seat: &str, follow: bool, json: bool) -> Result<Output, Cli
     }
     if follow {
         // Everything has been printed; nothing follows it.
-        return Ok(Output::stream(String::new(), Vec::new()));
+        return Ok(Output::stream::<schema::Logs>(String::new(), &[]));
     }
-    Ok(Output::new(
+    Ok(Output::of(
         all.join("\n"),
-        json!({ "seat": seat, "lines": all }),
+        &schema::Logs::Seat {
+            seat: seat.to_owned(),
+            lines: all,
+        },
     ))
 }
 
@@ -2525,17 +2638,18 @@ fn logs_all(p: &Project, follow: bool, json: bool) -> Result<Output, CliError> {
                 };
                 for part in shown.lines() {
                     let prefixed = format!("{seat:<width$} | {part}");
+                    let line = schema::SeatLine {
+                        seat: seat.clone(),
+                        line: part.to_owned(),
+                    };
                     if follow {
                         if json {
-                            emit(
-                                &render::envelope(&json!({ "seat": seat, "line": part }))
-                                    .to_string(),
-                            );
+                            emit(&render::envelope(&schema::Logs::Line(line.clone())).to_string());
                         } else {
                             emit(&prefixed);
                         }
                     }
-                    all.push(json!({ "seat": seat, "line": part }));
+                    all.push(line);
                     text.push(prefixed);
                 }
             }
@@ -2549,15 +2663,18 @@ fn logs_all(p: &Project, follow: bool, json: bool) -> Result<Output, CliError> {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     if follow {
-        return Ok(Output::stream(String::new(), Vec::new()));
+        return Ok(Output::stream::<schema::Logs>(String::new(), &[]));
     }
     if text.is_empty() {
-        return Ok(Output::new(
+        return Ok(Output::of(
             "no seat has run yet\n  next: `ris up`".to_owned(),
-            json!({ "lines": [] }),
+            &schema::Logs::All { lines: Vec::new() },
         ));
     }
-    Ok(Output::new(text.join("\n"), json!({ "lines": all })))
+    Ok(Output::of(
+        text.join("\n"),
+        &schema::Logs::All { lines: all },
+    ))
 }
 
 /// A path beside the repository, shown relative to its parent.
@@ -2676,12 +2793,16 @@ fn start_seat(p: &mut Project, actor: &Actor, seat: &str, quiet: bool) -> Result
             "could not run `{program}` for {seat}: {e}\n  next: install it, or set [runner] program in .osiris/config.toml"
         ))
     })?;
-    Ok(Output::new(
+    Ok(Output::of(
         format!(
             "{seat} stopped ({}); its output is in {shown_log}",
             status.map_or("ended by a signal".to_owned(), |c| format!("exit {c}"))
         ),
-        json!({ "seat": seat, "status": status, "log": shown_log }),
+        &schema::SeatStopped {
+            seat: seat.to_owned(),
+            status,
+            log: shown_log.clone(),
+        },
     ))
 }
 
@@ -3219,4 +3340,42 @@ fn open_phase_branch(
     git(&p.root, &["branch", &name, main])
         .map_err(|e| CliError::Other(format!("could not create {name} from {main}: {e}")))?;
     Ok(Some(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use clap::CommandFactory;
+
+    /// Every command a person or an agent can run, as its subcommand
+    /// path: `ready`, `phase open`.
+    fn leaves(command: &clap::Command, path: &[&str], out: &mut BTreeSet<String>) {
+        for sub in command.get_subcommands() {
+            let mut here = path.to_vec();
+            here.push(sub.get_name());
+            if sub.has_subcommands() {
+                leaves(sub, &here, out);
+            } else {
+                out.insert(here.join(" "));
+            }
+        }
+    }
+
+    /// A command added without a type for its `--json` data has no
+    /// place in the schema; a schema entry for a command that is gone
+    /// describes nothing. Either fails here.
+    #[test]
+    fn the_schema_has_the_data_of_every_command_and_of_no_other() {
+        let mut commands = BTreeSet::new();
+        leaves(&super::Cli::command(), &[], &mut commands);
+        let mut generator = schemars::generate::SchemaSettings::draft2020_12()
+            .for_serialize()
+            .into_generator();
+        let described: BTreeSet<String> = ris::schema::commands(&mut generator)
+            .into_iter()
+            .map(|(name, _)| name.to_owned())
+            .collect();
+        assert_eq!(described, commands);
+    }
 }

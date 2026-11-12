@@ -79,8 +79,10 @@ fn tools() -> Vec<Tool> {
     ]
 }
 
-/// One thing a writing seat would lack.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One thing a writing seat would lack. In `--json` output it is an
+/// object whose `kind` is `program`, `write` or `network`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Missing {
     /// A check's program is not on the PATH a seat inherits.
     Program { check: String, program: String },
@@ -260,26 +262,6 @@ pub fn render(missing: &[Missing]) -> String {
     }
     s.push_str("  then `ris up` again; or set preflight = false under [runner] if the build needs none of it");
     s
-}
-
-/// The preflight's findings as JSON.
-pub fn json(missing: &[Missing]) -> serde_json::Value {
-    serde_json::Value::Array(
-        missing
-            .iter()
-            .map(|m| match m {
-                Missing::Program { check, program } => {
-                    serde_json::json!({ "kind": "program", "check": check, "program": program })
-                }
-                Missing::Write { tool, path } => {
-                    serde_json::json!({ "kind": "write", "tool": tool, "path": path })
-                }
-                Missing::Network { tool, host } => {
-                    serde_json::json!({ "kind": "network", "tool": tool, "host": host })
-                }
-            })
-            .collect(),
-    )
 }
 
 #[cfg(test)]

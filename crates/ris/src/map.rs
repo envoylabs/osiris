@@ -21,13 +21,11 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::project::{CliError, Loaded, Project};
+use crate::render::Output;
 use ris_core::ids::PhaseId;
 use ris_core::primitives::PhaseState;
 use serde::Serialize;
-use serde_json::json;
-
-use crate::project::{CliError, Loaded, Project};
-use crate::render::Output;
 
 /// File extensions that are source code, and the language each names.
 /// A file with none of these is not a node unless a contract pattern
@@ -103,7 +101,7 @@ pub trait Language {
 pub const LANGUAGES: &[&dyn Language] = &[&Rust];
 
 /// One source file.
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq, schemars::JsonSchema)]
 pub struct Node {
     /// Relative to the repository root.
     pub path: String,
@@ -125,7 +123,7 @@ pub struct Node {
 }
 
 /// One connection, from the file that names the other.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, schemars::JsonSchema)]
 pub struct Edge {
     pub from: String,
     pub to: String,
@@ -187,7 +185,7 @@ pub fn document(
     tree: &Tree,
     diff: &BTreeMap<String, (&'static str, u64, u64)>,
     contracts: &[String],
-) -> serde_json::Value {
+) -> crate::schema::Map {
     let is_contract = |path: &str| contracts.iter().any(|c| glob(c, path));
     let is_node = |path: &str| language_of(path).is_some() || is_contract(path);
     let mut scans: BTreeMap<String, Scan> = BTreeMap::new();
@@ -233,21 +231,24 @@ pub fn document(
         }
     }
     let changed: Vec<&Node> = nodes.iter().filter(|n| n.status != "unchanged").collect();
-    json!({
-        "phase": range.phase.map(|p| p.to_string()),
-        "base": range.base,
-        "tip": range.tip,
-        "tip_ref": range.tip_ref,
-        "totals": {
-            "files": nodes.len(),
-            "changed": changed.len(),
-            "added": changed.iter().map(|n| n.added).sum::<u64>(),
-            "removed": changed.iter().map(|n| n.removed).sum::<u64>(),
-            "outside": nodes.iter().filter(|n| n.contract || !n.external.is_empty()).count(),
+    crate::schema::Map {
+        phase: range.phase,
+        base: range.base.clone(),
+        tip: range.tip.clone(),
+        tip_ref: range.tip_ref.clone(),
+        totals: crate::schema::MapTotals {
+            files: nodes.len(),
+            changed: changed.len(),
+            added: changed.iter().map(|n| n.added).sum(),
+            removed: changed.iter().map(|n| n.removed).sum(),
+            outside: nodes
+                .iter()
+                .filter(|n| n.contract || !n.external.is_empty())
+                .count(),
         },
-        "nodes": nodes,
-        "edges": edges,
-    })
+        nodes,
+        edges: edges.into_iter().collect(),
+    }
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -416,7 +417,7 @@ fn read_blobs(dir: &Path, commit: &str, paths: &[&str]) -> Result<Tree, CliError
 }
 
 /// The graph document for `range`, read from git.
-pub fn build(p: &Project, range: &Range) -> Result<serde_json::Value, CliError> {
+pub fn build(p: &Project, range: &Range) -> Result<crate::schema::Map, CliError> {
     let dir = &p.work;
     let contracts = &p.config.map.contracts;
     let listed =
@@ -497,7 +498,8 @@ pub fn page(doc: &serde_json::Value) -> String {
 
 /// `ris map`: the document, and in text its totals and the changed
 /// files, heaviest first. With `html`, also writes the page there.
-pub fn output(doc: serde_json::Value, html: Option<&Path>) -> Result<Output, CliError> {
+pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, CliError> {
+    let doc = serde_json::to_value(&map).expect("the map serialises");
     let t = &doc["totals"];
     let mut text = format!(
         "{}: {} of {} source file(s) changed (+{} -{}), {} touch the outside or are contracts\n",
@@ -562,7 +564,7 @@ pub fn output(doc: serde_json::Value, html: Option<&Path>) -> Result<Output, Cli
         }
         None => text.push_str("  next: `ris map --html map.html` draws it as a page"),
     }
-    Ok(Output::new(text, doc))
+    Ok(Output::of(text, &map))
 }
 
 /// Rust: `mod` lines, `use` lines and qualified paths, by scanning.
@@ -1205,7 +1207,7 @@ mod tests {
             !D3.contains("</script"),
             "the d3 build would end its element"
         );
-        let doc = json!({ "nodes": [{ "path": "a</script><b>.rs" }], "edges": [] });
+        let doc = serde_json::json!({ "nodes": [{ "path": "a</script><b>.rs" }], "edges": [] });
         let html = page(&doc);
         assert!(!html.contains("/*D3*/") && !html.contains("/*DATA*/"));
         assert!(!html.contains("a</script>"), "the document is escaped");

@@ -120,6 +120,59 @@ line of output per envelope, and ends once no seat is running; without
 `crates/ris/tests/json_contract.rs` pins the envelope and the top-level
 keys of the most-read commands' `data`.
 
+## The schema
+
+`docs/json.schema.json` is the JSON Schema (draft 2020-12) of format 1,
+for a client to validate against and to generate its types from.
+`ris schema` prints the same document, from any directory.
+
+- The document itself is the envelope: a success or a failure, each
+  with `format` 1.
+- `#/$defs/envelope.failure` holds the error: its `kind` (the list
+  above, as an enumeration), `message`, `next`, and the details each
+  kind carries, a refusal's reason included.
+- `#/$defs/data.<command>` is the `data` of one command, with `_` for
+  each space in the command: `data.ready`, `data.phase_open`,
+  `data.decision_raise`. For a stream (`log`, `watch`, a followed
+  `logs`) it is the data of one line. A command whose data depends on
+  what it was asked (`show`, `inbox`, `decide`, `audit`, `logs`,
+  `report`) is an `anyOf` of its forms.
+- Ids, hashes and evidence ids are strings with a `pattern`; actors,
+  blockers and events are the typed objects described under Values.
+
+A client validates an envelope against the document and then its
+`data` against the definition of the command it ran; the envelope alone
+accepts the data of any command.
+
+The schema is generated from the Rust types that produce the output
+(`crates/ris/src/schema.rs`, and the core's event and refusal types):
+no command can build its output from anything else, so the two cannot
+drift apart. Tests hold the rest: the committed file is regenerated and
+compared, every command of the CLI must have a definition, and every
+command's real output, and every error kind a run can reach, is
+validated against the committed file (`crates/ris/tests/schema.rs`).
+
+The compatibility rule in schema terms. Within format 1:
+
+- A property may be added to an object, and a definition to `$defs`.
+  The schema's objects are open (no `additionalProperties: false`),
+  so a client holding an older copy of the schema still accepts what a
+  newer `ris` writes. Three definitions are closed, each an object
+  that is one of several named forms: `Actor`, `Refusal` and
+  `Structure` (a stored event's structure, whose form is the event
+  format's). The tests validate with every object closed, so a key
+  that `ris` writes and no type declares fails there.
+- A property is never removed from `properties` or from `required`,
+  never renamed, and never given another `type`, `pattern` or shape;
+  a value is never removed from an `enum`. A change of that kind is a
+  new format: the `format` constant changes, and with it the schema.
+- A property that is in `properties` and not in `required` is present
+  only in some states, as the `evidence` of an item is once it is done.
+  A client reads it as optional.
+- Adding a value to an `enum`, or a form to an `anyOf`, is an addition:
+  a new error `kind`, a new event. A client treats a value it does not
+  know as it treats a key it does not know.
+
 ## The map document
 
 `ris map` gives the phase's change set as a graph over the source

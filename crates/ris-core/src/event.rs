@@ -72,6 +72,7 @@ impl<'de> Deserialize<'de> for Salt {
 
 /// The structural part of an event: everything the fold reads. No free
 /// text lives here, by construction: none of these fields is a `Text`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Structure {
@@ -212,6 +213,7 @@ pub enum Structure {
 pub type TextPart = BTreeMap<String, Text>;
 
 /// One entry in the log.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     /// Position in the log, from 1.

@@ -12,13 +12,12 @@
 
 use std::io::{self, BufRead, IsTerminal, Write};
 
+use crate::project::{CliError, Loaded, Project};
+use crate::render::{self, Output};
+use crate::schema;
 use ris_core::command::{Choice, Command};
 use ris_core::ids::{Actor, DecisionId};
 use ris_core::primitives::{DecisionClass, DecisionState};
-use serde_json::json;
-
-use crate::project::{CliError, Loaded, Project};
-use crate::render::{self, Output};
 
 /// The person's queue: every open substantive decision, oldest first,
 /// whatever phase raised it.
@@ -36,9 +35,9 @@ pub fn queue(l: &Loaded) -> Vec<DecisionId> {
 /// to show and answer with `ris decide D-n --choose k`.
 pub fn queue_output(l: &Loaded) -> Output {
     let ids = queue(l);
-    let entries: Vec<_> = ids
+    let queue = ids
         .iter()
-        .map(|id| render::eli5_case(l, &l.state.decisions[id]).json)
+        .map(|id| render::eli5_case(l, &l.state.decisions[id]).1)
         .collect();
     let text = if ids.is_empty() {
         "no open substantive decisions".to_owned()
@@ -48,7 +47,7 @@ pub fn queue_output(l: &Loaded) -> Output {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    Output::new(text, json!({ "queue": entries }))
+    Output::of(text, &schema::Decide::Queue { queue })
 }
 
 /// What a key does at the prompt.
@@ -202,9 +201,12 @@ pub fn walk(
     }
     let ids = queue(&p.load()?);
     if ids.is_empty() {
-        return Ok(Output::new(
+        return Ok(Output::of(
             "no open substantive decisions",
-            json!({ "taken": [], "open": [] }),
+            &schema::Decide::Walk {
+                taken: Vec::new(),
+                open: Vec::new(),
+            },
         ));
     }
     let mut taken = Vec::new();
@@ -225,7 +227,7 @@ pub fn walk(
         } else if !taken.is_empty() || id != &ids[0] {
             writeln!(out)?;
         }
-        write!(out, "{}", render::eli5_case(&l, d).text)?;
+        write!(out, "{}", render::eli5_case(&l, d).0)?;
         writeln!(out)?;
         // Until the decision is answered, skipped or the walk quits: an
         // own answer left empty comes back here.
@@ -305,13 +307,7 @@ pub fn walk(
             list(&open)
         ));
     }
-    Ok(Output::new(
-        text,
-        json!({
-            "taken": taken.iter().map(|i| i.to_string()).collect::<Vec<_>>(),
-            "open": open.iter().map(|i| i.to_string()).collect::<Vec<_>>(),
-        }),
-    ))
+    Ok(Output::of(text, &schema::Decide::Walk { taken, open }))
 }
 
 #[cfg(test)]

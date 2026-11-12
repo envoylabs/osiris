@@ -12,6 +12,7 @@ use crate::text::Category;
 use crate::transitions::CommandKind;
 
 /// Why a command was not applied.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Refusal {

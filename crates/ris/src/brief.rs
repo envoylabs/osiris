@@ -22,10 +22,10 @@ use std::collections::BTreeSet;
 
 use ris_core::ids::ItemId;
 use ris_core::primitives::{Decision, DecisionState, ItemState};
-use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::project::Loaded;
+use crate::schema;
 
 /// The most a brief's text form may take, in bytes.
 pub const BRIEF_MAX: usize = 4096;
@@ -40,7 +40,7 @@ pub struct Rules<'a> {
 
 /// The brief for `item`, claimed by a seat with `role`, as text and as
 /// JSON.
-pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Value) {
+pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, schema::Brief) {
     let i = &l.state.items[&item];
     let rules_hash: String = Sha256::digest(rules.content.as_bytes())
         .iter()
@@ -80,7 +80,7 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
             "  depends on {d} ({state}): {}\n",
             l.text(dep.at, "goal")
         ));
-        deps_json.push(json!({ "item": d.to_string(), "state": state }));
+        deps_json.push(schema::BriefDependency { item: *d, state });
     }
 
     // Decisions raised about this item or what it depends on, newest
@@ -129,7 +129,7 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
             "  {a} ({how}) {} → {state}\n",
             l.text(act.at, "what")
         ));
-        actions_json.push(json!({ "id": a.to_string(), "kind": how }));
+        actions_json.push(schema::BriefAction { id: *a, kind: how });
     }
 
     let mut lines = Vec::new();
@@ -156,7 +156,7 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
             d.id,
             l.text(d.at, "question")
         ));
-        decisions_json.push(json!({ "id": d.id.to_string(), "state": state }));
+        decisions_json.push(schema::BriefDecision { id: d.id, state });
     }
 
     let mut text = head;
@@ -188,18 +188,26 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, Va
         text.push_str("...\n");
     }
 
-    let json = json!({
-        "rules": { "path": rules.path, "hash": rules_hash },
-        "project": { "phase": phase.id.to_string(), "goal": phase_goal, "role": role },
-        "item": item.to_string(),
-        "goal": goal,
-        "checks": checks,
-        "depends_on": deps_json,
-        "actions": actions_json,
-        "decisions": decisions_json[..kept].to_vec(),
-        "decisions_left_out": lines.len() - kept,
-    });
-    (text.trim_end().to_owned(), json)
+    decisions_json.truncate(kept);
+    let data = schema::Brief {
+        rules: schema::BriefRules {
+            path: rules.path.map(str::to_owned),
+            hash: rules_hash,
+        },
+        project: schema::BriefProject {
+            phase: phase.id,
+            goal: phase_goal.to_owned(),
+            role: role.to_owned(),
+        },
+        item,
+        goal: goal.to_owned(),
+        checks: i.checks.clone(),
+        depends_on: deps_json,
+        actions: actions_json,
+        decisions: decisions_json,
+        decisions_left_out: lines.len() - kept,
+    };
+    (text.trim_end().to_owned(), data)
 }
 
 fn state_word(s: &ItemState) -> &'static str {

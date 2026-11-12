@@ -9,9 +9,12 @@ use ris_core::primitives::{
     Action, ActionState, Decision, DecisionClass, DecisionState, Item, ItemState, Message,
     PhaseState,
 };
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::project::Loaded;
+use crate::schema;
 use crate::style;
 
 /// One command's output.
@@ -34,25 +37,29 @@ pub struct Output {
 /// A change to the shape of any `data` or `error` is a new format.
 pub const JSON_FORMAT: u32 = 1;
 
-/// A successful result in the envelope.
-pub fn envelope(data: &Value) -> Value {
+/// A successful result in the envelope. `data` is a type with a
+/// schema, as every command's is (`crate::schema`).
+pub fn envelope<T: Serialize + JsonSchema + ?Sized>(data: &T) -> Value {
     json!({ "format": JSON_FORMAT, "ok": true, "data": data })
 }
 
 impl Output {
-    pub fn new(text: impl Into<String>, json: Value) -> Self {
+    /// A command's output: its text, and its data for `--json`. The
+    /// data is a type the schema is generated from, so the two cannot
+    /// drift; there is no way to build an output from loose JSON.
+    pub fn of<T: Serialize + JsonSchema + ?Sized>(text: impl Into<String>, data: &T) -> Self {
         Self {
             text: text.into(),
-            json,
+            json: serde_json::to_value(data).expect("output data serialises"),
             stream: false,
         }
     }
 
     /// Lines of text, or with `--json` one envelope per item.
-    pub fn stream(text: impl Into<String>, items: Vec<Value>) -> Self {
+    pub fn stream<T: Serialize + JsonSchema>(text: impl Into<String>, items: &[T]) -> Self {
         Self {
             text: text.into(),
-            json: Value::Array(items),
+            json: serde_json::to_value(items).expect("output data serialises"),
             stream: true,
         }
     }
@@ -119,32 +126,37 @@ pub(crate) fn shown_state(l: &Loaded, i: &Item) -> &'static str {
     }
 }
 
-fn item_json(l: &Loaded, i: &Item) -> Value {
-    let mut v = json!({
-        "id": i.id.to_string(),
-        "phase": i.phase.to_string(),
-        "goal": l.text(i.at, "goal"),
-        "state": state_name(&i.state),
-        "checks": i.checks.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "depends_on": i.depends_on.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "audited_by": i.audited_by.iter().map(ToString::to_string).collect::<Vec<_>>(),
-    });
+fn item_json(l: &Loaded, i: &Item) -> schema::Item {
+    let mut v = schema::Item {
+        id: i.id,
+        phase: i.phase,
+        goal: l.text(i.at, "goal").to_owned(),
+        state: state_name(&i.state),
+        checks: i.checks.clone(),
+        depends_on: i.depends_on.clone(),
+        audited_by: i.audited_by.clone(),
+        agent: None,
+        blocked_on: None,
+        evidence: None,
+        commit: None,
+        superseded_by: None,
+        waiting_on: None,
+        decisions: None,
+        check_runs: None,
+    };
     match &i.state {
-        ItemState::Claimed { agent } => v["agent"] = json!(agent.to_string()),
-        ItemState::Blocked { on } => v["blocked_on"] = json!(on),
-        ItemState::Done { evidence } => {
-            v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>())
-        }
+        ItemState::Claimed { agent } => v.agent = Some(agent.clone()),
+        ItemState::Blocked { on } => v.blocked_on = Some(on.clone()),
+        ItemState::Done { evidence } => v.evidence = Some(evidence.clone()),
         ItemState::Merged { evidence, commit } => {
-            v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>());
-            v["commit"] = json!(commit.to_string());
+            v.evidence = Some(evidence.clone());
+            v.commit = Some(commit.clone());
         }
-        ItemState::Superseded { by } => v["superseded_by"] = json!(by.to_string()),
+        ItemState::Superseded { by } => v.superseded_by = Some(*by),
         ItemState::Ready => {
             let waiting = l.state.unlanded_dependencies(i);
             if !waiting.is_empty() {
-                v["waiting_on"] =
-                    json!(waiting.iter().map(ToString::to_string).collect::<Vec<_>>());
+                v.waiting_on = Some(waiting);
             }
         }
     }
@@ -253,45 +265,58 @@ fn action_block(l: &Loaded, a: &Action) -> String {
     s
 }
 
-fn action_json(l: &Loaded, a: &Action) -> Value {
-    let mut v = json!({
-        "id": a.id.to_string(),
-        "by": a.by,
-        "what": l.text(a.at, "what"),
-        "done_when": l.text(a.at, "done_when"),
-        "blocks": a.blocks.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "informs": a.informs.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "state": match a.state { ActionState::Open => "open", ActionState::Done { .. } => "done" },
-        "check": a.check.map(|at| l.text(at, "check")),
-    });
+fn action_json(l: &Loaded, a: &Action) -> schema::Action {
+    let mut v = schema::Action {
+        id: a.id,
+        by: a.by.clone(),
+        what: l.text(a.at, "what").to_owned(),
+        done_when: l.text(a.at, "done_when").to_owned(),
+        blocks: a.blocks.clone(),
+        informs: a.informs.clone(),
+        state: match a.state {
+            ActionState::Open => "open",
+            ActionState::Done { .. } => "done",
+        },
+        check: a.check.map(|at| l.text(at, "check").to_owned()),
+        note: None,
+        evidence: None,
+    };
     if let ActionState::Done { at, evidence } = &a.state {
-        v["note"] = json!(l.log_text(*at, "note"));
-        v["evidence"] = json!(evidence.iter().map(ToString::to_string).collect::<Vec<_>>());
+        v.note = Some(l.log_text(*at, "note").map(str::to_owned));
+        v.evidence = Some(evidence.clone());
     }
     v
 }
 
-fn decision_json(l: &Loaded, d: &Decision) -> Value {
-    let options: Vec<&str> = (0..d.options)
-        .map(|n| l.text(d.at, &format!("option.{n}")))
-        .collect();
-    let mut v = json!({
-        "id": d.id.to_string(),
-        "class": match d.class { DecisionClass::Mechanical => "mechanical", DecisionClass::Substantive => "substantive" },
-        "by": d.by,
-        "about": d.about.map(|i| i.to_string()),
-        "question": l.text(d.at, "question"),
-        "options": options,
-        "recommended": d.recommended,
-        "state": match d.state { DecisionState::Open => "open", DecisionState::Taken { .. } => "taken", DecisionState::Superseded(_) => "superseded" },
-        "explained": d.explained.is_some(),
-    });
+fn decision_json(l: &Loaded, d: &Decision) -> schema::Decision {
+    let mut v = schema::Decision {
+        id: d.id,
+        class: d.class,
+        by: d.by.clone(),
+        about: d.about,
+        question: l.text(d.at, "question").to_owned(),
+        options: (0..d.options)
+            .map(|n| l.text(d.at, &format!("option.{n}")).to_owned())
+            .collect(),
+        recommended: d.recommended,
+        state: match d.state {
+            DecisionState::Open => "open",
+            DecisionState::Taken { .. } => "taken",
+            DecisionState::Superseded(_) => "superseded",
+        },
+        explained: d.explained.is_some(),
+        taken_by: None,
+        chosen: None,
+        rationale: None,
+        other: None,
+        raised_at_event: None,
+    };
     if let DecisionState::Taken { by, chosen, at } = &d.state {
-        v["taken_by"] = json!(by);
-        v["chosen"] = json!(chosen);
-        v["rationale"] = json!(l.text(*at, "rationale"));
+        v.taken_by = Some(by.clone());
+        v.chosen = Some(*chosen);
+        v.rationale = Some(l.text(*at, "rationale").to_owned());
         if *chosen >= d.options {
-            v["other"] = json!(l.text(*at, "other"));
+            v.other = Some(l.text(*at, "other").to_owned());
         }
     }
     v
@@ -302,9 +327,10 @@ fn decision_json(l: &Loaded, d: &Decision) -> Value {
 /// and how to answer. Without an explanation, says so and who can give
 /// one.
 pub fn eli5(l: &Loaded, d: &Decision) -> Output {
-    let mut out = eli5_case(l, d);
+    let (mut text, case) = eli5_case(l, d);
+    let done = |text: String| Output::of(text, &case);
     if d.explained.is_none() {
-        out.text.push_str(&format!(
+        text.push_str(&format!(
             "  next: ask {} for one (`ris decision explain {}`), or decide from the above\n",
             match &d.by {
                 Actor::Person => "yourself".to_owned(),
@@ -312,27 +338,26 @@ pub fn eli5(l: &Loaded, d: &Decision) -> Output {
             },
             d.id
         ));
-        return out;
+        return done(text);
     }
     match &d.state {
-        DecisionState::Open => out.text.push_str(&format!(
+        DecisionState::Open => text.push_str(&format!(
             "--\nanswer:  ris decide {0} --choose <option number> --rationale \"...\"\n     or  ris decide {0} --other \"your own answer\" --rationale \"...\"",
             d.id
         )),
         _ => {
-            out.text.push_str("--\n");
-            out.text
-                .push_str(decision_block(l, d).lines().last().unwrap_or("").trim());
+            text.push_str("--\n");
+            text.push_str(decision_block(l, d).lines().last().unwrap_or("").trim());
         }
     }
-    out
+    done(text)
 }
 
-/// A decision's case and nothing else: what `ris eli5` prints without
-/// the lines on how to answer, which `ris decide` shows before its
-/// prompt. Without an explanation, the decision and a line saying none
-/// is recorded.
-pub fn eli5_case(l: &Loaded, d: &Decision) -> Output {
+/// A decision's case and nothing else, as text and as data: what
+/// `ris eli5` prints without the lines on how to answer, which
+/// `ris decide` shows before its prompt. Without an explanation, the
+/// decision and a line saying none is recorded.
+pub fn eli5_case(l: &Loaded, d: &Decision) -> (String, schema::Case) {
     let class = match d.class {
         DecisionClass::Mechanical => "mechanical",
         DecisionClass::Substantive => "substantive",
@@ -347,9 +372,12 @@ pub fn eli5_case(l: &Loaded, d: &Decision) -> Output {
         s.push('\n');
         s.push_str(&decision_block(l, d));
         s.push_str("\nno explanation recorded\n");
-        return Output::new(
+        return (
             s,
-            json!({ "decision": decision_json(l, d), "explanation": null }),
+            schema::Case {
+                decision: decision_json(l, d),
+                explanation: None,
+            },
         );
     };
     s.push_str(&format!("\n{}\n", l.text(e.at, "summary")));
@@ -376,7 +404,12 @@ pub fn eli5_case(l: &Loaded, d: &Decision) -> Output {
         for c in &cons {
             s.push_str(&format!("   - {c}\n"));
         }
-        options.push(json!({ "option": n, "text": l.text(d.at, &format!("option.{n}")), "pros": pros, "cons": cons }));
+        options.push(schema::ExplainedOption {
+            option: n,
+            text: l.text(d.at, &format!("option.{n}")).to_owned(),
+            pros: pros.iter().map(|p| (*p).to_owned()).collect(),
+            cons: cons.iter().map(|c| (*c).to_owned()).collect(),
+        });
     }
     s.push_str(&format!(
         "\nwhy {}: {}\n",
@@ -384,17 +417,17 @@ pub fn eli5_case(l: &Loaded, d: &Decision) -> Output {
         l.text(e.at, "why")
     ));
     s.push_str(&format!("explained by {}\n", e.by));
-    Output::new(
+    (
         s,
-        json!({
-            "decision": decision_json(l, d),
-            "explanation": {
-                "by": e.by,
-                "summary": l.text(e.at, "summary"),
-                "options": options,
-                "why": l.text(e.at, "why"),
-            }
-        }),
+        schema::Case {
+            decision: decision_json(l, d),
+            explanation: Some(schema::Explanation {
+                by: e.by.clone(),
+                summary: l.text(e.at, "summary").to_owned(),
+                options,
+                why: l.text(e.at, "why").to_owned(),
+            }),
+        },
     )
 }
 
@@ -463,15 +496,15 @@ fn decision_line(l: &Loaded, d: &Decision) -> String {
     )
 }
 
-fn message_json(l: &Loaded, m: &Message) -> Value {
-    json!({
-        "id": m.id.to_string(),
-        "from": m.from,
-        "to": m.to,
-        "kind": format!("{:?}", m.kind).to_lowercase(),
-        "about": m.about.map(|i| i.to_string()),
-        "body": l.text(m.at, "body"),
-    })
+fn message_json(l: &Loaded, m: &Message) -> schema::Message {
+    schema::Message {
+        id: m.id,
+        from: m.from.clone(),
+        to: m.to.clone(),
+        kind: format!("{:?}", m.kind).to_lowercase(),
+        about: m.about,
+        body: l.text(m.at, "body").to_owned(),
+    }
 }
 
 /// `ris ready`: what an agent may claim now, the open phase's own items
@@ -479,11 +512,12 @@ fn message_json(l: &Loaded, m: &Message) -> Value {
 /// order. A seat takes the first, so the phase's work comes before the
 /// backlog.
 pub fn ready(l: &Loaded) -> Output {
-    ready_in(l, Scope::All)
+    let (text, data) = ready_in(l, Scope::All);
+    Output::of(text, &data)
 }
 
 /// What may be claimed now, within `scope`.
-fn ready_in(l: &Loaded, scope: Scope) -> Output {
+fn ready_in(l: &Loaded, scope: Scope) -> (String, schema::Ready) {
     let open = l.state.open_phase().map(|p| p.id);
     let mut items: Vec<&Item> = l.state.ready().filter(|i| scope.item(i)).collect();
     items.sort_by_key(|i| Some(i.phase) != open);
@@ -496,9 +530,11 @@ fn ready_in(l: &Loaded, scope: Scope) -> Output {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    Output::new(
+    (
         text,
-        json!({ "ready": items.iter().map(|i| item_json(l, i)).collect::<Vec<_>>() }),
+        schema::Ready {
+            ready: items.iter().map(|i| item_json(l, i)).collect(),
+        },
     )
 }
 
@@ -514,13 +550,32 @@ ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<has
 
 /// `ris inbox`: for the person, the decision queue; for an agent, its
 /// messages and the items it holds.
-pub fn inbox(l: &Loaded, actor: &Actor) -> Output {
-    inbox_in(l, actor, Scope::All)
+///
+/// `checks` is what running the person's action checks did before
+/// this, which goes ahead of the text and into the data.
+pub fn inbox(l: &Loaded, actor: &Actor, checks: Vec<String>) -> Output {
+    let (text, mut data) = inbox_in(l, actor, Scope::All);
+    let text = with_checks(text, &checks);
+    match &mut data {
+        schema::Inbox::Person { checks: c, .. } | schema::Inbox::Seat { checks: c, .. } => {
+            *c = Some(checks);
+        }
+    }
+    Output::of(text, &data)
+}
+
+/// `text` with what the person's action checks did ahead of it.
+fn with_checks(text: String, checks: &[String]) -> String {
+    if checks.is_empty() {
+        text
+    } else {
+        format!("{}\n\n{text}", checks.join("\n"))
+    }
 }
 
 /// The inbox with the person's decisions limited to `scope`. Messages,
 /// held items and person actions are not phase work and always show.
-fn inbox_in(l: &Loaded, actor: &Actor, scope: Scope) -> Output {
+fn inbox_in(l: &Loaded, actor: &Actor, scope: Scope) -> (String, schema::Inbox) {
     match actor {
         Actor::Person => {
             let open: Vec<&Decision> = l
@@ -554,19 +609,20 @@ fn inbox_in(l: &Loaded, actor: &Actor, scope: Scope) -> Output {
             }
             text.push_str(&style::dim(PERSON_FOOTER));
             let text = text.trim_end().to_owned();
-            Output::new(
+            (
                 text,
-                json!({
-                    "decisions": open.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
-                    "actions": actions.iter().map(|a| action_json(l, a)).collect::<Vec<_>>(),
-                }),
+                schema::Inbox::Person {
+                    decisions: open.iter().map(|d| decision_json(l, d)).collect(),
+                    actions: actions.iter().map(|a| action_json(l, a)).collect(),
+                    checks: None,
+                },
             )
         }
         Actor::Agent(name) => agent_inbox(l, name),
     }
 }
 
-fn agent_inbox(l: &Loaded, name: &AgentName) -> Output {
+fn agent_inbox(l: &Loaded, name: &AgentName) -> (String, schema::Inbox) {
     let held: Vec<&Item> = l
         .state
         .items
@@ -596,12 +652,13 @@ fn agent_inbox(l: &Loaded, name: &AgentName) -> Output {
             ));
         }
     }
-    Output::new(
-        s.trim_end(),
-        json!({
-            "holding": held.iter().map(|i| item_json(l, i)).collect::<Vec<_>>(),
-            "messages": messages.iter().map(|m| message_json(l, m)).collect::<Vec<_>>(),
-        }),
+    (
+        s.trim_end().to_owned(),
+        schema::Inbox::Seat {
+            holding: held.iter().map(|i| item_json(l, i)).collect(),
+            messages: messages.iter().map(|m| message_json(l, m)).collect(),
+            checks: None,
+        },
     )
 }
 
@@ -609,15 +666,25 @@ fn agent_inbox(l: &Loaded, name: &AgentName) -> Output {
 /// decisions in full, mechanical ones one line each, items by state,
 /// and the chain head.
 pub fn report(l: &Loaded) -> Output {
+    let (text, data) = report_data(l);
+    Output::of(text, &data)
+}
+
+/// The report as text and as data, for a command that carries it
+/// inside its own (`ris phase close`).
+pub fn report_data(l: &Loaded) -> (String, schema::Report) {
     report_in(l, Scope::All)
 }
 
 /// The report with its items and decisions limited to `scope`. Under
 /// [`Scope::All`] it lists the latest phase's items and every item
 /// still in motion from earlier ones, and every decision.
-fn report_in(l: &Loaded, scope: Scope) -> Output {
+fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
     let Some(phase) = l.state.phases.values().last() else {
-        return Output::new("no phase yet", json!({ "phase": null }));
+        return (
+            "no phase yet".to_owned(),
+            schema::Report::NoPhase { phase: () },
+        );
     };
     let items: Vec<&Item> = l
         .state
@@ -756,32 +823,37 @@ fn report_in(l: &Loaded, scope: Scope) -> Output {
         },
         previous_report(l, phase.id)
     ));
-    Output::new(
+    (
         s,
-        json!({
-            "phase": {
-                "id": phase.id.to_string(),
-                "goal": l.text(phase.at, "goal"),
-                "state": match phase.state { PhaseState::Open => "open", PhaseState::Closed { .. } => "closed" },
+        schema::Report::Phase(Box::new(schema::PhaseReport {
+            phase: schema::PhaseHead {
+                id: phase.id,
+                goal: l.text(phase.at, "goal").to_owned(),
+                state: match phase.state {
+                    PhaseState::Open => "open",
+                    PhaseState::Closed { .. } => "closed",
+                },
             },
-            "items": items.iter().map(|i| item_json(l, i)).collect::<Vec<_>>(),
-            "tally": {
-                "planned": t.planned,
-                "merged": t.merged,
-                "carried_over": t.carried_over,
-            },
-            "substantive": substantive.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
-            "mechanical": mechanical.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
-            "messages": l.state.messages.len(),
-            "answered_outside_options": outside,
-            "merged_ahead": ahead
+            items: items.iter().map(|i| item_json(l, i)).collect(),
+            tally: t,
+            substantive: substantive.iter().map(|d| decision_json(l, d)).collect(),
+            mechanical: mechanical.iter().map(|d| decision_json(l, d)).collect(),
+            messages: l.state.messages.len(),
+            answered_outside_options: outside,
+            merged_ahead: ahead
                 .iter()
-                .map(|(i, a)| json!({ "item": i.to_string(), "action": a.to_string() }))
-                .collect::<Vec<_>>(),
-            "log": { "len": l.state.len, "head": l.state.head.to_string() },
-            "report": report_hash.to_string(),
-            "previous_report": previous_report(l, phase.id).to_string(),
-        }),
+                .map(|(item, action)| schema::MergedAhead {
+                    item: *item,
+                    action: *action,
+                })
+                .collect(),
+            log: schema::LogHead {
+                len: l.state.len,
+                head: l.state.head,
+            },
+            report: report_hash,
+            previous_report: previous_report(l, phase.id),
+        })),
     )
 }
 
@@ -789,7 +861,7 @@ fn report_in(l: &Loaded, scope: Scope) -> Output {
 /// it was open (an item carried in from an earlier phase counts where
 /// it merged), and the items left unsettled, neither merged nor
 /// superseded, which the next phase inherits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Tally {
     pub planned: usize,
     pub merged: usize,
@@ -862,9 +934,12 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
             .decisions
             .get(&decision)
             .ok_or_else(|| format!("no decision {decision}"))?;
-        let mut json = decision_json(l, d);
-        json["raised_at_event"] = json!(d.at);
-        return Ok(Output::new(decision_block(l, d).trim_end(), json));
+        let mut data = decision_json(l, d);
+        data.raised_at_event = Some(d.at);
+        return Ok(Output::of(
+            decision_block(l, d).trim_end(),
+            &schema::Show::Decision(Box::new(data)),
+        ));
     }
     if let Ok(action) = id.parse::<ris_core::ids::ActionId>() {
         let a = l
@@ -872,9 +947,9 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
             .actions
             .get(&action)
             .ok_or_else(|| format!("no action {action}"))?;
-        return Ok(Output::new(
+        return Ok(Output::of(
             action_block(l, a).trim_end(),
-            action_json(l, a),
+            &schema::Show::Action(action_json(l, a)),
         ));
     }
     if let Ok(phase) = id.parse::<PhaseId>() {
@@ -904,13 +979,16 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
         if let PhaseState::Closed { report } = p.state {
             s.push_str(&format!("report {report}\n"));
         }
-        return Ok(Output::new(
+        return Ok(Output::of(
             s.trim_end(),
-            json!({
-                "id": p.id.to_string(),
-                "goal": l.text(p.at, "goal"),
-                "state": match p.state { PhaseState::Open => "open", PhaseState::Closed { .. } => "closed" },
-                "items": items.iter().map(|i| item_json(l, i)).collect::<Vec<_>>(),
+            &schema::Show::Phase(schema::Phase {
+                id: p.id,
+                goal: l.text(p.at, "goal").to_owned(),
+                state: match p.state {
+                    PhaseState::Open => "open",
+                    PhaseState::Closed { .. } => "closed",
+                },
+                items: items.iter().map(|i| item_json(l, i)).collect(),
             }),
         ));
     }
@@ -921,7 +999,7 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
             .iter()
             .find(|m| m.id == message)
             .ok_or_else(|| format!("no message {message}"))?;
-        return Ok(Output::new(
+        return Ok(Output::of(
             format!(
                 "{} {:?} from {} to {}{}\n  {}",
                 m.id,
@@ -931,7 +1009,7 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
                 m.about.map(|i| format!(" about {i}")).unwrap_or_default(),
                 l.text(m.at, "body")
             ),
-            message_json(l, m),
+            &schema::Show::Message(message_json(l, m)),
         ));
     }
     Err(format!(
@@ -1048,20 +1126,19 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
             ));
         }
     }
-    let mut json = item_json(l, i);
-    json["decisions"] = json!(
-        decisions
-            .iter()
-            .map(|d| decision_json(l, d))
-            .collect::<Vec<_>>()
-    );
-    json["check_runs"] = json!(
+    let mut data = item_json(l, i);
+    data.decisions = Some(decisions.iter().map(|d| decision_json(l, d)).collect());
+    data.check_runs = Some(
         i.check_runs
             .iter()
-            .map(|r| json!({ "check": r.check.to_string(), "passed": r.passed, "evidence": r.evidence.to_string() }))
-            .collect::<Vec<_>>()
+            .map(|r| schema::CheckRun {
+                check: r.check.clone(),
+                passed: r.passed,
+                evidence: r.evidence,
+            })
+            .collect(),
     );
-    Output::new(s.trim_end(), json)
+    Output::of(s.trim_end(), &schema::Show::Item(Box::new(data)))
 }
 
 /// `ris summary`: the review view, one picture of the open phase. Its
@@ -1076,13 +1153,14 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
 /// section the same as its own command.
 ///
 /// The JSON carries the same keys either way; by default `inbox`,
-/// `report` and `ready` cover the open phase alone.
-pub fn summary(l: &Loaded, actor: &Actor, all: bool) -> Output {
+/// `report` and `ready` cover the open phase alone. `checks` is what
+/// running the person's action checks did before this.
+pub fn summary(l: &Loaded, actor: &Actor, all: bool, checks: Vec<String>) -> Output {
     use crate::graph::Node;
     let scope = Scope::of(l, all);
-    let queue = inbox_in(l, actor, scope);
-    let rep = report_in(l, scope);
-    let rdy = ready_in(l, scope);
+    let (queue_text, queue) = inbox_in(l, actor, scope);
+    let (rep_text, rep) = report_in(l, scope);
+    let (rdy_text, rdy) = ready_in(l, scope);
     let graph = crate::graph::Graph::of_scope(l, scope);
     // Unsettled work left out: items not merged or superseded and open
     // decisions that are outside the scope and not drawn in the graph.
@@ -1116,13 +1194,13 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool) -> Output {
         format!(
             "{}\n{}\n\n{}\n{}\n\n{}\n{}\n\n{}\n{}",
             style::header("== decisions =="),
-            queue.text,
+            queue_text,
             style::header("== what waits on what =="),
             graph.draw(l),
             style::header("== report =="),
-            rep.text,
+            rep_text,
             style::header("== ready =="),
-            rdy.text
+            rdy_text
         )
     } else if let Some(phase) = l.state.open_phase() {
         let mut counts = std::collections::BTreeMap::new();
@@ -1161,16 +1239,20 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool) -> Output {
             .trim_end()
             .to_owned()
     };
-    Output::new(
-        text,
-        json!({
-            "inbox": queue.json,
-            "graph": graph.json(l),
-            "report": rep.json,
-            "ready": rdy.json,
-            "all": all,
-            "carried_over": { "items": carried_items, "decisions": carried_decisions },
-        }),
+    Output::of(
+        with_checks(text, &checks),
+        &schema::Summary {
+            inbox: queue,
+            graph: graph.json(l),
+            report: rep,
+            ready: rdy,
+            all,
+            carried_over: schema::CarriedOver {
+                items: carried_items,
+                decisions: carried_decisions,
+            },
+            checks,
+        },
     )
 }
 
@@ -1201,8 +1283,10 @@ pub fn audit_queue(l: &Loaded, actor: &Actor, scope: Scope) -> Output {
         s.push_str("\n--\nreview: ris show I-n, the diff, the evidence; findings: ris send <author> --kind finding --about I-n \"...\"; then ris audit I-n");
         s
     };
-    Output::new(
+    Output::of(
         text,
-        json!({ "queue": queue.iter().map(|i| item_json(l, i)).collect::<Vec<_>>() }),
+        &schema::Audit::Queue(schema::AuditQueue {
+            queue: queue.iter().map(|i| item_json(l, i)).collect(),
+        }),
     )
 }
