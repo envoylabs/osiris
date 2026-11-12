@@ -433,6 +433,23 @@
       ],
       "type": "object"
     },
+    "BroughtIn": {
+      "description": "`ris item bring-in`.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId",
+          "description": "The open phase it is now in."
+        }
+      },
+      "required": [
+        "item",
+        "phase"
+      ],
+      "type": "object"
+    },
     "CarriedOver": {
       "properties": {
         "decisions": {
@@ -616,6 +633,11 @@
         {
           "const": "Supersede",
           "description": "The person replacing an item that has not been started with\nanother.",
+          "type": "string"
+        },
+        {
+          "const": "BringIn",
+          "description": "The person bringing an item that has not been started from the\nbacklog into the open phase.",
           "type": "string"
         },
         {
@@ -2700,6 +2722,57 @@
             "not_a_replacement"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An agent claims only the open phase's items; this one is in\nanother phase's backlog.",
+          "properties": {
+            "not_in_open_phase": {
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                },
+                "phase": {
+                  "$ref": "#/$defs/PhaseId"
+                }
+              },
+              "required": [
+                "item",
+                "phase"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "not_in_open_phase"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bringing an item into the phase is the person's to do.",
+          "properties": {
+            "bring_in_is_for_the_person": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "bring_in_is_for_the_person"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The item is already in the open phase.",
+          "properties": {
+            "already_in_open_phase": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "already_in_open_phase"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3095,6 +3168,35 @@
             "phase",
             "checks",
             "depends_on"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The person moved an unstarted item into a phase, or (with no\nphase) back to the backlog. An item's current phase is the last\nof its `ItemAdded` and its `ItemScoped` events; the phase it was\nadded in does not change.",
+          "properties": {
+            "event": {
+              "const": "item_scoped",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PhaseId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "phase"
           ],
           "type": "object"
         },
@@ -3828,6 +3930,9 @@
     "data.item_add": {
       "$ref": "#/$defs/ItemRef"
     },
+    "data.item_bring-in": {
+      "$ref": "#/$defs/BroughtIn"
+    },
     "data.item_supersede": {
       "$ref": "#/$defs/Superseded"
     },
@@ -3982,6 +4087,9 @@
             },
             {
               "$ref": "#/$defs/data.item_supersede"
+            },
+            {
+              "$ref": "#/$defs/data.item_bring-in"
             },
             {
               "$ref": "#/$defs/data.ready"

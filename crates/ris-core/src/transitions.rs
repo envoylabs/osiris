@@ -37,6 +37,9 @@ pub enum CommandKind {
     /// The person replacing an item that has not been started with
     /// another.
     Supersede,
+    /// The person bringing an item that has not been started from the
+    /// backlog into the open phase.
+    BringIn,
     /// The person pausing seats, or resuming them.
     Pause,
     Resume,
@@ -72,6 +75,7 @@ impl CommandKind {
         Self::Audit,
         Self::Explain,
         Self::Supersede,
+        Self::BringIn,
         Self::Pause,
         Self::Resume,
         Self::RaiseAction,
@@ -167,6 +171,10 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         // is released first, and one done or merged stands.
         (S::Ready, C::Supersede, Move::To(S::Superseded)),
         (S::Blocked, C::Supersede, Move::To(S::Superseded)),
+        // Likewise an item nobody has started may be brought into the
+        // open phase; its state does not change, only its phase.
+        (S::Ready, C::BringIn, Move::Stay),
+        (S::Blocked, C::BringIn, Move::Stay),
         // A person action that blocks an item sets it aside, claimed or
         // not, as a substantive decision does; one more blocker on a
         // blocked item leaves it blocked. Done, it returns the item to

@@ -169,10 +169,12 @@ fn a_phase_runs_through_a_queued_decision_and_closes_with_its_tally() {
     git(&dir, &["switch", "-q", "phase/P-2"]);
     ok(&dir, "person", &["item", "add", "fourth", "--check", "ok"]);
     ok(&dir, "person", &["decide", "D-1", "--choose", "0"]);
+    ok(&dir, "person", &["item", "bring-in", "I-2"]);
     ok(&dir, "heron", &["claim", "I-2"]);
     ok(&dir, "heron", &["done", "I-2"]);
     commit(&dir, "b.txt", "I-2");
     ok(&dir, "person", &["merge", "I-2"]);
-    // Planned: I-4. Merged: I-2, carried in. Open: I-3 and I-4.
+    // Planned: I-4; I-2 was brought in, not planned here, and counts
+    // where it was added. Merged: I-2. Open: I-3 and I-4.
     assert_eq!(tally(&data(&dir, &["report"])), (1, 1, 2));
 }

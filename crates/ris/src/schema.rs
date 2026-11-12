@@ -400,6 +400,14 @@ pub struct Superseded {
     pub superseded_by: ItemId,
 }
 
+/// `ris item bring-in`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct BroughtIn {
+    pub item: ItemId,
+    /// The open phase it is now in.
+    pub phase: PhaseId,
+}
+
 /// `ris done`.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Done {
@@ -776,6 +784,7 @@ pub fn commands(g: &mut SchemaGenerator) -> Vec<(&'static str, Schema)> {
         ("phase close", g.subschema_for::<PhaseClosed>()),
         ("item add", g.subschema_for::<ItemRef>()),
         ("item supersede", g.subschema_for::<Superseded>()),
+        ("item bring-in", g.subschema_for::<BroughtIn>()),
         ("ready", g.subschema_for::<Ready>()),
         ("claim", g.subschema_for::<Brief>()),
         ("release", g.subschema_for::<ItemRef>()),

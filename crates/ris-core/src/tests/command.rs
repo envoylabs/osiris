@@ -165,6 +165,12 @@ fn item_command(kind: CommandKind) -> Option<Command> {
             by: agent("wren"),
         },
         CommandKind::Supersede => supersede(item, ItemId(2), Actor::Person),
+        // Run by the table test after a new phase opens, so I-1 is
+        // in the backlog.
+        CommandKind::BringIn => Command::BringIn {
+            item,
+            actor: Actor::Person,
+        },
         CommandKind::RaiseAction => Command::RaiseAction {
             by: Actor::Person,
             what: t("add the builder seat"),
@@ -199,6 +205,10 @@ fn apply_follows_the_item_table() {
                 continue;
             };
             let mut h = item_in(state_kind);
+            if command_kind == CommandKind::BringIn {
+                h.must(Command::PhaseClose);
+                h.must(Command::PhaseOpen { goal: t("next") });
+            }
             let expected = transitions::lookup(transitions::ITEM, state_kind, command_kind);
             let result = h.run(command);
             match expected {
@@ -220,6 +230,99 @@ fn apply_follows_the_item_table() {
             }
         }
     }
+}
+
+/// I-1 added in P-1, then P-1 closed and P-2 opened: I-1 is in the
+/// backlog, and I-2 is P-2's own.
+fn backlog_item() -> Harness {
+    let mut h = with_phase_and_item();
+    h.must(Command::PhaseClose);
+    h.must(Command::PhaseOpen { goal: t("next") });
+    h.must(Command::ItemAdd {
+        goal: t("the phase's own"),
+        checks: vec![],
+        depends_on: vec![],
+    });
+    h
+}
+
+#[test]
+fn an_agent_claims_only_the_open_phases_items() {
+    let mut h = backlog_item();
+    let claim = |item| Command::Claim {
+        item,
+        agent: agent("heron"),
+    };
+    assert_eq!(
+        h.run(claim(ItemId(1))),
+        Err(Refusal::NotInOpenPhase {
+            item: ItemId(1),
+            phase: PhaseId(1),
+        })
+    );
+    h.must(claim(ItemId(2)));
+    // With no phase open, nothing is claimed.
+    let mut h = backlog_item();
+    h.must(Command::PhaseClose);
+    assert_eq!(h.run(claim(ItemId(2))), Err(Refusal::NoOpenPhase));
+}
+
+#[test]
+fn the_person_brings_a_backlog_item_into_the_open_phase() {
+    let mut h = backlog_item();
+    let bring = |actor| Command::BringIn {
+        item: ItemId(1),
+        actor,
+    };
+    assert_eq!(
+        h.run(bring(Actor::Agent(agent("heron")))),
+        Err(Refusal::BringInIsForThePerson(ItemId(1)))
+    );
+    h.must(bring(Actor::Person));
+    assert!(matches!(
+        h.log.last().unwrap().structure,
+        Structure::ItemScoped {
+            item: ItemId(1),
+            phase: Some(PhaseId(2)),
+        }
+    ));
+    let i = &h.state.items[&ItemId(1)];
+    assert_eq!((i.phase, i.added_in), (PhaseId(2), PhaseId(1)));
+    assert_eq!(i.state, ItemState::Ready);
+    // Once in, it is not brought in twice, and is claimed like the
+    // phase's own.
+    assert_eq!(
+        h.run(bring(Actor::Person)),
+        Err(Refusal::AlreadyInOpenPhase(ItemId(1)))
+    );
+    h.must(Command::Claim {
+        item: ItemId(1),
+        agent: agent("heron"),
+    });
+    // Started work is not moved.
+    h.must(Command::PhaseClose);
+    h.must(Command::PhaseOpen { goal: t("third") });
+    assert!(matches!(
+        h.run(bring(Actor::Person)),
+        Err(Refusal::IllegalItemTransition {
+            state: "claimed",
+            ..
+        })
+    ));
+    // With no phase open there is nothing to bring it into.
+    let mut h = backlog_item();
+    h.must(Command::PhaseClose);
+    assert_eq!(h.run(bring(Actor::Person)), Err(Refusal::NoOpenPhase));
+}
+
+#[test]
+fn a_brought_in_item_folds_the_same_from_the_log() {
+    let mut h = backlog_item();
+    h.must(Command::BringIn {
+        item: ItemId(1),
+        actor: Actor::Person,
+    });
+    assert_eq!(State::fold(&h.log).unwrap(), h.state);
 }
 
 #[test]

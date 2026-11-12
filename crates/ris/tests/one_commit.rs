@@ -160,6 +160,7 @@ fn a_carried_over_items_merge_counts_for_the_next_item() {
     ok(&dir, None, &["phase", "open", "the next phase"]);
     git(&dir, &["switch", "-q", "phase/P-2"]);
     ok(&dir, None, &["item", "add", "third", "--check", "ok"]);
+    ok(&dir, None, &["item", "bring-in", "I-2"]);
 
     ok(&dir, heron, &["claim", "I-2"]);
     ok(&dir, heron, &["done", "I-2"]);

@@ -7,7 +7,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{ActionId, AgentName, DecisionId, ItemId};
+use crate::ids::{ActionId, AgentName, DecisionId, ItemId, PhaseId};
 use crate::text::Category;
 use crate::transitions::CommandKind;
 
@@ -108,6 +108,13 @@ pub enum Refusal {
     /// An item is replaced by another item that is not itself replaced
     /// and does not depend, directly or through other items, on it.
     NotAReplacement { item: ItemId, by: ItemId },
+    /// An agent claims only the open phase's items; this one is in
+    /// another phase's backlog.
+    NotInOpenPhase { item: ItemId, phase: PhaseId },
+    /// Bringing an item into the phase is the person's to do.
+    BringInIsForThePerson(ItemId),
+    /// The item is already in the open phase.
+    AlreadyInOpenPhase(ItemId),
 }
 
 impl Refusal {
@@ -203,6 +210,14 @@ impl Refusal {
                  add one with `ris item add`"
                     .into()
             }
+            Self::NotInOpenPhase { item, .. } => format!(
+                "take another item from `ris ready`; the person brings {item} into the phase \
+                 with `ris item bring-in {item}`"
+            ),
+            Self::BringInIsForThePerson(_) => {
+                "raise it with the person, who runs `ris item bring-in`".into()
+            }
+            Self::AlreadyInOpenPhase(_) => "nothing to do; `ris ready` offers it".into(),
         }
     }
 }
@@ -319,6 +334,15 @@ impl fmt::Display for Refusal {
             }
             Self::NotAReplacement { item, by } => {
                 write!(f, "refused: {by} cannot replace {item}")
+            }
+            Self::NotInOpenPhase { item, phase } => {
+                write!(f, "refused: {item} is in {phase}, not the open phase")
+            }
+            Self::BringInIsForThePerson(item) => {
+                write!(f, "refused: only the person brings {item} into the phase")
+            }
+            Self::AlreadyInOpenPhase(item) => {
+                write!(f, "refused: {item} is already in the open phase")
             }
         }
     }

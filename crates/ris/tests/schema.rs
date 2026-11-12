@@ -433,6 +433,12 @@ fn every_command_s_real_output_fits_the_committed_schema() {
     r.ok(None, &["log"]);
     r.ok(None, &["watch", "--from", "1", "--once"]);
 
+    // A next phase, and an item from the backlog brought into it.
+    r.ok(None, &["phase", "open", "the next"]);
+    let ready = r.ok(None, &["ready"]);
+    let backlog = ready["ready"][0]["id"].as_str().expect("a backlog item");
+    r.ok(None, &["item", "bring-in", backlog]);
+
     // Nothing was left out: every command the schema has data for was
     // run and validated here.
     let schema: Value = serde_json::from_str(

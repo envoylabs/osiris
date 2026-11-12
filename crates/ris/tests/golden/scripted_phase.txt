@@ -57,6 +57,13 @@ ris inbox                       # messages to you; read between items
   evidence under `.osiris/evidence/`, named in the message. Fix and run
   again.
 - If you cannot finish an item, `ris release I-7` returns it to ready.
+- You work only the open phase's items. `ris ready` shows you nothing
+  else, and `ris claim` refuses an item in the backlog; the person
+  brings one into the phase with `ris item bring-in I-7`.
+- A question that stops you goes into `ris`, never only into your
+  output: raise it as a decision about the item (see Decisions), set
+  the item aside, and take another. Nobody reads a question left in a
+  session's output.
 
 ## Working beside other builders
 

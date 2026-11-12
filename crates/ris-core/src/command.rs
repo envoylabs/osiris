@@ -168,6 +168,12 @@ pub enum Command {
         by: ItemId,
         actor: Actor,
     },
+    /// Bring an unstarted item from the backlog into the open phase.
+    /// The person's only.
+    BringIn {
+        item: ItemId,
+        actor: Actor,
+    },
 }
 
 impl Command {
@@ -195,6 +201,7 @@ impl Command {
             Self::Release { .. } => CommandKind::Release,
             Self::Audit { .. } => CommandKind::Audit,
             Self::Supersede { .. } => CommandKind::Supersede,
+            Self::BringIn { .. } => CommandKind::BringIn,
             Self::RunStart { .. } => CommandKind::RunStart,
             Self::RunStop { .. } => CommandKind::RunStop,
             Self::SetupFault { .. } => CommandKind::SetupFault,
@@ -400,6 +407,15 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             }
             item_move(state, *item, kind)?;
             let i = &state.items[item];
+            // An agent works the open phase's items only; the person
+            // brings a backlog item in first.
+            let open = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
+            if open != i.phase {
+                return Err(Refusal::NotInOpenPhase {
+                    item: *item,
+                    phase: i.phase,
+                });
+            }
             let waiting_on = state.unlanded_dependencies(i);
             if !waiting_on.is_empty() {
                 return Err(Refusal::DependenciesOpen {
@@ -819,6 +835,21 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             Ok(vec![Effect::new(Structure::ItemSuperseded {
                 item: *item,
                 by: *by,
+            })])
+        }
+
+        Command::BringIn { item, actor } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::BringInIsForThePerson(*item));
+            }
+            let open = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
+            item_move(state, *item, kind)?;
+            if state.items[item].phase == open {
+                return Err(Refusal::AlreadyInOpenPhase(*item));
+            }
+            Ok(vec![Effect::new(Structure::ItemScoped {
+                item: *item,
+                phase: Some(open),
             })])
         }
 

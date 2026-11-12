@@ -271,6 +271,11 @@ enum ItemCmd {
         #[arg(long)]
         by: ItemId,
     },
+    /// Bring an item nobody has started from the backlog into the open
+    /// phase, so a seat may claim it (the person's only).
+    BringIn {
+        item: ItemId,
+    },
 }
 
 #[derive(Subcommand)]
@@ -926,9 +931,20 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     },
                 ))
             }
+            ItemCmd::BringIn { item } => {
+                let (l, _) = p.run(&Command::BringIn {
+                    item: *item,
+                    actor: actor.clone(),
+                })?;
+                let phase = l.state.items[item].phase;
+                Ok(Output::of(
+                    format!("{item} brought into {phase}"),
+                    &schema::BroughtIn { item: *item, phase },
+                ))
+            }
         },
 
-        Cmd::Ready => Ok(render::ready(&p.load()?)),
+        Cmd::Ready => Ok(render::ready(&p.load()?, &actor)),
 
         Cmd::Claim { item } => {
             let agent = agent_only(&actor)?;

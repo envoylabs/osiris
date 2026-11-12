@@ -184,6 +184,7 @@ fn a_carried_over_items_brief_names_the_open_phase() {
     ok(&dir, None, &["item", "add", "left for later"]);
     ok(&dir, None, &["phase", "close"]);
     ok(&dir, None, &["phase", "open", "the next goal"]);
+    ok(&dir, None, &["item", "bring-in", "I-1"]);
     let brief = ok(&dir, Some("heron"), &["claim", "I-1"]);
     assert!(brief.contains("project: P-2 the next goal"), "{brief}");
 }

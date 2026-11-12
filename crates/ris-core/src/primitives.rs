@@ -43,7 +43,12 @@ pub enum PhaseState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub id: ItemId,
+    /// The phase it is in now: the one it was added in, or the last one
+    /// the person brought it into.
     pub phase: PhaseId,
+    /// The phase it was added in, which never changes. A phase's tally
+    /// counts its planned and carried-over items by this.
+    pub added_in: PhaseId,
     /// The event that added it; its text part holds `goal`.
     pub at: u64,
     /// The checks that must pass for the item to be done, by name.

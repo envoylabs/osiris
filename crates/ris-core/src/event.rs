@@ -90,6 +90,14 @@ pub enum Structure {
         checks: Vec<CheckId>,
         depends_on: Vec<ItemId>,
     },
+    /// The person moved an unstarted item into a phase, or (with no
+    /// phase) back to the backlog. An item's current phase is the last
+    /// of its `ItemAdded` and its `ItemScoped` events; the phase it was
+    /// added in does not change.
+    ItemScoped {
+        item: ItemId,
+        phase: Option<PhaseId>,
+    },
     ItemClaimed {
         item: ItemId,
         agent: AgentName,

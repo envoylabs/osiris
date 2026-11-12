@@ -507,12 +507,16 @@ fn message_json(l: &Loaded, m: &Message) -> schema::Message {
     }
 }
 
-/// `ris ready`: what an agent may claim now, the open phase's own items
-/// first, then items carried over from earlier phases, each group in id
-/// order. A seat takes the first, so the phase's work comes before the
-/// backlog.
-pub fn ready(l: &Loaded) -> Output {
-    let (text, data) = ready_in(l, Scope::All);
+/// `ris ready`: what may be claimed now, in id order. A seat sees only
+/// the open phase's items, since it may claim no other. The person sees
+/// those first and then the backlog, the items carried over from
+/// earlier phases, which they bring in with `ris item bring-in`.
+pub fn ready(l: &Loaded, actor: &Actor) -> Output {
+    let scope = match actor {
+        Actor::Person => Scope::All,
+        Actor::Agent(_) => Scope::of(l, false),
+    };
+    let (text, data) = ready_in(l, scope);
     Output::of(text, &data)
 }
 
@@ -887,10 +891,13 @@ pub fn tally(l: &Loaded, phase: PhaseId) -> Tally {
         .filter(|e| e.seq > opened && e.seq < closed)
         .filter(|e| matches!(e.structure, Structure::ItemMerged { .. }))
         .count();
-    let items = l.state.items.values().filter(|i| i.phase <= phase);
+    // By the phase each item was added in, which never changes, so a
+    // closed phase's tally stays what it was when an item it left is
+    // later brought into another phase.
+    let items = l.state.items.values().filter(|i| i.added_in <= phase);
     let (mut planned, mut carried_over) = (0, 0);
     for i in items {
-        planned += usize::from(i.phase == phase);
+        planned += usize::from(i.added_in == phase);
         carried_over += usize::from(!matches!(
             i.state,
             ItemState::Merged { .. } | ItemState::Superseded { .. }
@@ -1185,7 +1192,7 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool, checks: Vec<String>) -> Out
     let carried = if carried_items + carried_decisions > 0 {
         format!(
             "{carried_items} item(s) and {carried_decisions} open decision(s) from earlier phases are not shown\n  \
-             next: `ris summary --all` shows them\n"
+             next: `ris summary --all` shows them; the person brings one in with `ris item bring-in <item>`\n"
         )
     } else {
         String::new()

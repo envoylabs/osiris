@@ -92,6 +92,11 @@ pub enum FoldError {
         seq: u64,
         action: crate::ids::ActionId,
     },
+    /// An event this version of ris records in the format but does not
+    /// yet fold: an `ItemScoped` with no phase.
+    Unsupported {
+        seq: u64,
+    },
 }
 
 impl std::fmt::Display for FoldError {
@@ -104,6 +109,9 @@ impl std::fmt::Display for FoldError {
             Self::UnknownPhase { seq, phase } => write!(f, "event {seq} refers to unknown {phase}"),
             Self::UnknownAction { seq, action } => {
                 write!(f, "event {seq} refers to unknown {action}")
+            }
+            Self::Unsupported { seq } => {
+                write!(f, "event {seq} is not supported by this version of ris")
             }
         }
     }
@@ -322,6 +330,7 @@ impl State {
                     Item {
                         id: *item,
                         phase: *phase,
+                        added_in: *phase,
                         at: seq,
                         checks: checks.clone(),
                         depends_on: depends_on.clone(),
@@ -334,6 +343,19 @@ impl State {
                 for d in depends_on {
                     self.index.dependents.entry(*d).or_default().push(*item);
                 }
+            }
+            Structure::ItemScoped { item, phase } => {
+                let Some(phase) = phase else {
+                    // D-56 gives the event a null phase for an item
+                    // deferred to the backlog. The command that writes
+                    // it, and how state shows an item with no phase,
+                    // come with deferral; until then no ris writes one.
+                    return Err(FoldError::Unsupported { seq });
+                };
+                if !self.phases.contains_key(phase) {
+                    return Err(FoldError::UnknownPhase { seq, phase: *phase });
+                }
+                self.item_mut(seq, *item)?.phase = *phase;
             }
             Structure::ItemClaimed { item, agent } => {
                 let i = self.item_mut(seq, *item)?;
