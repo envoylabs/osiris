@@ -662,6 +662,20 @@ fn report_in(l: &Loaded, scope: Scope) -> Output {
     for i in &items {
         s.push_str(&format!("  {}\n", item_line(l, i)));
     }
+    let open = matches!(phase.state, PhaseState::Open);
+    let t = tally(l, phase.id);
+    s.push_str(&format!(
+        "{}: {} planned, {} merged, {} {}\n",
+        phase.id,
+        t.planned,
+        t.merged,
+        t.carried_over,
+        if open {
+            "carry over if closed now"
+        } else {
+            "carried over"
+        }
+    ));
     let outside = l
         .state
         .decisions
@@ -751,6 +765,11 @@ fn report_in(l: &Loaded, scope: Scope) -> Output {
                 "state": match phase.state { PhaseState::Open => "open", PhaseState::Closed { .. } => "closed" },
             },
             "items": items.iter().map(|i| item_json(l, i)).collect::<Vec<_>>(),
+            "tally": {
+                "planned": t.planned,
+                "merged": t.merged,
+                "carried_over": t.carried_over,
+            },
             "substantive": substantive.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
             "mechanical": mechanical.iter().map(|d| decision_json(l, d)).collect::<Vec<_>>(),
             "messages": l.state.messages.len(),
@@ -764,6 +783,52 @@ fn report_in(l: &Loaded, scope: Scope) -> Output {
             "previous_report": previous_report(l, phase.id).to_string(),
         }),
     )
+}
+
+/// What a phase came to: the items planned in it, the merges made while
+/// it was open (an item carried in from an earlier phase counts where
+/// it merged), and the items left unsettled, neither merged nor
+/// superseded, which the next phase inherits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tally {
+    pub planned: usize,
+    pub merged: usize,
+    pub carried_over: usize,
+}
+
+/// The tally of `phase`, from the log: its merges are the `ItemMerged`
+/// events between its opening and its close (or the head, while open).
+pub fn tally(l: &Loaded, phase: PhaseId) -> Tally {
+    use ris_core::event::Structure;
+    let opened = l.state.phases.get(&phase).map_or(u64::MAX, |p| p.at);
+    let closed = l
+        .log
+        .iter()
+        .find_map(|e| match e.structure {
+            Structure::PhaseClosed { phase: p, .. } if p == phase => Some(e.seq),
+            _ => None,
+        })
+        .unwrap_or(u64::MAX);
+    let merged = l
+        .log
+        .iter()
+        .filter(|e| e.seq > opened && e.seq < closed)
+        .filter(|e| matches!(e.structure, Structure::ItemMerged { .. }))
+        .count();
+    let items = l.state.items.values().filter(|i| i.phase <= phase);
+    let (mut planned, mut carried_over) = (0, 0);
+    for i in items {
+        planned += usize::from(i.phase == phase);
+        carried_over += usize::from(!matches!(
+            i.state,
+            ItemState::Merged { .. } | ItemState::Superseded { .. }
+        ));
+    }
+    Tally {
+        planned,
+        merged,
+        carried_over,
+    }
 }
 
 /// The report hash of the phase closed before `phase`, or zero.
@@ -999,7 +1064,7 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
     Output::new(s.trim_end(), json)
 }
 
-/// `ris summary`: the check-in view. The decision queue first, since
+/// `ris summary`: the review view. The decision queue first, since
 /// it is what blocks agents; then the graph, the report and what is
 /// ready to claim. By default each section covers the open phase alone,
 /// and what it leaves out from earlier phases is counted; `all` shows

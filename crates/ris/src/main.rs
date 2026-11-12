@@ -168,7 +168,7 @@ enum Cmd {
     },
     /// One record in full: an item, decision, phase or message by id.
     Show { id: String },
-    /// The check-in view of the open phase: decisions, graph, report and what is ready.
+    /// The review view of the open phase: decisions, graph, report and what is ready.
     Summary {
         /// Every phase's work, not only the open phase's.
         #[arg(long)]
@@ -265,7 +265,7 @@ enum ActionCmd {
         #[arg(long = "informs")]
         informs: Vec<ItemId>,
         /// A shell command that passes once it is done; the person's
-        /// check-ins run it and close the action. The person's only.
+        /// inbox, summary and up run it and close the action. The person's only.
         #[arg(long)]
         check: Option<String>,
     },
@@ -938,7 +938,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     let text = match class {
                         DecisionClass::Mechanical => format!("{id} taken: option {}", d.recommend),
                         DecisionClass::Substantive => format!(
-                            "{id} queued for the person{}",
+                            "{id} queued for the person's review{}",
                             d.about
                                 .map(|i| format!("; {i} is set aside, take another"))
                                 .unwrap_or_default()

@@ -158,7 +158,7 @@ impl Refusal {
             }
             Self::MalformedDecision => "give at least two options and recommend one of them".into(),
             Self::SubstantiveIsForThePerson(_) => {
-                "leave it in the queue; the person takes it at the next check-in".into()
+                "leave it in the queue; the person takes it at review, with `ris decide`".into()
             }
             Self::MessageToSelf => "address the message to another agent".into(),
             Self::AuditOwnWork(_) => {

@@ -73,6 +73,11 @@ line of output per envelope, and ends once no seat is running; without
   phase alone, and `carried_over` counts the `items` and open
   `decisions` from earlier phases left out; `all` says whether
   `--all` was given, in which case nothing is left out.
+- `ris report` (and `phase` in `ris phase close`'s data): `tally`,
+  the phase's `planned` items, the `merged` count (merges made while it
+  was open, carried-in items included) and `carried_over` (items, from
+  any phase up to it, neither merged nor superseded; for an open phase,
+  what would carry over if it closed now).
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
 - `ris audit`: `queue`, the open phase's done and merged items the

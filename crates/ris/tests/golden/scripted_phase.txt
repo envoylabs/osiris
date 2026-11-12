@@ -14,8 +14,10 @@ $ ris rules
 # Working with osiris
 
 This project's work goes through `ris`, the osiris command, not through
-status documents. The person decides at check-ins; agents build and
-test in between, and never wait for the person.
+status documents. The work runs in four steps, all the person's: open
+a phase, `ris up`, review, close the phase. Between up and review the
+agents build and test, and never wait for the person: nothing raised
+while the phase runs stops it, and there is no check-in in between.
 
 ## Your seat
 
@@ -83,7 +85,9 @@ The test is the cost of reversing, not whether reversal is possible.
 - **Substantive** (expensive to reverse: removing, renaming or changing
   the meaning of something in a contract or a data or wire format, a
   dependency, the scope, a design direction others build on): queue it,
-  and take another item.
+  and take another item. Raising it sets the item aside; the phase goes
+  on, and the person takes every queued decision once, at review, with
+  `ris decide`.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```
@@ -261,7 +265,7 @@ D-1 taken: option 0
 [exit 0]
 
 $ RIS_AGENT=heron ris decision raise --substantive --about I-3 --question daemon now or CLI-direct? --option daemon --option cli-direct --recommend 1
-D-2 queued for the person; I-3 is set aside, take another
+D-2 queued for the person's review; I-3 is set aside, take another
 [exit 0]
 
 $ ris inbox
@@ -280,7 +284,7 @@ ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<has
 
 $ RIS_AGENT=heron ris decide D-2 --choose 1 --rationale agents do not take these
 [stderr] refused: D-2 is substantive and is the person's to take
-  next: leave it in the queue; the person takes it at the next check-in
+  next: leave it in the queue; the person takes it at review, with `ris decide`
 [exit 2]
 
 $ ris decide D-2 --choose 1 --rationale fewer failure modes for agents
@@ -412,7 +416,12 @@ $ ris --json report
           "kind": "person"
         }
       }
-    ]
+    ],
+    "tally": {
+      "carried_over": 4,
+      "merged": 0,
+      "planned": 4
+    }
   },
   "format": 1,
   "ok": true
@@ -541,7 +550,12 @@ $ ris --json report
           "kind": "person"
         }
       }
-    ]
+    ],
+    "tally": {
+      "carried_over": 4,
+      "merged": 0,
+      "planned": 4
+    }
   },
   "format": 1,
   "ok": true
@@ -680,7 +694,12 @@ $ ris --json report
           "kind": "person"
         }
       }
-    ]
+    ],
+    "tally": {
+      "carried_over": 4,
+      "merged": 0,
+      "planned": 4
+    }
   },
   "format": 1,
   "ok": true
@@ -821,7 +840,7 @@ no messages
 [exit 0]
 
 $ RIS_AGENT=wren ris decision raise --substantive --about I-2 --question rocksdb or sqlite? --option rocksdb --option sqlite
-D-3 queued for the person; I-2 is set aside, take another
+D-3 queued for the person's review; I-2 is set aside, take another
 [exit 0]
 
 $ ris decide D-3 --other sqlite now, bench rocksdb later --rationale the plan's own answer
@@ -946,6 +965,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
+P-1: 4 planned, 2 merged, 2 carry over if closed now
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -988,6 +1008,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
+P-1: 4 planned, 2 merged, 2 carry over if closed now
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -1024,6 +1045,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
+P-1: 4 planned, 2 merged, 2 carried over
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -1198,7 +1220,12 @@ $ ris --json report
           "kind": "person"
         }
       }
-    ]
+    ],
+    "tally": {
+      "carried_over": 2,
+      "merged": 2,
+      "planned": 4
+    }
   },
   "format": 1,
   "ok": true

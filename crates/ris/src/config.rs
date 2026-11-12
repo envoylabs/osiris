@@ -66,7 +66,7 @@ pub struct Config {
     /// How long a person action's check may run, in seconds, before it
     /// is stopped and counted as not passing yet. The checks run from
     /// the person's inbox, summary and up, so a check that hangs must
-    /// not hang the check-in.
+    /// not hang the person's command.
     #[serde(default = "default_action_check_seconds")]
     pub action_check_seconds: u64,
     /// The person's ris, rebuilt from the last merged commit and

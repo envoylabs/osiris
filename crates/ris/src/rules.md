@@ -1,8 +1,10 @@
 # Working with osiris
 
 This project's work goes through `ris`, the osiris command, not through
-status documents. The person decides at check-ins; agents build and
-test in between, and never wait for the person.
+status documents. The work runs in four steps, all the person's: open
+a phase, `ris up`, review, close the phase. Between up and review the
+agents build and test, and never wait for the person: nothing raised
+while the phase runs stops it, and there is no check-in in between.
 
 ## Your seat
 
@@ -70,7 +72,9 @@ The test is the cost of reversing, not whether reversal is possible.
 - **Substantive** (expensive to reverse: removing, renaming or changing
   the meaning of something in a contract or a data or wire format, a
   dependency, the scope, a design direction others build on): queue it,
-  and take another item.
+  and take another item. Raising it sets the item aside; the phase goes
+  on, and the person takes every queued decision once, at review, with
+  `ris decide`.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```

@@ -110,7 +110,22 @@ command = "cargo test --workspace"
 command = "cargo clippy --workspace --all-targets -- -D warnings"
 ```
 
-## 3. Open a phase and load the work
+## The four steps
+
+Once the harness is declared, the work runs in four steps, each yours:
+
+1. **Open a phase**: `ris phase open`, and load its items.
+2. **Bring it up**: `ris up`; the seats work until nothing is left.
+3. **Review**: `ris summary`, then `ris decide` for every decision
+   queued while the phase ran.
+4. **Close the phase**: `ris phase close`.
+
+There is no check-in in between. A seat that needs a judgement only you
+can make queues it as a substantive decision: its item is set aside and
+the seat takes another, so nothing raised while the phase runs stops
+it. Every queued decision is put to you once, at review.
+
+## 3. Step one: open a phase and load the work
 
 ```sh
 ris phase open "the goal"              # creates phase/P-1, and a docs item for it
@@ -125,7 +140,7 @@ close` waits for it (turn it off with `docs_item = false`). The
 osiris-onboard skill (`skills/osiris-onboard`) drafts the import file
 from an existing project's backlog.
 
-## 4. Bring it up
+## 4. Step two: bring it up
 
 ```sh
 ris up                                 # make it so; safe to run again
@@ -184,15 +199,21 @@ says, so you never run a seat's work in progress. A build that fails is
 reported once and leaves the last good program in place; `ris install`
 tries it again.
 
-## 5. Check in
+## 5. Step three: review
 
 ```sh
 ris summary                            # decisions, your actions, what waits on what, the report
-ris decide                             # each open decision's case, then pick with one key
+ris decide                             # each queued decision's case, then pick with one key
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
 ```
+
+Review comes once the seats have run out of work, or whenever you
+choose to look; the seats never wait for it. `ris decide` walks every
+queued decision in turn. Taking one returns the items it alone set
+aside to ready: a seat still running takes them, and `ris up` starts
+the seats that have stopped.
 
 The summary covers the open phase: its decisions, its items and what
 of it is ready. Work carried over from earlier phases is counted at the
@@ -205,10 +226,10 @@ unmerged items, with hard edges (the item waits) solid and soft ones
 only you raise them (`ris action raise "..." --done-when "..." --blocks
 I-7`), linked to the items they hold up. An agent that is blocked raises
 an item or a decision instead, and never an action. An action that
-names a check closes itself at your next check-in once the check
-passes. A check that runs past `action_check_seconds` does not pass and
-is stopped with everything it started; if stopping it fails, the
-check-in says so and why, since what it started may still be running.
+names a check closes itself the next time you run `ris inbox`, `ris
+summary` or `ris up` once the check passes. A check that runs past
+`action_check_seconds` does not pass and is stopped with everything it
+started; if stopping it fails, the command says so and why, since what it started may still be running.
 
 Only substantive decisions wait for you: those expensive to reverse,
 such as removing, renaming or changing the meaning of something in a
@@ -221,12 +242,19 @@ The auditor's queue is `ris audit`: the open phase's done and merged
 items it did not write and has not reviewed. Earlier phases' unreviewed
 items are not its work; `ris audit --all` shows them.
 
-## 6. Bring it down and close
+## 6. Step four: close the phase
 
 ```sh
 ris down                               # each seat finishes its item, then stops
-ris phase close                        # review; merges phase/P-1 into main
+ris phase close                        # merges phase/P-1 into main
 ```
+
+`ris phase close` merges what is merged into the main line and carries
+the rest over: an item not merged stays open and is offered in the next
+phase. The report it prints says how many items the phase planned, how
+many were merged while it was open, and how many carry over; `ris
+report` shows the same line for the open phase, as it would read if
+closed now.
 
 `ris down` kills nothing: each agent stops at its next claim, and
 worktrees and the log are kept. `ris up` after the next `ris phase
