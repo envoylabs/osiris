@@ -79,7 +79,7 @@ pub struct Config {
 }
 
 /// `ris map`: the phase's change set drawn over the source code.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct MapConfig {
     /// Path patterns for the files that are contracts and formats (a
@@ -90,6 +90,26 @@ pub struct MapConfig {
     /// when it is not source code.
     #[serde(default)]
     pub contracts: Vec<String>,
+    /// Path patterns for the files that are tests, in the same form. A
+    /// test file is left off the map and counted in its totals instead:
+    /// the behaviour lands in the source, and the tests only verify it.
+    /// A file a contracts pattern names stays on the map.
+    #[serde(default = "default_map_tests")]
+    pub tests: Vec<String>,
+}
+
+impl Default for MapConfig {
+    fn default() -> Self {
+        MapConfig {
+            contracts: Vec::new(),
+            tests: default_map_tests(),
+        }
+    }
+}
+
+/// The default `[map] tests`: every file under a `tests` directory.
+pub fn default_map_tests() -> Vec<String> {
+    vec!["**/tests/**".to_owned()]
 }
 
 /// The default `worktrees`: beside the repository, as `<repo>-<seat>`.
@@ -407,9 +427,12 @@ preflight = true
 # What `ris map` marks as contracts and formats, beside the files it
 # finds touching the outside for itself: path patterns relative to the
 # repository root, where * matches within a path segment and ** any
-# number of segments. Uncomment and list your own.
+# number of segments. Uncomment and list your own. `tests` names the
+# test files, which the map leaves out and counts instead; by default,
+# every file under a tests directory.
 # [map]
 # contracts = [\"docs/api.md\", \"src/wire/**\", \"**/*.proto\"]
+# tests = [\"**/tests/**\"]
 
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment,

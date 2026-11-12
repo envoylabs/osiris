@@ -261,11 +261,16 @@ format:
 ```toml
 [map]
 contracts = ["docs/json.md", "crates/*/src/event.rs", "**/*.proto"]
+tests = ["**/tests/**", "**/*_test.go"]
 ```
 
-A node is larger the more the phase changed it, and larger again for
-touching the outside, so the eye lands first on large changes at the
-edges of the system. `ris map --html map.html` writes one page that
+Test files are left off the map, since the behaviour lands in the
+source and the tests only verify it; one line counts the test files
+the phase changed and the lines added and removed in them. `tests`
+names them, and by default it is every file under a `tests` directory.
+A node is larger the more the phase changed it, so the eye lands first
+on the large changes, and the ring picks out those at the edges of the
+system. `ris map --html map.html` writes one page that
 needs no network (d3 is inlined): hover a file for its path and
 numbers, drag it, scroll to zoom. `ris map` alone lists the changed
 files, and `ris map --json` prints the graph document the page draws

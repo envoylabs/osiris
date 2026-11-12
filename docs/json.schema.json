@@ -1697,6 +1697,38 @@
       ],
       "type": "object"
     },
+    "MapTests": {
+      "description": "The test files `[map] tests` names, which are not nodes: how many\nthere are, how many the phase changed, and the lines it added and\nremoved in them.",
+      "properties": {
+        "added": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "changed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "files": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "files",
+        "changed",
+        "added",
+        "removed"
+      ],
+      "type": "object"
+    },
     "MapTotals": {
       "properties": {
         "added": {
@@ -1723,6 +1755,10 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "tests": {
+          "$ref": "#/$defs/MapTests",
+          "description": "The test files left off the map."
         }
       },
       "required": [
@@ -1730,7 +1766,8 @@
         "changed",
         "added",
         "removed",
-        "outside"
+        "outside",
+        "tests"
       ],
       "type": "object"
     },

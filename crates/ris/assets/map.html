@@ -85,6 +85,7 @@
   <h1 id="title">change set</h1>
   <p id="range"></p>
   <p id="totals"></p>
+  <p id="tests"></p>
 </header>
 <svg id="map" role="img" aria-label="The phase's change set drawn over the source files">
   <defs>
@@ -134,6 +135,11 @@
   document.getElementById("totals").textContent =
     t.changed + " of " + t.files + " files changed, +" + t.added + " -" + t.removed +
     ", " + t.outside + " touch the outside";
+  // Tests verify the behaviour and are not drawn; one line says what
+  // the phase did to them.
+  document.getElementById("tests").textContent =
+    t.tests.files + " test file(s) left off the map: " + t.tests.changed +
+    " changed (+" + t.tests.added + " -" + t.tests.removed + ")";
 
   var isOutside = function (n) { return n.contract || n.external.length > 0; };
   // A node's size shows its diff and nothing else: the lines added plus

@@ -669,6 +669,19 @@ pub struct MapTotals {
     pub added: u64,
     pub removed: u64,
     pub outside: usize,
+    /// The test files left off the map.
+    pub tests: MapTests,
+}
+
+/// The test files `[map] tests` names, which are not nodes: how many
+/// there are, how many the phase changed, and the lines it added and
+/// removed in them.
+#[derive(Clone, Debug, Default, Serialize, JsonSchema)]
+pub struct MapTests {
+    pub files: usize,
+    pub changed: usize,
+    pub added: u64,
+    pub removed: u64,
 }
 
 // ---- the error ----

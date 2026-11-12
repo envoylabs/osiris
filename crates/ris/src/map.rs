@@ -177,17 +177,22 @@ pub fn glob(pattern: &str, path: &str) -> bool {
 }
 
 /// The graph document from its parts. `tree` is the tip's files,
-/// `diff` each changed path's status and line counts, `contracts` the
+/// `diff` each changed path's status and line counts, `config` the
 /// configured patterns. Pure, so a test builds it without git.
+///
+/// A test file (a `tests` pattern names it, and no `contracts` one) is
+/// left out: no node and no edge, only a count in the totals.
 pub fn document(
     range: &Range,
     paths: &[String],
     tree: &Tree,
     diff: &BTreeMap<String, (&'static str, u64, u64)>,
-    contracts: &[String],
+    config: &crate::config::MapConfig,
 ) -> crate::schema::Map {
-    let is_contract = |path: &str| contracts.iter().any(|c| glob(c, path));
-    let is_node = |path: &str| language_of(path).is_some() || is_contract(path);
+    let is_contract = |path: &str| config.contracts.iter().any(|c| glob(c, path));
+    let is_test = |path: &str| !is_contract(path) && config.tests.iter().any(|t| glob(t, path));
+    let on_map = |path: &str| language_of(path).is_some() || is_contract(path);
+    let is_node = |path: &str| on_map(path) && !is_test(path);
     let mut scans: BTreeMap<String, Scan> = BTreeMap::new();
     for language in LANGUAGES {
         scans.extend(language.scan(tree));
@@ -195,6 +200,15 @@ pub fn document(
     // The tip's files, then what the phase deleted.
     let mut names: BTreeSet<&str> = paths.iter().map(String::as_str).collect();
     names.extend(diff.keys().map(String::as_str));
+    let mut tests = crate::schema::MapTests::default();
+    for path in names.iter().filter(|p| on_map(p) && is_test(p)) {
+        tests.files += 1;
+        if let Some((_, added, removed)) = diff.get(*path) {
+            tests.changed += 1;
+            tests.added += added;
+            tests.removed += removed;
+        }
+    }
     let nodes: Vec<Node> = names
         .into_iter()
         .filter(|p| is_node(p))
@@ -245,6 +259,7 @@ pub fn document(
                 .iter()
                 .filter(|n| n.contract || !n.external.is_empty())
                 .count(),
+            tests,
         },
         nodes,
         edges: edges.into_iter().collect(),
@@ -419,7 +434,6 @@ fn read_blobs(dir: &Path, commit: &str, paths: &[&str]) -> Result<Tree, CliError
 /// The graph document for `range`, read from git.
 pub fn build(p: &Project, range: &Range) -> Result<crate::schema::Map, CliError> {
     let dir = &p.work;
-    let contracts = &p.config.map.contracts;
     let listed =
         git(dir, &["ls-tree", "-r", "-z", "--name-only", &range.tip]).map_err(CliError::Other)?;
     let paths: Vec<String> = listed
@@ -478,7 +492,7 @@ pub fn build(p: &Project, range: &Range) -> Result<crate::schema::Map, CliError>
             }
         }
     }
-    Ok(document(range, &paths, &tree, &diff, contracts))
+    Ok(document(range, &paths, &tree, &diff, &p.config.map))
 }
 
 /// The page's template: the vendored d3 build goes in at `/*D3*/` and
@@ -496,6 +510,15 @@ pub fn page(doc: &serde_json::Value) -> String {
         .replacen("/*DATA*/", &data, 1)
 }
 
+/// The one line that says what the map left out as tests; the page
+/// writes the same words.
+pub fn tests_line(t: &crate::schema::MapTests) -> String {
+    format!(
+        "{} test file(s) left off the map: {} changed (+{} -{})",
+        t.files, t.changed, t.added, t.removed
+    )
+}
+
 /// `ris map`: the document, and in text its totals and the changed
 /// files, heaviest first. With `html`, also writes the page there.
 pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, CliError> {
@@ -510,6 +533,7 @@ pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, Cl
         t["removed"],
         t["outside"],
     );
+    text.push_str(&format!("{}\n", tests_line(&map.totals.tests)));
     if doc["base"].is_null() {
         text.push_str(
             "where the work left the main line is not known, so no file carries a diff\n",
@@ -1082,6 +1106,74 @@ mod tests {
         // The layout is settled before the first frame and then fitted.
         assert!(PAGE.contains("zoom.transform"), "fitted to the window");
         assert!(PAGE.contains("sim.tick()"), "settled before drawing");
+    }
+
+    #[test]
+    fn test_files_are_counted_and_left_off_unless_a_contract_names_them() {
+        let range = Range {
+            phase: None,
+            base: Some("base".to_owned()),
+            tip: "tip".to_owned(),
+            tip_ref: "HEAD".to_owned(),
+        };
+        let paths: Vec<String> = [
+            "src/lib.rs",
+            "src/lib_test.rs",
+            "crates/a/tests/it.rs",
+            "tests/fixtures/data.txt",
+            "tests/schema.proto",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let t = tree(&[
+            ("src/lib.rs", "mod lib_test;\n"),
+            ("src/lib_test.rs", ""),
+            ("crates/a/tests/it.rs", ""),
+            ("tests/schema.proto", ""),
+        ]);
+        let diff: BTreeMap<String, (&'static str, u64, u64)> = [
+            ("src/lib_test.rs".to_owned(), ("added", 4, 0)),
+            ("crates/a/tests/it.rs".to_owned(), ("modified", 2, 3)),
+            ("tests/fixtures/data.txt".to_owned(), ("modified", 9, 9)),
+        ]
+        .into_iter()
+        .collect();
+        let paths_of = |m: &crate::schema::Map| -> Vec<String> {
+            m.nodes.iter().map(|n| n.path.clone()).collect()
+        };
+
+        // The default: under a tests directory, at any depth. A file
+        // that is not source is not counted as a test either.
+        let config = crate::config::MapConfig::default();
+        let map = document(&range, &paths, &t, &diff, &config);
+        assert_eq!(paths_of(&map), ["src/lib.rs", "src/lib_test.rs"]);
+        let tests = &map.totals.tests;
+        assert_eq!((tests.files, tests.changed), (2, 1));
+        assert_eq!((tests.added, tests.removed), (2, 3));
+        assert_eq!(map.edges.len(), 1, "src/lib.rs to src/lib_test.rs");
+
+        // A pattern of the project's own, and a contract under tests
+        // stays on the map: the person named it.
+        let config = crate::config::MapConfig {
+            contracts: vec!["tests/*.proto".to_owned()],
+            tests: vec!["**/tests/**".to_owned(), "**/*_test.rs".to_owned()],
+        };
+        let map = document(&range, &paths, &t, &diff, &config);
+        assert_eq!(paths_of(&map), ["src/lib.rs", "tests/schema.proto"]);
+        assert!(map.edges.is_empty(), "no edge to a test file");
+        let tests = &map.totals.tests;
+        assert_eq!((tests.files, tests.changed), (2, 2));
+        assert_eq!((tests.added, tests.removed), (6, 3));
+        assert_eq!(
+            tests_line(tests),
+            "2 test file(s) left off the map: 2 changed (+6 -3)"
+        );
+    }
+
+    #[test]
+    fn the_page_writes_the_tests_line_from_the_document() {
+        assert!(PAGE.contains("id=\"tests\""));
+        assert!(PAGE.contains("t.tests.files + \" test file(s) left off the map: \""));
     }
 
     #[test]

@@ -85,6 +85,11 @@ fn setup(name: &str) -> PathBuf {
         "use std::fs;\n\nuse crate::wire::Frame;\n\npub fn save(_: Frame) {\n    let _ = fs::read(\"frames\");\n}\n",
     );
     write(&dir, "src/wire.rs", "pub struct Frame;\n// one\n");
+    write(
+        &dir,
+        "tests/wire.rs",
+        "use fixture::wire::Frame;\n\n#[test]\nfn frame() {\n    let _ = Frame;\n}\n",
+    );
     git(&dir, &["add", "-A"]);
     git(&dir, &["commit", "-q", "-m", "base"]);
     ok(&dir, "person", &["init", "--local"]);
@@ -107,7 +112,8 @@ fn setup(name: &str) -> PathBuf {
 
 /// The phase's work, committed on its branch: `wire.rs` modified,
 /// `net.rs` added and declared, `old.rs` deleted, the contract document
-/// extended, and the README (not on the map) changed.
+/// extended, the README (not on the map) changed, and two test files
+/// (left off the map) changed: one modified, one added.
 fn work(dir: &Path) {
     git(dir, &["switch", "-q", "phase/P-1"]);
     write(dir, "src/wire.rs", "pub struct Frame;\n// two\n// three\n");
@@ -128,6 +134,16 @@ fn work(dir: &Path) {
         "# The wire format\n\nOne frame.\nSent over TCP.\n",
     );
     write(dir, "README.md", "a fixture, changed\n");
+    write(
+        dir,
+        "tests/wire.rs",
+        "use fixture::wire::Frame;\n\n#[test]\nfn frame() {\n    let _ = Frame;\n    let _ = Frame;\n}\n",
+    );
+    write(
+        dir,
+        "tests/net.rs",
+        "use fixture::net::send;\n\n#[test]\nfn sends() {}\n",
+    );
     git(dir, &["add", "-A"]);
     git(dir, &["commit", "-q", "-m", "feat: send frames"]);
     git(dir, &["switch", "-q", "main"]);
@@ -181,7 +197,11 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(keys(&doc["edges"][0]), ["from", "kind", "to"]);
     assert_eq!(
         keys(&doc["totals"]),
-        ["added", "changed", "files", "outside", "removed"]
+        ["added", "changed", "files", "outside", "removed", "tests"]
+    );
+    assert_eq!(
+        keys(&doc["totals"]["tests"]),
+        ["added", "changed", "files", "removed"]
     );
 
     // The phase branch against where it left the main line, read from
@@ -194,6 +214,8 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
 
     // Nodes: the source files and the contract, by path. The README
     // and the manifest are neither; the deleted file is still shown.
+    // The test files are source but tests, and are not nodes though
+    // the phase changed them.
     let paths: Vec<&str> = doc["nodes"]
         .as_array()
         .unwrap()
@@ -227,7 +249,11 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(line("docs/wire.md"), ("modified".to_owned(), 1, 0));
     assert_eq!(
         doc["totals"],
-        json!({ "files": 6, "changed": 5, "added": 9, "removed": 3, "outside": 3 })
+        json!({
+            "files": 6, "changed": 5, "added": 9, "removed": 3, "outside": 3,
+            // tests/wire.rs +1, tests/net.rs added with 4 lines.
+            "tests": { "files": 2, "changed": 2, "added": 5, "removed": 0 }
+        })
     );
 
     // Outside: found from what a file imports, or named as a contract.
@@ -273,6 +299,10 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
             ("src/store.rs", "use", "src/wire.rs"),
         ]
     );
+    assert!(
+        !doc.to_string().contains("tests/"),
+        "no node or edge names a test file: {doc}"
+    );
 
     // In text: the totals, then the changed files with their numbers.
     let text = ok(&dir, "person", &["map"]);
@@ -280,6 +310,11 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
         text.starts_with("P-1: 5 of 6 source file(s) changed (+9 -3), 3 touch the outside"),
         "{text}"
     );
+    assert!(
+        text.contains("\n2 test file(s) left off the map: 2 changed (+5 -0)\n"),
+        "{text}"
+    );
+    assert!(!text.contains("tests/"), "{text}");
     assert!(text.contains("src/net.rs (added)  [network]"), "{text}");
     assert!(text.contains("docs/wire.md  [contract]"), "{text}");
     assert!(!text.contains("src/store.rs"), "unchanged: {text}");

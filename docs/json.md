@@ -198,7 +198,8 @@ or reshaped.
   "base": "<commit>",
   "tip": "<commit>",
   "tip_ref": "phase/P-3",
-  "totals": {"files": 64, "changed": 12, "added": 371, "removed": 48, "outside": 43},
+  "totals": {"files": 64, "changed": 12, "added": 371, "removed": 48, "outside": 43,
+             "tests": {"files": 30, "changed": 4, "added": 210, "removed": 6}},
   "nodes": [
     {"path": "src/store.rs", "language": "rust", "status": "modified",
      "added": 12, "removed": 3, "external": ["filesystem"],
@@ -224,6 +225,12 @@ or reshaped.
   node as well, with `language` null when it is not source code.
   Files that are neither are not on the map, whatever the phase did to
   them.
+- Test files are not on the map either: a file that would be a node
+  and matches a `[map] tests` pattern (by default `**/tests/**`, every
+  file under a `tests` directory) has no node and no edge, unless a
+  `contracts` pattern also names it. The tests verify the behaviour
+  that lands in the source; `totals.tests` says what the phase did to
+  them.
 - `status` is `added`, `modified`, `deleted` or `unchanged` in the
   phase, and `added` and `removed` count the lines the phase added and
   removed (`git diff --numstat` of `base` against `tip`, renames not
@@ -247,6 +254,9 @@ or reshaped.
   and `kind` values without changing the document's shape.
 - `totals` counts the nodes (`files`), those not `unchanged`
   (`changed`), their lines `added` and `removed`, and the nodes that
-  are external or a contract (`outside`).
+  are external or a contract (`outside`). `tests` counts the test files
+  left off the map in the same terms: all of them (`files`), those the
+  phase changed (`changed`), and the lines `added` and `removed` in
+  them. A page shows it as one line of text.
 
 `crates/ris/tests/map.rs` pins these keys.
