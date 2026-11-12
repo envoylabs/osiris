@@ -129,6 +129,13 @@ Commit messages are conventional: `type(scope): summary`, imperative,
 with the `Item:` and `Agent:` trailers. Types in use: `feat`, `fix`, `refactor`,
 `docs`, `test`, `chore`.
 
+## Tests
+
+Tests live in their own files, never inline in a source file. A unit
+test's module goes in a file under a `tests` directory beside the
+source it tests, declared from the source file by a `mod` line, so a
+source file holds only behaviour and its diff shows only behaviour.
+
 ## Checks
 
 The standing checks, declared in `.osiris/checks.toml` and run by

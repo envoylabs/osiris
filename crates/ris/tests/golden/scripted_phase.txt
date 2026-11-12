@@ -138,6 +138,14 @@ scan` runs the same scan over the tree before you commit. A test that
 needs a planted secret or path assembles it at runtime from pieces,
 with a comment saying why.
 
+## Tests
+
+Tests live in their own files, never inline in a source file. Where
+the language keeps unit tests beside the code, a test module goes in a
+file under a `tests` directory beside the source it tests, declared
+from the source file by one line, so a source file holds only behaviour
+and its diff shows only behaviour.
+
 ## Messages
 
 Typed and targeted; no broadcasts.
