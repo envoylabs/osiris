@@ -220,7 +220,8 @@ tries it again.
 
 ```sh
 ris summary                            # the phase in one picture: its items and what they wait on
-ris decide                             # each queued decision's case, then pick with one key
+ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
+ris map --html map.html                # the phase's change set drawn over the source files, as one page
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
@@ -228,7 +229,9 @@ ris action done A-2 --note "what happened"
 
 Review comes once the seats have run out of work, or whenever you
 choose to look; the seats never wait for it. `ris decide` walks every
-queued decision in turn. Taking one returns the items it alone set
+queued decision in turn. The options offered are never the only
+answers: on every screen `o` asks for your own answer as text and
+records it as `ris decide D-n --other "..."` does. Taking one returns the items it alone set
 aside to ready: a seat still running takes them, and `ris up` starts
 the seats that have stopped.
 
@@ -244,6 +247,35 @@ decisions, `ris report` for the report, the decisions taken, failed
 checks and hashes, and `ris summary --all` for the long view of every
 phase (the decision queue, all work in motion, the report and what is
 ready). With no phase open, the summary says so and how to open one.
+
+Where the summary draws the phase's items, `ris map` draws what the
+phase did to the code. Its nodes are the repository's source files,
+each with the lines the phase added and removed, read from git as the
+phase branch against the main line; unchanged files are there too,
+faint. Its edges are how the code connects (for Rust, `mod` and `use`
+lines, found by scanning). A file that touches the outside (a
+database, the filesystem, the network, starting a process), found from
+what it imports, is ringed, and so is one you list as a contract or
+format:
+
+```toml
+[map]
+contracts = ["docs/json.md", "crates/*/src/event.rs", "**/*.proto"]
+tests = ["**/tests/**", "**/*_test.go"]
+```
+
+Test files are left off the map, since the behaviour lands in the
+source and the tests only verify it; one line counts the test files
+the phase changed and the lines added and removed in them. `tests`
+names them, and by default it is every file under a `tests` directory.
+A node is larger the more the phase changed it, so the eye lands first
+on the large changes, and the ring picks out those at the edges of the
+system. `ris map --html map.html` writes one page that
+needs no network (d3 is inlined): hover a file for its path and
+numbers, drag it, scroll to zoom. `ris map` alone lists the changed
+files, and `ris map --json` prints the graph document the page draws
+(`docs/json.md`). After `ris phase close` the same commands show the
+phase just closed, and `ris map P-n` an earlier one.
 
 Person actions (A-n) are your own to-do list: only you raise them
 (`ris action raise "..." --done-when "..." --blocks I-7`), linked to
@@ -283,6 +315,16 @@ closed now.
 `ris down` kills nothing: each agent stops at its next claim, and
 worktrees and the log are kept. `ris up` after the next `ris phase
 open` brings everything back.
+
+`ris` makes commits of its own: the closing merge, the rebase inside a
+seat's `ris merge`, and the rebase `ris up` does over a change to the
+rules file. Each needs a git identity. Where git has none, the command
+is refused before anything is touched and names what to run (`git
+config user.name` and `git config user.email`), and the phase or the
+item stays as it was.
+
+After the close, `ris map` and `ris map --html map.html` show the
+phase just closed, and `ris report` its report.
 
 `ris show <id>` prints any item, decision, action, phase or message in
 full.

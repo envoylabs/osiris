@@ -35,7 +35,8 @@ jobs:
         run: cargo build --workspace
 
       - name: test
-        run: cargo test --workspace
+        # --no-fail-fast so one failing test file cannot hide others.
+        run: cargo test --workspace --no-fail-fast
 
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

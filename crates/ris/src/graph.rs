@@ -30,7 +30,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ris_core::ids::{ActionId, DecisionId, ItemId};
 use ris_core::primitives::{ActionState, Blocker, DecisionState, ItemState};
-use serde_json::{Value, json};
 
 use crate::project::Loaded;
 use crate::render::Scope;
@@ -287,28 +286,37 @@ impl Graph {
     }
 
     /// Nodes and edges for `--json`.
-    pub fn json(&self, l: &Loaded) -> Value {
-        let nodes: Vec<Value> = self
+    pub fn json(&self, l: &Loaded) -> crate::schema::Graph {
+        let nodes = self
             .shown()
             .iter()
-            .map(|n| {
-                let mut v = json!({ "id": n.to_string(), "state": state(l, *n) });
-                if let Node::Item(i) = n {
-                    v["phase"] = json!(l.state.items[i].phase.to_string());
-                }
-                v
+            .map(|n| crate::schema::GraphNode {
+                id: n.to_string(),
+                state: state(l, *n),
+                phase: match n {
+                    Node::Item(i) => Some(l.state.items[i].phase),
+                    _ => None,
+                },
             })
             .collect();
-        let edges: Vec<Value> = self
+        let edges = self
             .edges
             .iter()
             .flat_map(|(from, children)| {
-                children.iter().map(move |(to, kind)| {
-                    json!({ "from": from.to_string(), "to": to.to_string(), "kind": kind.word() })
-                })
+                children
+                    .iter()
+                    .map(move |(to, kind)| crate::schema::GraphEdge {
+                        from: from.to_string(),
+                        to: to.to_string(),
+                        kind: kind.word(),
+                    })
             })
             .collect();
-        json!({ "nodes": nodes, "edges": edges, "unlinked": self.nodes.len() - self.linked().len() })
+        crate::schema::Graph {
+            nodes,
+            edges,
+            unlinked: self.nodes.len() - self.linked().len(),
+        }
     }
 }
 

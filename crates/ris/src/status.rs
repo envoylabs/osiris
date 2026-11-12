@@ -14,7 +14,6 @@ use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
-use serde_json::json;
 
 use ris_core::ids::AgentName;
 use ris_core::primitives::ItemState;
@@ -63,7 +62,7 @@ pub struct Seat {
 }
 
 /// What a running seat last did, read from its run's output file.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub struct Activity {
     /// The tool it last ran or what it last said, on one line; `None`
     /// before it has said anything.
@@ -302,26 +301,24 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
         );
     }
     text.push_str("--\n+n -n: commits ahead of and behind the phase branch");
-    let rows: Vec<_> = seats
+    let rows = seats
         .iter()
-        .map(|s| {
-            json!({
-                "seat": s.seat,
-                "role": s.role,
-                "worktree": s.worktree.as_deref().map(|w| shown(p, w)),
-                "branch": s.branch,
-                "claim": s.claim,
-                "ahead": s.ahead,
-                "behind": s.behind,
-                "uncommitted": s.uncommitted,
-                "paused": s.paused,
-                "running": s.running,
-                "activity": s.activity,
-                "faults": s.faults,
-            })
+        .map(|s| crate::schema::SeatStatus {
+            seat: s.seat.clone(),
+            role: s.role,
+            worktree: s.worktree.as_deref().map(|w| shown(p, w)),
+            branch: s.branch.clone(),
+            claim: s.claim.clone(),
+            ahead: s.ahead,
+            behind: s.behind,
+            uncommitted: s.uncommitted,
+            paused: s.paused,
+            running: s.running,
+            activity: s.activity.clone(),
+            faults: s.faults.clone(),
         })
         .collect();
-    Output::new(text, json!({ "seats": rows }))
+    Output::of(text, &crate::schema::Status { seats: rows })
 }
 
 #[cfg(test)]

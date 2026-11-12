@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The commands of the first slice, by kind.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CommandKind {
     PhaseOpen,

@@ -73,6 +73,43 @@ pub struct Config {
     /// installed on their PATH (D-48). Off when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install: Option<crate::install::InstallConfig>,
+    /// What `ris map` marks beside what it finds for itself.
+    #[serde(default)]
+    pub map: MapConfig,
+}
+
+/// `ris map`: the phase's change set drawn over the source code.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MapConfig {
+    /// Path patterns for the files that are contracts and formats (a
+    /// wire format's types, a schema, the document describing an
+    /// interface), relative to the repository root. `*` matches within
+    /// a path segment and `**` any number of segments. A file matching
+    /// one is drawn as touching the outside, and is on the map even
+    /// when it is not source code.
+    #[serde(default)]
+    pub contracts: Vec<String>,
+    /// Path patterns for the files that are tests, in the same form. A
+    /// test file is left off the map and counted in its totals instead:
+    /// the behaviour lands in the source, and the tests only verify it.
+    /// A file a contracts pattern names stays on the map.
+    #[serde(default = "default_map_tests")]
+    pub tests: Vec<String>,
+}
+
+impl Default for MapConfig {
+    fn default() -> Self {
+        MapConfig {
+            contracts: Vec::new(),
+            tests: default_map_tests(),
+        }
+    }
+}
+
+/// The default `[map] tests`: every file under a `tests` directory.
+pub fn default_map_tests() -> Vec<String> {
+    vec!["**/tests/**".to_owned()]
 }
 
 /// The default `worktrees`: beside the repository, as `<repo>-<seat>`.
@@ -165,6 +202,7 @@ impl Default for Config {
             worktrees: default_worktrees(),
             action_check_seconds: default_action_check_seconds(),
             install: None,
+            map: MapConfig::default(),
         }
     }
 }
@@ -194,7 +232,7 @@ fn is_true(b: &bool) -> bool {
 }
 
 /// What a seat does.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Lead,
@@ -385,6 +423,16 @@ preflight = true
 # build = \"cargo build --release -p ris\"
 # artifact = \"target/release/ris\"
 # to = \"~/.local/bin/ris\"
+
+# What `ris map` marks as contracts and formats, beside the files it
+# finds touching the outside for itself: path patterns relative to the
+# repository root, where * matches within a path segment and ** any
+# number of segments. Uncomment and list your own. `tests` names the
+# test files, which the map leaves out and counts instead; by default,
+# every file under a tests directory.
+# [map]
+# contracts = [\"docs/api.md\", \"src/wire/**\", \"**/*.proto\"]
+# tests = [\"**/tests/**\"]
 
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment,

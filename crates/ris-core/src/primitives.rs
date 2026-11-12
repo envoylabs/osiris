@@ -93,6 +93,7 @@ pub enum ItemState {
 }
 
 /// What an item can be blocked on.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum Blocker {
@@ -162,6 +163,7 @@ pub struct Explanation {
 }
 
 /// The decision rule: the test is the cost of reversing.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionClass {
@@ -268,6 +270,7 @@ pub struct Message {
 }
 
 /// What a message is for. No broadcasts and no free chat.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageKind {

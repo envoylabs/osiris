@@ -22,3 +22,5 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 rustix = { version = "1", features = ["process"] }
+schemars = "1"
+jsonschema = { version = "0.61", default-features = false }

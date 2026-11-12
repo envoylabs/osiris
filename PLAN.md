@@ -514,7 +514,12 @@ Functional core, imperative shell; hexagonal between components.
   `verify [claim | all]` (re-run falsifiers against the current tree).
   The CLI is the contract. Agents read its output, so it is short and
   stable: plain text by default, `--json` on request, and a refusal
-  says what to do next.
+  says what to do next. The `--json` form has a JSON Schema, generated
+  from the types that produce the output and committed
+  (`docs/json.schema.json`), so a client validates against it and
+  generates its types from it; a command cannot print data that has
+  no type, and tests validate every command's real output against the
+  committed file.
 - **Tamper-evident log (cheap option):** each event carries the hash of
   the one before, so a final fact cannot be rewritten silently. Settled
   facts are then checkable against the log's head hash, as entries are
@@ -530,7 +535,14 @@ Functional core, imperative shell; hexagonal between components.
 - **Human interface:** the CLI's `inbox` and `report` first, or a local
   web page served by the CLI. A native app comes later, only if the
   terminal is the bottleneck: the person works across machines, and a
-  native app would tie the interface to one platform.
+  native app would tie the interface to one platform. Whatever draws,
+  the document is the contract and the picture only a renderer of it:
+  `ris map` gives the phase's change set as a graph document (the
+  source files, the lines the phase changed in each, how the code
+  connects, and which files touch the outside), and `ris map --html`
+  writes one self-contained page that embeds that document and draws
+  nothing else, so a later interface draws the same map from the same
+  JSON.
 - **Language:** Rust for the core, daemon and CLI.
 
 ## Runtime and environments

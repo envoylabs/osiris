@@ -4,6 +4,8 @@
 //! each seat's output read back. A fake agent program on PATH stands in
 //! for the agent tool.
 
+mod common;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -685,6 +687,8 @@ fn every_seat_is_watched_in_one_stream_and_a_quiet_one_is_marked() {
         assert!(text.lines().any(|l| l == p), "{p} in:\n{text}");
     }
     let json = String::from_utf8(json.wait_with_output().unwrap().stdout).unwrap();
+    // Each followed line is an envelope of the committed schema.
+    common::validate_output(&["logs", "--follow"], &json);
     let seats: Vec<String> = json
         .lines()
         .map(|l| {

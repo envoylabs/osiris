@@ -1,5 +1,7 @@
 //! Several builders, each in its own git worktree, sharing one store.
 
+mod common;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,7 @@ fn ris(dir: &Path, agent: Option<&str>, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ris"));
     cmd.args(args)
         .current_dir(dir)
+        .envs(common::GIT_IDENTITY)
         .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1");

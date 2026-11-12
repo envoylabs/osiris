@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ris map</title>
+<style>
+  :root {
+    --ground: #06070d;
+    --panel: rgba(12, 14, 26, 0.86);
+    --line: #1c2140;
+    --text: #cdd6ff;
+    --faint: #6b7499;
+    --modified: #00e5ff;
+    --added: #39ff88;
+    --deleted: #ff3d6e;
+    --unchanged: #56607f;
+    --outside: #ff2bd6;
+  }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(ellipse at 50% 40%, #0d1024 0%, var(--ground) 70%);
+    color: var(--text);
+    font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+  }
+  svg { display: block; width: 100vw; height: 100vh; cursor: grab; }
+  svg:active { cursor: grabbing; }
+  header, #legend, #tip {
+    position: fixed;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 12px;
+  }
+  header { top: 12px; left: 12px; max-width: 70vw; }
+  header h1 {
+    margin: 0 0 2px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--modified);
+    text-shadow: 0 0 8px rgba(0, 229, 255, 0.7);
+  }
+  header p { margin: 0; color: var(--faint); }
+  header b { color: var(--text); font-weight: 500; }
+  #legend { bottom: 12px; left: 12px; color: var(--faint); }
+  #legend div { display: flex; align-items: center; gap: 8px; }
+  #legend i {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    box-sizing: border-box;
+  }
+  #tip {
+    pointer-events: none;
+    display: none;
+    max-width: 60vw;
+    box-shadow: 0 0 18px rgba(0, 229, 255, 0.18);
+  }
+  #tip .path { color: var(--text); word-break: break-all; }
+  #tip .plus { color: var(--added); }
+  #tip .minus { color: var(--deleted); }
+  #tip .outside { color: var(--outside); }
+  #tip .quiet { color: var(--faint); }
+  .link { stroke: #2b3566; stroke-opacity: 0.5; stroke-width: 1; }
+  .link.mod { stroke-dasharray: 3 3; }
+  .link.lit { stroke: var(--modified); stroke-opacity: 0.95; stroke-width: 1.4; }
+  .node circle { stroke-width: 0; }
+  .node.outside circle { stroke: var(--outside); stroke-width: 2; }
+  .node text {
+    fill: var(--text);
+    font-size: 10px;
+    pointer-events: none;
+    paint-order: stroke;
+    stroke: var(--ground);
+    stroke-width: 3px;
+  }
+  .node.unchanged { opacity: 0.3; }
+  .node.unchanged.outside { opacity: 0.55; }
+  .dim .node:not(.lit) { opacity: 0.08; }
+  .dim .link:not(.lit) { stroke-opacity: 0.06; }
+  .node.lit { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">change set</h1>
+  <p id="range"></p>
+  <p id="totals"></p>
+  <p id="tests"></p>
+</header>
+<svg id="map" role="img" aria-label="The phase's change set drawn over the source files">
+  <defs>
+    <filter id="glow" x="-150%" y="-150%" width="400%" height="400%">
+      <feGaussianBlur stdDeviation="4" result="blur"></feGaussianBlur>
+      <feMerge>
+        <feMergeNode in="blur"></feMergeNode>
+        <feMergeNode in="blur"></feMergeNode>
+        <feMergeNode in="SourceGraphic"></feMergeNode>
+      </feMerge>
+    </filter>
+  </defs>
+  <g id="view">
+    <g id="links"></g>
+    <g id="nodes"></g>
+  </g>
+</svg>
+<div id="legend">
+  <div><i style="background: var(--modified)"></i>modified in the phase</div>
+  <div><i style="background: var(--added)"></i>added</div>
+  <div><i style="background: var(--deleted)"></i>deleted</div>
+  <div><i style="background: var(--unchanged)"></i>unchanged</div>
+  <div><i style="border: 2px solid var(--outside)"></i>touches the outside, or a contract</div>
+  <div>size: lines added and removed; an unchanged file is a dot</div>
+  <div>drag a file, scroll to zoom, hover for its numbers</div>
+</div>
+<div id="tip"></div>
+<script id="map-data" type="application/json">/*DATA*/</script>
+<script>/*D3*/</script>
+<script>
+(function () {
+  "use strict";
+  // The page holds nothing the document does not: everything drawn is
+  // read from it here.
+  var doc = JSON.parse(document.getElementById("map-data").textContent);
+  var nodes = doc.nodes.map(function (n) { return Object.assign({ id: n.path }, n); });
+  var links = doc.edges.map(function (e) {
+    return { source: e.from, target: e.to, kind: e.kind };
+  });
+
+  var short = function (sha) { return sha ? sha.slice(0, 10) : "unknown"; };
+  document.getElementById("title").textContent =
+    (doc.phase ? doc.phase + ": " : "") + "change set over the source";
+  document.getElementById("range").textContent =
+    short(doc.base) + " .. " + short(doc.tip) + " (" + doc.tip_ref + ")";
+  var t = doc.totals;
+  document.getElementById("totals").textContent =
+    t.changed + " of " + t.files + " files changed, +" + t.added + " -" + t.removed +
+    ", " + t.outside + " touch the outside";
+  // Tests verify the behaviour and are not drawn; one line says what
+  // the phase did to them.
+  document.getElementById("tests").textContent =
+    t.tests.files + " test file(s) left off the map: " + t.tests.changed +
+    " changed (+" + t.tests.added + " -" + t.tests.removed + ")";
+
+  var isOutside = function (n) { return n.contract || n.external.length > 0; };
+  // A node's size shows its diff and nothing else: the lines added plus
+  // removed, on a log scale against the phase's largest change, so an
+  // unchanged file is a dot and the largest change the largest node.
+  // Touching the outside or being a contract is the ring, not the size.
+  var DOT = 2, SMALLEST = 5, LARGEST = 22;
+  var lines = function (n) { return n.added + n.removed; };
+  var most = d3.max(nodes, lines) || 0;
+  var radius = function (n) {
+    var d = lines(n);
+    if (d === 0 || most === 0) { return n.status === "unchanged" ? DOT : SMALLEST; }
+    return SMALLEST + (LARGEST - SMALLEST) * Math.log1p(d) / Math.log1p(most);
+  };
+  var colour = {
+    modified: "var(--modified)",
+    added: "var(--added)",
+    deleted: "var(--deleted)",
+    unchanged: "var(--unchanged)"
+  };
+  var base = function (path) { return path.slice(path.lastIndexOf("/") + 1); };
+
+  var svg = d3.select("#map");
+  var view = d3.select("#view");
+  var width = window.innerWidth, height = window.innerHeight;
+
+  var link = d3.select("#links").selectAll("line").data(links).join("line")
+    .attr("class", function (l) { return "link " + l.kind; });
+
+  var node = d3.select("#nodes").selectAll("g").data(nodes).join("g")
+    .attr("class", function (n) {
+      return "node " + n.status + (isOutside(n) ? " outside" : "");
+    });
+  node.append("circle")
+    .attr("r", radius)
+    .attr("fill", function (n) { return colour[n.status] || colour.unchanged; })
+    .attr("filter", function (n) { return n.status === "unchanged" ? null : "url(#glow)"; });
+  var labelled = function (n) { return n.status !== "unchanged" || isOutside(n); };
+  node.filter(labelled)
+    .append("text")
+    .attr("x", function (n) { return radius(n) + 4; })
+    .attr("y", 3)
+    .text(function (n) { return base(n.path); });
+
+  // Spread out, since the view zooms: long links, strong repulsion, and
+  // a collision margin that leaves room for a label beside its node.
+  var margin = function (n) { return radius(n) + (labelled(n) ? 16 : 6); };
+  var draw = function () {
+    link
+      .attr("x1", function (l) { return l.source.x; })
+      .attr("y1", function (l) { return l.source.y; })
+      .attr("x2", function (l) { return l.target.x; })
+      .attr("y2", function (l) { return l.target.y; });
+    node.attr("transform", function (n) { return "translate(" + n.x + "," + n.y + ")"; });
+  };
+  var sim = d3.forceSimulation(nodes)
+    .force("link", d3.forceLink(links).id(function (n) { return n.id; })
+      .distance(function (l) { return 90 + margin(l.source) + margin(l.target); })
+      .strength(0.25))
+    .force("charge", d3.forceManyBody().strength(function (n) { return -320 - 14 * radius(n); }))
+    .force("collide", d3.forceCollide().radius(margin).strength(0.9))
+    .force("x", d3.forceX(width / 2).strength(0.02))
+    .force("y", d3.forceY(height / 2).strength(0.02))
+    .on("tick", draw)
+    .stop();
+
+  var zoom = d3.zoom().scaleExtent([0.05, 8]).on("zoom", function (event) {
+    view.attr("transform", event.transform);
+  });
+  svg.call(zoom);
+
+  // Fit the whole graph, labels included, to the window.
+  var fit = function () {
+    if (nodes.length === 0) { return; }
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    node.each(function (n) {
+      var box = this.getBBox();
+      x0 = Math.min(x0, n.x + box.x); y0 = Math.min(y0, n.y + box.y);
+      x1 = Math.max(x1, n.x + box.x + box.width); y1 = Math.max(y1, n.y + box.y + box.height);
+    });
+    var pad = 24;
+    var top = document.querySelector("header").getBoundingClientRect().bottom;
+    var w = width - 2 * pad, h = height - top - 2 * pad;
+    var k = Math.min(w / Math.max(x1 - x0, 1), h / Math.max(y1 - y0, 1), 2);
+    var tx = pad + (w - k * (x1 - x0)) / 2 - k * x0;
+    var ty = top + pad + (h - k * (y1 - y0)) / 2 - k * y0;
+    svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
+  };
+
+  // Settle the layout before the first frame, so the page opens on the
+  // whole graph already fitted rather than on nodes still flying apart.
+  var settle = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
+  for (var i = 0; i < settle; i += 1) { sim.tick(); }
+  draw();
+  fit();
+
+  node.call(d3.drag()
+    .on("start", function (event, n) {
+      if (!event.active) { sim.alphaTarget(0.3).restart(); }
+      n.fx = n.x; n.fy = n.y;
+    })
+    .on("drag", function (event, n) { n.fx = event.x; n.fy = event.y; })
+    .on("end", function (event, n) {
+      if (!event.active) { sim.alphaTarget(0); }
+      n.fx = null; n.fy = null;
+    }));
+
+  // Hover: the file's path and diff numbers, and its connections lit.
+  var tip = document.getElementById("tip");
+  var line = function (cls, text) {
+    var div = document.createElement("div");
+    if (cls) { div.className = cls; }
+    div.textContent = text;
+    tip.appendChild(div);
+    return div;
+  };
+  var place = function (event) {
+    var x = event.clientX + 14, y = event.clientY + 14;
+    tip.style.left = Math.min(x, window.innerWidth - tip.offsetWidth - 8) + "px";
+    tip.style.top = Math.min(y, window.innerHeight - tip.offsetHeight - 8) + "px";
+  };
+  node
+    .on("mouseenter", function (event, n) {
+      tip.textContent = "";
+      line("path", n.path);
+      var diff = line("", "");
+      var plus = document.createElement("span");
+      plus.className = "plus";
+      plus.textContent = "+" + n.added;
+      var minus = document.createElement("span");
+      minus.className = "minus";
+      minus.textContent = " -" + n.removed;
+      var status = document.createElement("span");
+      status.className = "quiet";
+      status.textContent = "  " + n.status;
+      diff.appendChild(plus); diff.appendChild(minus); diff.appendChild(status);
+      if (n.external.length > 0) { line("outside", "touches: " + n.external.join(", ")); }
+      if (n.contract) { line("outside", "a contract or format"); }
+      tip.style.display = "block";
+      place(event);
+      var near = new Set([n.id]);
+      link.classed("lit", function (l) {
+        var hit = l.source.id === n.id || l.target.id === n.id;
+        if (hit) { near.add(l.source.id); near.add(l.target.id); }
+        return hit;
+      });
+      node.classed("lit", function (m) { return near.has(m.id); });
+      svg.classed("dim", true);
+    })
+    .on("mousemove", place)
+    .on("mouseleave", function () {
+      tip.style.display = "none";
+      svg.classed("dim", false);
+      link.classed("lit", false);
+      node.classed("lit", false);
+    });
+
+  window.addEventListener("resize", function () {
+    width = window.innerWidth; height = window.innerHeight;
+    fit();
+  });
+}());
+</script>
+</body>
+</html>

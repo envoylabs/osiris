@@ -35,8 +35,10 @@ ris phase open "the goal"               # 1. branches phase/P-1 from main
 ris item add "a task"                    #    or: ris import backlog.toml
 ris up                                   # 2. worktrees, then every seat's agent
 ris summary && ris decide                # 3. review: the phase in one picture, then each queued decision
+ris map --html map.html                  #    and what the phase did to the code, as one page
 ris down && ris phase close              # 4. merges the phase; the rest carries over
 ```
 
 A lead, a builder and an auditor, step by step: `docs/quickstart.md`.
-Building a client on `ris --json`: `docs/json.md`.
+Building a client on `ris --json`: `docs/json.md`, with its JSON Schema
+in `docs/json.schema.json` (`ris schema` prints it).

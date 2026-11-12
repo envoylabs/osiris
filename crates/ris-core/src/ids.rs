@@ -106,6 +106,7 @@ impl fmt::Display for IdParseError {
 impl std::error::Error for IdParseError {}
 
 /// A check's name, as declared in the project's checks file.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CheckId(pub String);
 
@@ -209,6 +210,7 @@ impl fmt::Display for EvidenceId {
 }
 
 /// A git commit, by its full hash as git prints it.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CommitHash(pub String);
 
@@ -221,6 +223,7 @@ impl fmt::Display for CommitHash {
 /// An agent's configured name: a durable pseudonym for a seat, never a
 /// real person's name. The configuration that declares it is scanned
 /// like any other free text.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AgentName(pub String);
 
@@ -241,9 +244,10 @@ pub enum Actor {
     Agent(AgentName),
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum ActorRepr {
+pub(crate) enum ActorRepr {
     Person,
     Agent { seat: AgentName },
 }

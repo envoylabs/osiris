@@ -3,6 +3,8 @@
 //! envelope per line; the top-level keys of each command's data are
 //! pinned here, so changing them is a deliberate format change.
 
+mod common;
+
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -52,6 +54,9 @@ fn json(dir: &Path, agent: Option<&str>, args: &[&str]) -> (Option<i32>, Value) 
             "{v}"
         );
     }
+    // Value shapes as well as key names: the envelope and the command's
+    // data fit the committed schema, and name no key it lacks.
+    common::validate(args, &v);
     (out.status.code(), v)
 }
 

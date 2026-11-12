@@ -11,7 +11,9 @@ name = "ris"
 path = "src/main.rs"
 
 [dependencies]
-ris-core.workspace = true
+# With the schema of its serialised types: the `--json` contract's
+# schema is generated from them.
+ris-core = { workspace = true, features = ["schema"] }
 ris-store-sqlite.workspace = true
 clap.workspace = true
 serde_json.workspace = true
@@ -22,7 +24,9 @@ getrandom.workspace = true
 anstyle.workspace = true
 crossterm.workspace = true
 rustix.workspace = true
+schemars.workspace = true
 
 [dev-dependencies]
+jsonschema.workspace = true
 serde_json.workspace = true
 ris-core.workspace = true

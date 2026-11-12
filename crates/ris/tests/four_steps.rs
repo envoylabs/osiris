@@ -4,6 +4,8 @@
 //! phase close merges what is merged, carries the rest over, and its
 //! report counts the items planned, merged and carried over.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -22,6 +24,7 @@ fn ris(dir: &Path, agent: &str, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ris"))
         .args(args)
         .current_dir(dir)
+        .envs(common::GIT_IDENTITY)
         .env("RIS_AGENT", agent)
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1")

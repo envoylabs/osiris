@@ -111,7 +111,13 @@ line of output per envelope, and ends once no seat is running; without
   decisions oldest first, whatever phase raised them, each entry the
   `data` that `ris eli5 D-n` gives (`decision`, and `explanation` or
   null). A client shows each and answers with
-  `ris decide D-n --choose <k>`; `--rationale` is optional.
+  `ris decide D-n --choose <k>`, or with
+  `ris decide D-n --other "<an answer that is none of the options>"`,
+  which it should always offer; `--rationale` is optional. Either
+  gives `decision` and `unblocked`, the items the decision alone had
+  set aside. An answer outside the options is recorded as one more
+  option: `chosen` is its number, one past those offered, and `other`
+  its text.
 - `ris watch`: every event as it is appended, including `run_started`
   and `run_stopped` when the runner starts and stops a seat's agent,
   and `setup_fault` (with `seat`) when a seat reports a fault in its
@@ -119,3 +125,138 @@ line of output per envelope, and ends once no seat is running; without
 
 `crates/ris/tests/json_contract.rs` pins the envelope and the top-level
 keys of the most-read commands' `data`.
+
+## The schema
+
+`docs/json.schema.json` is the JSON Schema (draft 2020-12) of format 1,
+for a client to validate against and to generate its types from.
+`ris schema` prints the same document, from any directory.
+
+- The document itself is the envelope: a success or a failure, each
+  with `format` 1.
+- `#/$defs/envelope.failure` holds the error: its `kind` (the list
+  above, as an enumeration), `message`, `next`, and the details each
+  kind carries, a refusal's reason included.
+- `#/$defs/data.<command>` is the `data` of one command, with `_` for
+  each space in the command: `data.ready`, `data.phase_open`,
+  `data.decision_raise`. For a stream (`log`, `watch`, a followed
+  `logs`) it is the data of one line. A command whose data depends on
+  what it was asked (`show`, `inbox`, `decide`, `audit`, `logs`,
+  `report`) is an `anyOf` of its forms.
+- Ids, hashes and evidence ids are strings with a `pattern`; actors,
+  blockers and events are the typed objects described under Values.
+
+A client validates an envelope against the document and then its
+`data` against the definition of the command it ran; the envelope alone
+accepts the data of any command.
+
+The schema is generated from the Rust types that produce the output
+(`crates/ris/src/schema.rs`, and the core's event and refusal types):
+no command can build its output from anything else, so the two cannot
+drift apart. Tests hold the rest: the committed file is regenerated and
+compared, every command of the CLI must have a definition, and every
+command's real output, and every error kind a run can reach, is
+validated against the committed file (`crates/ris/tests/schema.rs`).
+
+The compatibility rule in schema terms. Within format 1:
+
+- A property may be added to an object, and a definition to `$defs`.
+  The schema's objects are open (no `additionalProperties: false`),
+  so a client holding an older copy of the schema still accepts what a
+  newer `ris` writes. Three definitions are closed, each an object
+  that is one of several named forms: `Actor`, `Refusal` and
+  `Structure` (a stored event's structure, whose form is the event
+  format's). The tests validate with every object closed, so a key
+  that `ris` writes and no type declares fails there.
+- A property is never removed from `properties` or from `required`,
+  never renamed, and never given another `type`, `pattern` or shape;
+  a value is never removed from an `enum`. A change of that kind is a
+  new format: the `format` constant changes, and with it the schema.
+- A property that is in `properties` and not in `required` is present
+  only in some states, as the `evidence` of an item is once it is done.
+  A client reads it as optional.
+- Adding a value to an `enum`, or a form to an `anyOf`, is an addition:
+  a new error `kind`, a new event. A client treats a value it does not
+  know as it treats a key it does not know.
+
+## The map document
+
+`ris map` gives the phase's change set as a graph over the source
+code: the open phase's, or with none open the last closed one's, or
+that of the phase named (`ris map P-3`). Its `data` is the graph
+document. The document is the contract and holds everything there is
+to draw: `ris map --html <file>` writes a page that embeds the same
+document, as JSON in the element `<script id="map-data"
+type="application/json">`, and draws nothing that is not in it, so any
+other renderer draws the same map from either source. It follows the
+rule of the rest of format 1: keys are added, never removed, renamed
+or reshaped.
+
+```json
+{
+  "phase": "P-3",
+  "base": "<commit>",
+  "tip": "<commit>",
+  "tip_ref": "phase/P-3",
+  "totals": {"files": 64, "changed": 12, "added": 371, "removed": 48, "outside": 43,
+             "tests": {"files": 30, "changed": 4, "added": 210, "removed": 6}},
+  "nodes": [
+    {"path": "src/store.rs", "language": "rust", "status": "modified",
+     "added": 12, "removed": 3, "external": ["filesystem"],
+     "contract": false, "weight": 5.77}
+  ],
+  "edges": [
+    {"from": "src/store.rs", "to": "src/wire.rs", "kind": "use"}
+  ]
+}
+```
+
+- `base` and `tip` are the commits compared: where the phase left the
+  main line, and the phase's tip, whose files are the nodes. `tip_ref`
+  says what named the tip: the phase's branch while it exists, `HEAD`
+  for an open phase with no branch of its own, or the closing merge
+  for a closed phase. `base` is null when where the work left the main
+  line is not known, and then no node carries a diff. `phase` is null
+  in a project that has never opened one.
+- `nodes` are the repository's source files, sorted by `path`, which
+  is relative to the repository root and is the node's identity. A
+  file is source by its extension; `language` names it. A file that
+  matches a `[map] contracts` pattern in `.osiris/config.toml` is a
+  node as well, with `language` null when it is not source code.
+  Files that are neither are not on the map, whatever the phase did to
+  them.
+- Test files are not on the map either: a file that would be a node
+  and matches a `[map] tests` pattern (by default `**/tests/**`, every
+  file under a `tests` directory) has no node and no edge, unless a
+  `contracts` pattern also names it. The tests verify the behaviour
+  that lands in the source; `totals.tests` says what the phase did to
+  them.
+- `status` is `added`, `modified`, `deleted` or `unchanged` in the
+  phase, and `added` and `removed` count the lines the phase added and
+  removed (`git diff --numstat` of `base` against `tip`, renames not
+  followed). A deleted file is a node with no edges.
+- `external` says how the file touches the outside, found from what it
+  imports: any of `database`, `filesystem`, `network` and `process`,
+  sorted; empty when it does not. `contract` is whether a `[map]
+  contracts` pattern names it.
+- `weight` is how much the node should draw the eye. It is 1 for a
+  file nothing happened to, grows with the size of the diff (on a log
+  scale) and is 2 higher for a file that is external or a contract. A
+  renderer may size by it; the exact formula is not part of the
+  contract.
+- `edges` are how the code connects, each from the file that names the
+  other, sorted. `kind` is the kind of line that makes the edge. For
+  Rust: `mod` (a `mod name;` line, to the module's file) and `use` (a
+  `use` line or a qualified path through `crate`, `self`, `super` or a
+  package of the repository, to the deepest module file it names).
+  Edges are found by scanning the text, per language; a language with
+  no scanner yet has nodes and no edges, and gaining one adds edges
+  and `kind` values without changing the document's shape.
+- `totals` counts the nodes (`files`), those not `unchanged`
+  (`changed`), their lines `added` and `removed`, and the nodes that
+  are external or a contract (`outside`). `tests` counts the test files
+  left off the map in the same terms: all of them (`files`), those the
+  phase changed (`changed`), and the lines `added` and `removed` in
+  them. A page shows it as one line of text.
+
+`crates/ris/tests/map.rs` pins these keys.

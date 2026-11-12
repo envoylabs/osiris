@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::refusal::Refusal;
 
 /// What the scan found.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Category {
     /// A credential in a known format: an access key, an API token, a
@@ -104,6 +105,7 @@ impl Policy {
 }
 
 /// Free text that has passed the confidentiality scan.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Text(String);
