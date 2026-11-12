@@ -1071,6 +1071,20 @@ mod tests {
     }
 
     #[test]
+    fn the_page_sizes_a_node_by_its_diff_alone_and_fits_the_graph() {
+        // The document's weight mixes in touching the outside, which the
+        // page shows as a ring; a page that sized nodes by it again would
+        // make an unchanged contract look like a large change.
+        assert!(!PAGE.contains(".weight"), "the page reads no weight");
+        assert!(PAGE.contains("n.added + n.removed"), "size is the diff");
+        assert!(PAGE.contains("Math.log1p(most)"), "scaled to the largest");
+        assert!(PAGE.contains("size: lines added and removed"), "the legend");
+        // The layout is settled before the first frame and then fitted.
+        assert!(PAGE.contains("zoom.transform"), "fitted to the window");
+        assert!(PAGE.contains("sim.tick()"), "settled before drawing");
+    }
+
+    #[test]
     fn comments_strings_and_character_literals_name_nothing() {
         let found = names(
             r##"

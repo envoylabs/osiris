@@ -108,7 +108,7 @@
   <div><i style="background: var(--deleted)"></i>deleted</div>
   <div><i style="background: var(--unchanged)"></i>unchanged</div>
   <div><i style="border: 2px solid var(--outside)"></i>touches the outside, or a contract</div>
-  <div>size: the diff, and touching the outside</div>
+  <div>size: lines added and removed; an unchanged file is a dot</div>
   <div>drag a file, scroll to zoom, hover for its numbers</div>
 </div>
 <div id="tip"></div>
@@ -136,7 +136,18 @@
     ", " + t.outside + " touch the outside";
 
   var isOutside = function (n) { return n.contract || n.external.length > 0; };
-  var radius = function (n) { return 2.5 + 2.2 * n.weight; };
+  // A node's size shows its diff and nothing else: the lines added plus
+  // removed, on a log scale against the phase's largest change, so an
+  // unchanged file is a dot and the largest change the largest node.
+  // Touching the outside or being a contract is the ring, not the size.
+  var DOT = 2, SMALLEST = 5, LARGEST = 22;
+  var lines = function (n) { return n.added + n.removed; };
+  var most = d3.max(nodes, lines) || 0;
+  var radius = function (n) {
+    var d = lines(n);
+    if (d === 0 || most === 0) { return n.status === "unchanged" ? DOT : SMALLEST; }
+    return SMALLEST + (LARGEST - SMALLEST) * Math.log1p(d) / Math.log1p(most);
+  };
   var colour = {
     modified: "var(--modified)",
     added: "var(--added)",
@@ -160,31 +171,64 @@
     .attr("r", radius)
     .attr("fill", function (n) { return colour[n.status] || colour.unchanged; })
     .attr("filter", function (n) { return n.status === "unchanged" ? null : "url(#glow)"; });
-  node.filter(function (n) { return n.status !== "unchanged" || isOutside(n); })
+  var labelled = function (n) { return n.status !== "unchanged" || isOutside(n); };
+  node.filter(labelled)
     .append("text")
     .attr("x", function (n) { return radius(n) + 4; })
     .attr("y", 3)
     .text(function (n) { return base(n.path); });
 
+  // Spread out, since the view zooms: long links, strong repulsion, and
+  // a collision margin that leaves room for a label beside its node.
+  var margin = function (n) { return radius(n) + (labelled(n) ? 16 : 6); };
+  var draw = function () {
+    link
+      .attr("x1", function (l) { return l.source.x; })
+      .attr("y1", function (l) { return l.source.y; })
+      .attr("x2", function (l) { return l.target.x; })
+      .attr("y2", function (l) { return l.target.y; });
+    node.attr("transform", function (n) { return "translate(" + n.x + "," + n.y + ")"; });
+  };
   var sim = d3.forceSimulation(nodes)
     .force("link", d3.forceLink(links).id(function (n) { return n.id; })
-      .distance(48).strength(0.35))
-    .force("charge", d3.forceManyBody().strength(function (n) { return -70 - 16 * n.weight; }))
-    .force("collide", d3.forceCollide().radius(function (n) { return radius(n) + 3; }))
-    .force("x", d3.forceX(width / 2).strength(0.05))
-    .force("y", d3.forceY(height / 2).strength(0.05))
-    .on("tick", function () {
-      link
-        .attr("x1", function (l) { return l.source.x; })
-        .attr("y1", function (l) { return l.source.y; })
-        .attr("x2", function (l) { return l.target.x; })
-        .attr("y2", function (l) { return l.target.y; });
-      node.attr("transform", function (n) { return "translate(" + n.x + "," + n.y + ")"; });
-    });
+      .distance(function (l) { return 90 + margin(l.source) + margin(l.target); })
+      .strength(0.25))
+    .force("charge", d3.forceManyBody().strength(function (n) { return -320 - 14 * radius(n); }))
+    .force("collide", d3.forceCollide().radius(margin).strength(0.9))
+    .force("x", d3.forceX(width / 2).strength(0.02))
+    .force("y", d3.forceY(height / 2).strength(0.02))
+    .on("tick", draw)
+    .stop();
 
-  svg.call(d3.zoom().scaleExtent([0.1, 8]).on("zoom", function (event) {
+  var zoom = d3.zoom().scaleExtent([0.05, 8]).on("zoom", function (event) {
     view.attr("transform", event.transform);
-  }));
+  });
+  svg.call(zoom);
+
+  // Fit the whole graph, labels included, to the window.
+  var fit = function () {
+    if (nodes.length === 0) { return; }
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    node.each(function (n) {
+      var box = this.getBBox();
+      x0 = Math.min(x0, n.x + box.x); y0 = Math.min(y0, n.y + box.y);
+      x1 = Math.max(x1, n.x + box.x + box.width); y1 = Math.max(y1, n.y + box.y + box.height);
+    });
+    var pad = 24;
+    var top = document.querySelector("header").getBoundingClientRect().bottom;
+    var w = width - 2 * pad, h = height - top - 2 * pad;
+    var k = Math.min(w / Math.max(x1 - x0, 1), h / Math.max(y1 - y0, 1), 2);
+    var tx = pad + (w - k * (x1 - x0)) / 2 - k * x0;
+    var ty = top + pad + (h - k * (y1 - y0)) / 2 - k * y0;
+    svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
+  };
+
+  // Settle the layout before the first frame, so the page opens on the
+  // whole graph already fitted rather than on nodes still flying apart.
+  var settle = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
+  for (var i = 0; i < settle; i += 1) { sim.tick(); }
+  draw();
+  fit();
 
   node.call(d3.drag()
     .on("start", function (event, n) {
@@ -249,9 +293,7 @@
 
   window.addEventListener("resize", function () {
     width = window.innerWidth; height = window.innerHeight;
-    sim.force("x", d3.forceX(width / 2).strength(0.05));
-    sim.force("y", d3.forceY(height / 2).strength(0.05));
-    sim.alpha(0.3).restart();
+    fit();
   });
 }());
 </script>
