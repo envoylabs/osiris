@@ -1,6 +1,7 @@
 # Osiris: a harness for parallel agent work
 
-**Status:** draft, 2026-11-03; amended 2026-11-05 and 2026-11-11.
+**Status:** draft, 2026-11-03; amended 2026-11-05, 2026-11-11 and
+2026-11-12.
 This document is the design. What is built and what is left is in the
 harness's own log (`ris ready`, `ris report`), not here.
 
@@ -123,11 +124,15 @@ one agent at a time):
 
 ### Phases
 
-A phase fits a working day: by default at most two a day, with
-check-ins at the start of the day (plan, answer decisions), midday
-(review) and before close of play (a vibe check). When the check-ins
-fall is configurable (Window schedule, below). Between check-ins the
-agents never wait for the person.
+A phase runs in four steps, each the person's: open the phase, bring
+the seats up, review, close the phase. There is no check-in in between.
+Between up and review the agents never wait for the person: a
+substantive decision sets its item aside and the agent takes another,
+so nothing raised while the phase runs stops it, and every queued
+decision is put to the person once, at review. Closing the phase merges
+what is merged and carries the rest over to the next. How long a phase
+runs is the person's choice; a phase fits a working day, by default at
+most two a day.
 
 1. **Plan.** From a goal, an agent drafts the items and the decisions
    they need. The person answers the decision batch in one sitting.
@@ -209,12 +214,12 @@ decide say it is too short.
 - **Adding to a contract is mechanical.** A new event type, a new JSON
   key or a new optional field breaks no reader that ignores what it
   does not know, so it is cheap to reverse while nothing depends on it
-  yet; the agent logs it and the check-in reviews it. Removing,
+  yet; the agent logs it and the review reads it. Removing,
   renaming or changing the meaning of what is already there stays
   substantive.
 - **Misclassification is caught at review.** The phase report lists the
   mechanical decisions too, one line each, so one that should have been
-  substantive is seen at the next check-in.
+  substantive is seen at the phase's review.
 
 ### Checks, not gates
 
@@ -418,7 +423,7 @@ enum DecisionState { Open, Taken { by: Actor, chosen: usize, at: u64 }, Supersed
 enum ItemState {
     Ready,
     Claimed { agent: AgentName },             // no lease yet: leases come with the daemon
-    Blocked { on: Vec<Blocker> },             // a decision, another item
+    Blocked { on: Vec<Blocker> },             // a decision, another item, a person action
     Done { evidence: Vec<EvidenceId> },       // checks passed
     Merged { evidence: Vec<EvidenceId>, commit: CommitHash },
     Superseded { by: ItemId },                // replaced before it started; final
@@ -436,6 +441,11 @@ enum Structure {                              // an event's structural part
     ItemAdded { item, phase, checks, depends_on }, ItemClaimed { item, agent },
     ItemBlocked { item, on }, ItemReady { item }, ItemDone { item, evidence },
     ItemMerged { item, commit }, ItemAudited { item, by }, ItemSuperseded { item, by },
+    ActionRaised { action, by, blocks, informs }, ActionCheckSet { action },
+    ActionDone { action, evidence },
+    RunStarted { seat }, RunStopped { seat, status },
+    SetupFault { seat },                      // a seat's sandbox or permissions lack something
+    SeatPaused { seat }, SeatResumed { seat },
     DecisionRaised { decision, class, by, about, options, recommended },
     DecisionTaken { decision, by, chosen },
     DecisionExplained { decision, by, pros, cons },
@@ -552,6 +562,16 @@ the CLI on a dev machine is usually unrestricted.
   setup agent reads it and provisions a disposable environment per
   agent where the full checks run. If an agent cannot run the real
   checks, setup says so before work starts.
+- **Preflight and setup faults.** Until there is a manifest, the same
+  promise is kept from the configuration: before any seat starts,
+  `ris up` checks that the writing seats could run the project's checks
+  (each check's program is on the path, and the build tools it names
+  may write their caches and reach their registries), names what is
+  missing with the configuration line that allows it, and starts
+  nothing until it is fixed. It reads the configuration and does not
+  run the build. A seat that still meets a missing permission while it
+  works reports a setup fault, which is the person's to fix in the
+  configuration and is never a decision.
 - **Per-agent environments** are separate compose projects with their own
   name and network, so agents run full suites in parallel without
   fighting over ports.

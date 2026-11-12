@@ -146,6 +146,13 @@ pub enum Structure {
         seat: AgentName,
         status: Option<i32>,
     },
+    /// A seat reported a fault in its setup: something its sandbox or
+    /// permissions do not let it do, for the person to fix in the
+    /// configuration. The text part carries `what`. The seat's next run
+    /// start clears it.
+    SetupFault {
+        seat: AgentName,
+    },
     /// The person paused a seat: its next claim or audit is refused
     /// until it is resumed. What it holds now it finishes.
     SeatPaused {

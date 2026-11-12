@@ -66,7 +66,7 @@ pub struct Config {
     /// How long a person action's check may run, in seconds, before it
     /// is stopped and counted as not passing yet. The checks run from
     /// the person's inbox, summary and up, so a check that hangs must
-    /// not hang the check-in.
+    /// not hang the person's command.
     #[serde(default = "default_action_check_seconds")]
     pub action_check_seconds: u64,
     /// The person's ris, rebuilt from the last merged commit and
@@ -112,6 +112,13 @@ pub struct RunnerConfig {
     /// before `ris status` marks it possibly stuck.
     #[serde(default = "default_quiet_after_seconds")]
     pub quiet_after_seconds: u64,
+    /// Check, before `ris up` starts any seat, that the writing seats
+    /// can run the project's checks: each check's program is on PATH,
+    /// and the build tools it names may write their caches and reach
+    /// their registries (`crate::preflight`). Off for a project whose
+    /// build needs none of that, such as one with vendored dependencies.
+    #[serde(default = "default_true")]
+    pub preflight: bool,
 }
 
 fn default_quiet_after_seconds() -> u64 {
@@ -126,6 +133,7 @@ impl Default for RunnerConfig {
             network: Vec::new(),
             write: Vec::new(),
             quiet_after_seconds: default_quiet_after_seconds(),
+            preflight: true,
         }
     }
 }
@@ -358,9 +366,15 @@ merge_on_close = true
 worktrees = \"../{repo}-{seat}\"
 
 # How seats' agents are run. `ris status` marks a running seat possibly
-# stuck once its output has been quiet for quiet_after_seconds.
+# stuck once its output has been quiet for quiet_after_seconds. Before
+# ris up starts any seat, preflight checks that the writing seats can
+# run the checks: each check's program is on PATH, and the build tools
+# it names may write their caches (write) and reach their registries
+# (network); it names any line missing. Set preflight = false if the
+# build needs none of that.
 [runner]
 quiet_after_seconds = 600
+preflight = true
 
 # The person's ris, rebuilt from the last merged commit (which passed
 # every check) and installed on your PATH, by `ris install` and on your

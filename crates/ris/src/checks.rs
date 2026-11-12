@@ -83,29 +83,25 @@ pub enum Limited {
     TimedOut { kill_fault: Option<String> },
 }
 
-/// Send KILL to the process group `pgid` with `program`, a `kill`
-/// program. `None` when it exits zero; otherwise why the group may
-/// still be running: that the program could not be run, or its exit
-/// status and what it printed on stderr.
-fn kill_group(program: &str, pgid: u32) -> Option<String> {
-    // The signal is named with `-s` and the negative pid follows `--`,
-    // the form POSIX specifies for a process group: util-linux and
-    // procps `kill`, as found on Linux, may read a bare `-<pid>` as an
-    // option or a signal number, while macOS's `kill` accepts either
-    // form.
-    let args = ["-s", "KILL", "--", &format!("-{pgid}")];
-    match Command::new(program).args(args).output() {
-        Err(e) => Some(format!("`{program}` could not be run: {e}")),
-        Ok(out) if out.status.success() => None,
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let mut fault = format!("`{program} {}` ended with {}", args.join(" "), out.status);
-            if !stderr.trim().is_empty() {
-                fault.push_str(": ");
-                fault.push_str(stderr.trim());
-            }
-            Some(fault)
-        }
+/// Send KILL to every process in the group `pgid`, with the `kill`
+/// system call itself: the `kill` programs differ between systems in
+/// how they read a group's negative id, and a program that misreads it
+/// can exit zero having signalled something else. `None` when nothing
+/// of the group is left running; otherwise why it may be.
+fn kill_group(pgid: rustix::process::Pid) -> Option<String> {
+    fault_of(
+        pgid,
+        rustix::process::kill_process_group(pgid, rustix::process::Signal::KILL),
+    )
+}
+
+/// What a failed kill of the group `pgid` means. No such group is not a
+/// fault: every process in it has already ended, so nothing is left to
+/// stop. Any other error leaves the group possibly running.
+fn fault_of(pgid: rustix::process::Pid, sent: rustix::io::Result<()>) -> Option<String> {
+    match sent {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => None,
+        Err(e) => Some(format!("killing process group {pgid} failed: {e}")),
     }
 }
 
@@ -155,7 +151,7 @@ pub fn run_limited(
     let Some(status) = status else {
         // The whole group, so a child the shell started (which holds
         // the pipes open) goes too.
-        let kill_fault = kill_group("kill", child.id());
+        let kill_fault = kill_group(rustix::process::Pid::from_child(&child));
         let _ = child.kill();
         let _ = child.wait();
         return Ok(Limited::TimedOut { kill_fault });
@@ -257,33 +253,48 @@ mod tests {
     use super::*;
 
     // No group has this id: it is above the largest pid Linux or macOS
-    // gives out, so a program that did act on it would reach nothing.
-    const NO_GROUP: u32 = 0x7fff_fff0;
-
-    #[test]
-    fn a_kill_program_that_cannot_be_run_is_reported() {
-        let fault = kill_group("ris-test-no-such-kill-program", NO_GROUP).expect("a fault");
-        assert!(fault.contains("ris-test-no-such-kill-program"), "{fault}");
-        assert!(fault.contains("could not be run"), "{fault}");
+    // gives out, so a kill that did act on it would reach nothing.
+    fn no_group() -> rustix::process::Pid {
+        rustix::process::Pid::from_raw(0x7fff_fff0).unwrap()
     }
 
     #[test]
-    fn a_kill_program_that_fails_is_reported_with_its_status_and_stderr() {
-        // `ls` stands in for a `kill` that rejects its arguments: it
-        // reads `KILL` and the group as files that are not there, exits
-        // non-zero and says so on stderr.
-        let fault = kill_group("ls", NO_GROUP).expect("a fault");
-        assert!(fault.contains("`ls -s KILL -- -2147483632`"), "{fault}");
-        assert!(fault.contains("exit status"), "{fault}");
-        // What `ls` printed on stderr, after the command and its status.
-        let stderr = fault.rsplit_once("ended with").expect("a status").1;
-        assert!(stderr.contains("ls:"), "{fault}");
+    fn a_group_that_is_not_there_is_not_a_fault() {
+        assert_eq!(kill_group(no_group()), None);
     }
 
     #[test]
-    fn the_real_kill_reports_a_group_that_is_not_there() {
-        let fault = kill_group("kill", NO_GROUP).expect("a fault");
-        assert!(fault.contains("ended with"), "{fault}");
+    fn a_kill_that_is_refused_is_reported_with_the_group_and_the_reason() {
+        // The error is given, not provoked: a kill the system refuses
+        // needs a group owned by someone else, and none is safe to aim
+        // at.
+        let fault = fault_of(no_group(), Err(rustix::io::Errno::PERM)).expect("a fault");
+        assert!(
+            fault.starts_with("killing process group 2147483632 failed: "),
+            "{fault}"
+        );
+        assert_eq!(fault_of(no_group(), Ok(())), None);
+    }
+
+    /// The whole group goes, not only the shell: a background child the
+    /// shell started, which would write a file if left to run, never
+    /// writes it.
+    #[test]
+    fn a_command_stopped_at_its_limit_takes_what_it_started_with_it() {
+        let dir = std::env::temp_dir().join(format!("ris-checks-group-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let limit = std::time::Duration::from_millis(200);
+        match run_limited(&dir, "(sleep 1; touch late) & wait", limit).unwrap() {
+            Limited::TimedOut { kill_fault } => assert_eq!(kill_fault, None),
+            Limited::Finished(..) => panic!("the command ended within 200ms"),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        assert!(
+            !dir.join("late").exists(),
+            "the background child ran on after the group was killed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

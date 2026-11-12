@@ -35,6 +35,10 @@ pub struct State {
     /// Seats whose agent the runner started and has not seen stop, with
     /// the event that started it.
     pub running: BTreeMap<crate::ids::AgentName, u64>,
+    /// Setup faults each seat reported since its latest run started, as
+    /// the events that recorded them, oldest first.
+    #[serde(default)]
+    pub faults: BTreeMap<crate::ids::AgentName, Vec<u64>>,
 }
 
 /// The reverse index: links that events record in one direction, read
@@ -420,6 +424,12 @@ impl State {
             }
             Structure::RunStarted { seat } => {
                 self.running.insert(seat.clone(), seq);
+                // A new run is the person's retry after fixing the
+                // setup: what the last run reported is cleared.
+                self.faults.remove(seat);
+            }
+            Structure::SetupFault { seat } => {
+                self.faults.entry(seat.clone()).or_default().push(seq);
             }
             Structure::RunStopped { seat, .. } => {
                 self.running.remove(seat);

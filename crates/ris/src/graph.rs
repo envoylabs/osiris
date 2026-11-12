@@ -1,6 +1,15 @@
-//! The graph of work in motion, for `ris summary`: open decisions and
-//! unmerged items as nodes, and the links between them as edges, drawn
-//! as a tree.
+//! The graph `ris summary` draws: items, open decisions and open person
+//! actions as nodes, and the links between them as edges, drawn as a
+//! tree.
+//!
+//! For the open phase it is the phase's picture: every item of the
+//! phase in whatever state, each unmerged item from an earlier phase
+//! that one of them waits on (and what that waits on in turn), and the
+//! open decisions and person actions attached to any of those, whatever
+//! phase raised them. Every node is drawn, linked or not. With `--all`
+//! it is the work in motion in every phase: open decisions, open person
+//! actions and unmerged items, where a node with no edge is counted,
+//! not drawn.
 //!
 //! Edges point from what must happen first to what waits on it or is
 //! shaped by it:
@@ -8,12 +17,12 @@
 //! - a decision to each item it was raised about, and a person action
 //!   to each item it blocks or informs: `blocks` when the item is set
 //!   aside on it, `informs` otherwise;
-//! - an item to each item that depends on it, `blocks` (a dependency
-//!   must merge first).
+//! - an item to each item that depends on it: `blocks` while the
+//!   dependency is unmerged (it must merge first), `met` once it has
+//!   merged.
 //!
 //! The links come from the reverse index, and an item stands for the
-//! items it replaced. Nodes with no edge are counted, not drawn. A node
-//! with two parents is drawn under the first one reached and shown as
+//! items it replaced. A node with two parents is drawn under the first one reached and shown as
 //! `(above)` under the others, so every edge appears exactly once.
 //! Lines are cut at [`WIDTH`] columns and the drawing at [`MAX_LINES`].
 
@@ -50,11 +59,13 @@ impl std::fmt::Display for Node {
 }
 
 /// How hard a link is: the target cannot proceed until the source
-/// resolves (`Blocks`), or proceeds and is shaped by it (`Informs`).
+/// resolves (`Blocks`), proceeds and is shaped by it (`Informs`), or
+/// waited on a dependency that has since merged (`Met`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
     Blocks,
     Informs,
+    Met,
 }
 
 impl Kind {
@@ -62,16 +73,20 @@ impl Kind {
         match self {
             Self::Blocks => "blocks",
             Self::Informs => "informs",
+            Self::Met => "met",
         }
     }
 }
 
-/// The nodes in motion and the edges between them.
+/// The nodes and the edges between them.
 pub struct Graph {
-    /// Every node in motion, linked or not.
+    /// Every node, linked or not.
     pub nodes: BTreeSet<Node>,
     /// `from → [(to, kind)]`, children in order.
     pub edges: BTreeMap<Node, Vec<(Node, Kind)>>,
+    /// The open phase's picture: a node with no edge is drawn and
+    /// listed, where the graph of every phase only counts it.
+    pub whole: bool,
 }
 
 impl Graph {
@@ -79,31 +94,35 @@ impl Graph {
         Self::of_scope(l, Scope::All)
     }
 
-    /// The graph over the decisions and items in `scope`. Open person
-    /// actions are the person's own to-do and are always nodes.
+    /// The graph for `scope`: the open phase's picture, or the work in
+    /// motion in every phase.
     pub fn of_scope(l: &Loaded, scope: Scope) -> Self {
         let s = &l.state;
-        let mut nodes = BTreeSet::new();
-        for d in s.open_decisions() {
-            if scope.decision(l, d) {
-                nodes.insert(Node::Decision(d.id));
-            }
-        }
-        for a in s.actions.values() {
-            if a.state == ActionState::Open {
-                nodes.insert(Node::Action(a.id));
-            }
-        }
-        for i in s.items.values() {
-            if scope.item(i)
-                && !matches!(
-                    i.state,
-                    ItemState::Merged { .. } | ItemState::Superseded { .. }
-                )
-            {
-                nodes.insert(Node::Item(i.id));
-            }
-        }
+        let whole = scope != Scope::All;
+        let nodes = if whole {
+            phase_nodes(l, scope)
+        } else {
+            let mut nodes = BTreeSet::new();
+            nodes.extend(s.open_decisions().map(|d| Node::Decision(d.id)));
+            nodes.extend(
+                s.actions
+                    .values()
+                    .filter(|a| a.state == ActionState::Open)
+                    .map(|a| Node::Action(a.id)),
+            );
+            nodes.extend(
+                s.items
+                    .values()
+                    .filter(|i| {
+                        !matches!(
+                            i.state,
+                            ItemState::Merged { .. } | ItemState::Superseded { .. }
+                        )
+                    })
+                    .map(|i| Node::Item(i.id)),
+            );
+            nodes
+        };
         let mut edges: BTreeMap<Node, Vec<(Node, Kind)>> = BTreeMap::new();
         for &n in &nodes {
             let Node::Item(item) = n else { continue };
@@ -133,9 +152,14 @@ impl Graph {
                 }
             }
             for dep in &s.items[&item].depends_on {
-                let from = Node::Item(s.current(*dep));
+                let dep = s.current(*dep);
+                let from = Node::Item(dep);
                 if nodes.contains(&from) {
-                    edges.entry(from).or_default().push((n, Kind::Blocks));
+                    let kind = match s.items[&dep].state {
+                        ItemState::Merged { .. } => Kind::Met,
+                        _ => Kind::Blocks,
+                    };
+                    edges.entry(from).or_default().push((n, kind));
                 }
             }
         }
@@ -143,7 +167,21 @@ impl Graph {
             children.sort();
             children.dedup();
         }
-        Self { nodes, edges }
+        Self {
+            nodes,
+            edges,
+            whole,
+        }
+    }
+
+    /// The nodes that are drawn and listed: every one in the phase's
+    /// picture, otherwise those with an edge.
+    fn shown(&self) -> BTreeSet<Node> {
+        if self.whole {
+            self.nodes.clone()
+        } else {
+            self.linked()
+        }
     }
 
     fn linked(&self) -> BTreeSet<Node> {
@@ -157,7 +195,10 @@ impl Graph {
     /// The tree as lines, with what was left out counted.
     pub fn draw(&self, l: &Loaded) -> String {
         let linked = self.linked();
-        if linked.is_empty() {
+        if self.whole && self.nodes.is_empty() {
+            return "no items in this phase yet\n  next: `ris item add \"...\"`".into();
+        }
+        if !self.whole && linked.is_empty() {
             return "no links between open decisions and unmerged items".into();
         }
         let lines = self.lines(&|n| label(l, n));
@@ -169,7 +210,7 @@ impl Graph {
             ));
         }
         let unlinked = self.nodes.len() - linked.len();
-        if unlinked > 0 {
+        if !self.whole && unlinked > 0 {
             out.push(format!(
                 "{unlinked} open decision(s) and unmerged item(s) have no links"
             ));
@@ -177,13 +218,13 @@ impl Graph {
         out.join("\n")
     }
 
-    /// Every drawn line, uncut in number. Roots (linked nodes with no
-    /// parent) are walked first; then any linked node the walk missed is
+    /// Every drawn line, uncut in number. Roots (shown nodes with no
+    /// parent) are walked first; then any shown node the walk missed is
     /// walked as a root. Only a cycle has no root, and the log can hold
     /// one written before supersede refused them; without this second
     /// pass its nodes and edges would vanish from the drawing.
     fn lines(&self, label: &dyn Fn(Node) -> String) -> Vec<String> {
-        let linked = self.linked();
+        let linked = self.shown();
         let has_parent: BTreeSet<Node> = self
             .edges
             .values()
@@ -215,8 +256,8 @@ impl Graph {
     ) {
         let (branch, carry) = match (via, last) {
             (None, _) => ("", ""),
-            (Some(Kind::Blocks), false) => ("├── ", "│   "),
-            (Some(Kind::Blocks), true) => ("└── ", "    "),
+            (Some(Kind::Blocks | Kind::Met), false) => ("├── ", "│   "),
+            (Some(Kind::Blocks | Kind::Met), true) => ("└── ", "    "),
             (Some(Kind::Informs), false) => ("├╌╌ ", "│   "),
             (Some(Kind::Informs), true) => ("└╌╌ ", "    "),
         };
@@ -248,9 +289,15 @@ impl Graph {
     /// Nodes and edges for `--json`.
     pub fn json(&self, l: &Loaded) -> Value {
         let nodes: Vec<Value> = self
-            .linked()
+            .shown()
             .iter()
-            .map(|n| json!({ "id": n.to_string(), "state": state(l, *n) }))
+            .map(|n| {
+                let mut v = json!({ "id": n.to_string(), "state": state(l, *n) });
+                if let Node::Item(i) = n {
+                    v["phase"] = json!(l.state.items[i].phase.to_string());
+                }
+                v
+            })
             .collect();
         let edges: Vec<Value> = self
             .edges
@@ -280,13 +327,60 @@ fn state(l: &Loaded, n: Node) -> &'static str {
     }
 }
 
+/// The nodes of the open phase's picture: its items, what they wait on
+/// from earlier phases, and the open decisions and person actions
+/// attached to any of those. Nothing, with no phase open.
+fn phase_nodes(l: &Loaded, scope: Scope) -> BTreeSet<Node> {
+    let s = &l.state;
+    let mut nodes = BTreeSet::new();
+    let mut queue: Vec<ItemId> = s
+        .items
+        .values()
+        .filter(|i| scope.item(i) && !matches!(i.state, ItemState::Superseded { .. }))
+        .map(|i| i.id)
+        .collect();
+    nodes.extend(queue.iter().map(|i| Node::Item(*i)));
+    while let Some(item) = queue.pop() {
+        for dep in s.unlanded_dependencies(&s.items[&item]) {
+            if s.items.contains_key(&dep) && nodes.insert(Node::Item(dep)) {
+                queue.push(dep);
+            }
+        }
+        for source in s.lineage(item) {
+            for d in s.decisions_about(source) {
+                if matches!(s.decisions[d].state, DecisionState::Open) {
+                    nodes.insert(Node::Decision(*d));
+                }
+            }
+            for a in s.actions_about(source) {
+                if s.actions[a].state == ActionState::Open {
+                    nodes.insert(Node::Action(*a));
+                }
+            }
+        }
+    }
+    nodes
+}
+
+/// A node's line: id, state, who holds a claimed item, the phase of an
+/// item that is not the open phase's, and its text.
 fn label(l: &Loaded, n: Node) -> String {
     let text = match n {
         Node::Decision(d) => l.text(l.state.decisions[&d].at, "question"),
         Node::Action(a) => l.text(l.state.actions[&a].at, "what"),
         Node::Item(i) => l.text(l.state.items[&i].at, "goal"),
     };
-    format!("{n}  {}  {text}", state(l, n))
+    let mut note = String::new();
+    if let Node::Item(i) = n {
+        let item = &l.state.items[&i];
+        if let ItemState::Claimed { agent } = &item.state {
+            note.push_str(&format!(" ({agent})"));
+        }
+        if l.state.open_phase().is_some_and(|p| p.id != item.phase) {
+            note.push_str(&format!(" [{}]", item.phase));
+        }
+    }
+    format!("{n}  {}{note}  {text}", state(l, n))
 }
 
 /// At most `width` characters, ending in `…` when cut.
@@ -319,6 +413,7 @@ mod tests {
         let g = Graph {
             nodes: [a, b, c, d].into_iter().collect(),
             edges,
+            whole: false,
         };
         let lines = g.lines(&|n| format!("{n}  x"));
         assert_eq!(

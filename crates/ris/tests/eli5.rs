@@ -152,9 +152,15 @@ fn a_raiser_explains_and_the_person_drills_down() {
         assert!(case.contains(want), "missing {want:?} in:\n{case}");
     }
 
-    // The summary stays terse and points at the drilldown.
+    // The inbox stays terse and points at the drilldown; the summary
+    // counts the decision, which is about no item, and points at the
+    // walk-through.
+    let inbox = ok(&dir, None, &["inbox"]);
+    assert!(inbox.contains("the full case: ris eli5 D-1"), "{inbox}");
+    assert!(!inbox.contains("fast appends"), "no pros and cons: {inbox}");
     let summary = ok(&dir, None, &["summary"]);
-    assert!(summary.contains("the full case: ris eli5 D-1"), "{summary}");
+    assert!(summary.contains("1 open decision(s) in all"), "{summary}");
+    assert!(summary.contains("`ris decide` walks them"), "{summary}");
     assert!(
         !summary.contains("fast appends"),
         "no pros and cons on the summary"

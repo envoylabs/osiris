@@ -57,8 +57,10 @@ line of output per envelope, and ends once no seat is running; without
 - An item's `state` is its stored state. A `ready` item with an
   unmerged dependency also has `waiting_on`, the ids it waits on; the
   text output shows it as `waiting`, and `ris ready` leaves it out.
-- Graph edges (`ris summary`'s `graph`) have `from`, `to` and `kind`,
-  either `blocks` (the target waits) or `informs` (it proceeds).
+- Graph edges (`ris summary`'s `graph`) have `from`, `to` and `kind`:
+  `blocks` (the target waits), `informs` (it proceeds) or `met` (the
+  target depended on an item that has merged). Graph nodes have `id`
+  and `state`, and an item node has its `phase`.
 - Hashes are 64 lowercase hex characters.
 - Actors are typed: `{"kind": "person"}` or
   `{"kind": "agent", "seat": "heron"}`.
@@ -67,12 +69,24 @@ line of output per envelope, and ends once no seat is running; without
 
 ## What a client reads most
 
-- `ris summary`: `inbox`, `report`, `ready`, `graph` (the nodes and
-  edges of work in motion) and `checks` (what running the person's
-  action checks did, often empty). By default these cover the open
-  phase alone, and `carried_over` counts the `items` and open
-  `decisions` from earlier phases left out; `all` says whether
-  `--all` was given, in which case nothing is left out.
+- `ris summary`: `inbox`, `report`, `ready`, `graph` and `checks`
+  (what running the person's action checks did, often empty). By
+  default these cover the open phase alone. The `graph` is then the
+  phase's picture, which is all the text output draws: every item of
+  the phase in whatever state, each unmerged item of an earlier phase
+  that one of them waits on, and the open decisions and actions
+  attached to any of those, whatever phase raised them; `unlinked`
+  counts the nodes with no edge, which are listed all the same.
+  `carried_over` counts the unmerged `items` and open `decisions` from
+  earlier phases that are left out. `all` says whether `--all` was
+  given, in which case nothing is left out and the `graph` is the work
+  in motion in every phase: open decisions, open actions and unmerged
+  items, where only nodes with an edge are listed.
+- `ris report` (and `phase` in `ris phase close`'s data): `tally`,
+  the phase's `planned` items, the `merged` count (merges made while it
+  was open, carried-in items included) and `carried_over` (items, from
+  any phase up to it, neither merged nor superseded; for an open phase,
+  what would carry over if it closed now).
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
 - `ris audit`: `queue`, the open phase's done and merged items the
@@ -82,7 +96,15 @@ line of output per envelope, and ends once no seat is running; without
   `paused`, `running` and `activity`: for a running seat with a run
   file, `last` (what it last ran or said, or null), `quiet_seconds`
   since its output last changed, and `stuck` (quiet for longer than
-  `[runner] quiet_after_seconds`); null otherwise.
+  `[runner] quiet_after_seconds`); null otherwise; and `faults`, the
+  setup faults the seat reported with `ris seat fault` since its latest
+  run started, oldest first.
+- `ris phase open`: `phase`, `branch`, `docs_item` and `preflight`, what
+  the writing seats would lack to run the checks, each
+  `{"kind": "program", "check", "program"}`, `{"kind": "write", "tool",
+  "path"}` or `{"kind": "network", "tool", "host"}`; empty when nothing
+  is missing or `[runner] preflight` is off. `ris up` refuses with the
+  same findings, as a `config` error, before it starts any seat.
 - `ris show A-n`: a person action, with `blocks`, `informs`, `state`
   and, when it has one, its `check`.
 - `ris decide` with no decision: `queue`, the open substantive
@@ -91,7 +113,9 @@ line of output per envelope, and ends once no seat is running; without
   null). A client shows each and answers with
   `ris decide D-n --choose <k>`; `--rationale` is optional.
 - `ris watch`: every event as it is appended, including `run_started`
-  and `run_stopped` when the runner starts and stops a seat's agent.
+  and `run_stopped` when the runner starts and stops a seat's agent,
+  and `setup_fault` (with `seat`) when a seat reports a fault in its
+  setup.
 
 `crates/ris/tests/json_contract.rs` pins the envelope and the top-level
 keys of the most-read commands' `data`.

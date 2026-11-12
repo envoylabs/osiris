@@ -291,7 +291,9 @@ fn a_check_that_runs_past_its_limit_does_not_pass_and_is_stopped() {
     );
     // It would pass, and its background child would leave a file
     // behind, if it ran to the end. Killing only the shell would leave
-    // that child running: the whole process group must go.
+    // that child running: the whole process group must go. Each run
+    // first records its shell's pid, which is its process group's id,
+    // so a failure can show what of the group was left.
     let start = std::time::Instant::now();
     let out = ok(
         &dir,
@@ -301,22 +303,116 @@ fn a_check_that_runs_past_its_limit_does_not_pass_and_is_stopped() {
             "check",
             "A-1",
             "--command",
-            "(sleep 2; touch late) & wait",
+            "echo $$ >> groups; (sleep 2; touch late) & wait",
         ],
     );
     assert!(out.contains("A-1: its check ran past 1s"), "{out}");
+    assert!(
+        !out.contains("stopping it failed"),
+        "stopping reported a fault:\n{out}"
+    );
     let out = ok(&dir, None, &["summary"]);
     assert!(out.contains("A-1: its check ran past 1s"), "{out}");
+    assert!(
+        !out.contains("stopping it failed"),
+        "stopping reported a fault:\n{out}"
+    );
     assert!(
         start.elapsed() < std::time::Duration::from_secs(3),
         "two check-ins took {:?}",
         start.elapsed()
     );
     assert_eq!(json(&dir, &["show", "A-1"])["state"], "open");
+    // Both runs are over and their groups killed: what `ps` still lists
+    // in those groups now is what the kill missed.
+    let left = left_in_groups(&fs::read_to_string(dir.join("groups")).unwrap_or_default());
     std::thread::sleep(std::time::Duration::from_secs(3));
     assert!(
         !dir.join("late").exists(),
-        "the check was stopped, not left running"
+        "the check was stopped, but what it started ran on and wrote `late`.\n\
+         Processes in its groups just after the kill:\n{left}"
     );
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// The processes `ps` lists in the process groups named in `groups`,
+/// one id a line: a diagnostic for a failure, so it reports a `ps` that
+/// cannot be run instead of failing on it.
+fn left_in_groups(groups: &str) -> String {
+    let groups: Vec<&str> = groups.split_whitespace().collect();
+    let out = match Command::new("ps")
+        .args(["-A", "-o", "pid=,pgid=,ppid=,stat=,args="])
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+        Ok(out) => {
+            return format!(
+                "(ps ended with {}: {})",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Err(e) => return format!("(ps could not be run: {e})"),
+    };
+    rows_in_groups(&out, &groups)
+}
+
+/// The rows of a `pid pgid ppid stat args` listing whose group is one
+/// of `groups`, under a heading, or `(none)`.
+fn rows_in_groups(listing: &str, groups: &[&str]) -> String {
+    let mut left = format!("groups {}; pid pgid ppid stat args\n", groups.join(", "));
+    let rows: Vec<&str> = listing
+        .lines()
+        .filter(|l| {
+            l.split_whitespace()
+                .nth(1)
+                .is_some_and(|g| groups.contains(&g))
+        })
+        .collect();
+    if rows.is_empty() {
+        left.push_str("(none)");
+    } else {
+        left.push_str(&rows.join("\n"));
+    }
+    left
+}
+
+/// Rows are chosen by the group column alone: a pid or a parent pid
+/// equal to a group's id does not match.
+#[test]
+fn the_diagnostic_picks_rows_by_their_group() {
+    let listing = "  700   700     1 Ss   sh -c wait\n  \
+                   701   700   700 S    sleep 2\n  \
+                   800   900   700 S    other\n  \
+                   900   901     1 S    unrelated\n";
+    assert_eq!(
+        rows_in_groups(listing, &["700"]),
+        "groups 700; pid pgid ppid stat args\n  700   700     1 Ss   sh -c wait\n  701   700   700 S    sleep 2"
+    );
+    assert!(rows_in_groups(listing, &["5"]).ends_with("(none)"));
+}
+
+/// The diagnostic finds a live process by its group, so a failure of the
+/// test above would name what was left running, and it does not list a
+/// group that has nothing in it.
+#[test]
+fn the_diagnostic_lists_a_live_group_and_only_that() {
+    use std::os::unix::process::CommandExt;
+    let mut child = Command::new("sleep")
+        .arg("30")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let left = left_in_groups(&child.id().to_string());
+    let _ = child.kill();
+    let _ = child.wait();
+    if left.starts_with("(ps ") {
+        // No usable `ps` here: the diagnostic said so, which is all it
+        // promises.
+        return;
+    }
+    assert!(left.contains("sleep 30"), "{left}");
+    // Above the largest pid Linux or macOS gives out.
+    let none = left_in_groups("2147483632");
+    assert!(none.ends_with("(none)"), "{none}");
 }

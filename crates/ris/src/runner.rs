@@ -79,7 +79,9 @@ pub fn prompt(seat: &str, role: Role) -> String {
              take a substantive decision: adding to a contract or format \
              (a new event, a new JSON key) is mechanical, while removing, \
              renaming or changing the meaning of what is there is \
-             substantive. "
+             substantive. A substantive decision sets its item aside and \
+             never stops you: take another item, and leave it for the \
+             person's review. "
         }
         Role::Advisor => {
             "Work beside the person: read `ris summary` and `ris inbox`; add \
@@ -638,6 +640,14 @@ mod tests {
                 "{p}"
             );
             assert!(p.contains("renaming"), "{p}");
+            // The four-step process: a queued decision waits for the
+            // review and never stops the seat.
+            assert!(p.contains("never stops you: take another item"), "{p}");
+            assert!(p.contains("person's review"), "{p}");
+        }
+        // No prompt sends a seat to wait for a check-in.
+        for role in Role::ALL.iter().copied() {
+            assert!(!prompt("rook", role).contains("check-in"));
         }
         let p = prompt("wren", Role::Auditor);
         assert!(p.contains("the open phase's items"), "{p}");

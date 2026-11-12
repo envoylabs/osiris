@@ -77,7 +77,8 @@ enum Cmd {
     /// help: named wherever it is needed.
     #[command(hide = true)]
     Rules,
-    /// Add an agent seat to .osiris/config.toml. The person's command.
+    /// Add an agent seat to .osiris/config.toml (the person's), or
+    /// report a fault in your own seat's setup (`ris seat fault`).
     Seat {
         #[command(subcommand)]
         action: SeatCmd,
@@ -168,7 +169,7 @@ enum Cmd {
     },
     /// One record in full: an item, decision, phase or message by id.
     Show { id: String },
-    /// The check-in view of the open phase: decisions, graph, report and what is ready.
+    /// One picture of the open phase: its items, what they wait on and the open decisions on them.
     Summary {
         /// Every phase's work, not only the open phase's.
         #[arg(long)]
@@ -265,7 +266,7 @@ enum ActionCmd {
         #[arg(long = "informs")]
         informs: Vec<ItemId>,
         /// A shell command that passes once it is done; the person's
-        /// check-ins run it and close the action. The person's only.
+        /// inbox, summary and up run it and close the action. The person's only.
         #[arg(long)]
         check: Option<String>,
     },
@@ -313,6 +314,14 @@ enum SeatCmd {
     Pause(SeatSet),
     /// Resume a paused seat, or every seat.
     Resume(SeatSet),
+    /// Report a fault in your seat's setup: a path your sandbox will not
+    /// let you write, a host you cannot reach, a command you may not
+    /// run. Shown by `ris status` until your seat's next run; not a
+    /// decision. An agent's only.
+    Fault {
+        /// What is missing, and the command or path that needed it.
+        what: String,
+    },
 }
 
 #[derive(Args)]
@@ -733,9 +742,21 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     ));
                     docs = Some(id.to_string());
                 }
+                // Said now, so the configuration is fixed before `ris
+                // up`, which refuses to start seats until it is.
+                let missing = preflight(&p);
+                if !missing.is_empty() {
+                    text.push('\n');
+                    text.push_str(&ris::preflight::render(&missing));
+                }
                 Ok(Output::new(
                     text,
-                    json!({ "phase": phase.to_string(), "branch": branch, "docs_item": docs }),
+                    json!({
+                        "phase": phase.to_string(),
+                        "branch": branch,
+                        "docs_item": docs,
+                        "preflight": ris::preflight::json(&missing),
+                    }),
                 ))
             }
             PhaseCmd::Close => {
@@ -938,7 +959,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     let text = match class {
                         DecisionClass::Mechanical => format!("{id} taken: option {}", d.recommend),
                         DecisionClass::Substantive => format!(
-                            "{id} queued for the person{}",
+                            "{id} queued for the person's review{}",
                             d.about
                                 .map(|i| format!("; {i} is set aside, take another"))
                                 .unwrap_or_default()
@@ -1206,6 +1227,24 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Ok(Output::new(
                 format!("sent {id} to {to}"),
                 json!({ "message": id.to_string() }),
+            ))
+        }
+
+        Cmd::Seat {
+            action: SeatCmd::Fault { what },
+        } => {
+            let seat = agent_only(&actor)?;
+            let what = p.text("what", what)?;
+            p.run(&Command::SetupFault {
+                seat: seat.clone(),
+                what,
+            })?;
+            Ok(Output::new(
+                format!(
+                    "{seat}: setup fault recorded; `ris status` shows it to the person\n  \
+                     next: take another item that does not need it, or stop if none can be done"
+                ),
+                json!({ "seat": seat.0 }),
             ))
         }
 
@@ -1786,6 +1825,9 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         | Cmd::Scan { .. }
         | Cmd::Audit { item: None, .. }
         | Cmd::Send { .. }
+        | Cmd::Seat {
+            action: SeatCmd::Fault { .. },
+        }
         | Cmd::Item {
             action: ItemCmd::Add(_),
         }
@@ -1902,6 +1944,18 @@ fn install(p: &Project, actor: &Actor) -> Result<Output, CliError> {
     ))
 }
 
+/// What the writing seats would lack to run the project's checks, read
+/// from the configuration (`ris::preflight`); empty when the preflight
+/// is off. PATH is the person's, which a seat inherits behind the
+/// directory of `ris` itself.
+fn preflight(p: &Project) -> Vec<ris::preflight::Missing> {
+    if !p.config.runner.preflight {
+        return Vec::new();
+    }
+    let path = std::env::var("PATH").ok();
+    ris::preflight::check(&p.checks, &p.config.runner, path.as_deref())
+}
+
 fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliError> {
     if *actor != Actor::Person {
         return Err(CliError::Refused(
@@ -1918,6 +1972,17 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
     } else {
         named.to_vec()
     };
+    // Before any seat starts: can the writing seats run the checks?
+    // A seat that cannot would find out mid-item, unattended.
+    if seats
+        .iter()
+        .any(|s| p.config.agents[s].start && p.config.agents[s].role.writes())
+    {
+        let missing = preflight(p);
+        if !missing.is_empty() {
+            return Err(CliError::Config(ris::preflight::render(&missing)));
+        }
+    }
     let mut changed: Vec<String> = close_checked(p, actor)?
         .into_iter()
         .filter(|c| c.contains("closed itself"))

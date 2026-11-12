@@ -14,8 +14,10 @@ $ ris rules
 # Working with osiris
 
 This project's work goes through `ris`, the osiris command, not through
-status documents. The person decides at check-ins; agents build and
-test in between, and never wait for the person.
+status documents. The work runs in four steps, all the person's: open
+a phase, `ris up`, review, close the phase. Between up and review the
+agents build and test, and never wait for the person: nothing raised
+while the phase runs stops it, and there is no check-in in between.
 
 ## Your seat
 
@@ -83,7 +85,9 @@ The test is the cost of reversing, not whether reversal is possible.
 - **Substantive** (expensive to reverse: removing, renaming or changing
   the meaning of something in a contract or a data or wire format, a
   dependency, the scope, a design direction others build on): queue it,
-  and take another item.
+  and take another item. Raising it sets the item aside; the phase goes
+  on, and the person takes every queued decision once, at review, with
+  `ris decide`.
   ```
   ris decision raise --substantive --about I-7 --question "..." --option a --option b --recommend 1
   ```
@@ -105,8 +109,13 @@ and linked to the work it holds up; `ris` refuses an agent that raises
 one. An item may wait on an action or proceed under one; its brief
 names them.
 
-When you are blocked, raise one of two things and take another item:
+When you are blocked, raise one of three things and take another item:
 
+- **A setup fault**, when your sandbox or permissions do not let you do
+  the work: a path you cannot write, a host you cannot reach, a command
+  you may not run. `ris seat fault "what is missing, and what needed
+  it"`. It is not a decision: the person fixes the configuration, and
+  `ris status` shows it until your seat's next run.
 - **An item**, for a fault in the harness or the code:
   `ris item add "what is wrong and what fixes it"`.
 - **A decision**, for a judgement, as under Decisions. When what you
@@ -261,7 +270,7 @@ D-1 taken: option 0
 [exit 0]
 
 $ RIS_AGENT=heron ris decision raise --substantive --about I-3 --question daemon now or CLI-direct? --option daemon --option cli-direct --recommend 1
-D-2 queued for the person; I-3 is set aside, take another
+D-2 queued for the person's review; I-3 is set aside, take another
 [exit 0]
 
 $ ris inbox
@@ -280,7 +289,7 @@ ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<has
 
 $ RIS_AGENT=heron ris decide D-2 --choose 1 --rationale agents do not take these
 [stderr] refused: D-2 is substantive and is the person's to take
-  next: leave it in the queue; the person takes it at the next check-in
+  next: leave it in the queue; the person takes it at review, with `ris decide`
 [exit 2]
 
 $ ris decide D-2 --choose 1 --rationale fewer failure modes for agents
@@ -412,7 +421,12 @@ $ ris --json report
           "kind": "person"
         }
       }
-    ]
+    ],
+    "tally": {
+      "carried_over": 4,
+      "merged": 0,
+      "planned": 4
+    }
   },
   "format": 1,
   "ok": true
@@ -541,7 +555,12 @@ $ ris --json report
           "kind": "person"
         }
       }
-    ]
+    ],
+    "tally": {
+      "carried_over": 4,
+      "merged": 0,
+      "planned": 4
+    }
   },
   "format": 1,
   "ok": true
@@ -680,7 +699,12 @@ $ ris --json report
           "kind": "person"
         }
       }
-    ]
+    ],
+    "tally": {
+      "carried_over": 4,
+      "merged": 0,
+      "planned": 4
+    }
   },
   "format": 1,
   "ok": true
@@ -821,7 +845,7 @@ no messages
 [exit 0]
 
 $ RIS_AGENT=wren ris decision raise --substantive --about I-2 --question rocksdb or sqlite? --option rocksdb --option sqlite
-D-3 queued for the person; I-2 is set aside, take another
+D-3 queued for the person's review; I-2 is set aside, take another
 [exit 0]
 
 $ ris decide D-3 --other sqlite now, bench rocksdb later --rationale the plan's own answer
@@ -946,6 +970,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
+P-1: 4 planned, 2 merged, 2 carry over if closed now
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -969,48 +994,15 @@ previous report: <hash>
 [exit 0]
 
 $ ris summary
-== decisions ==
-no decisions waiting
---
-answer:  ris decide D-n --choose <option number> --rationale "..."
-     or  ris decide D-n --other "your own answer" --rationale "..."
-   and   ris action done A-n --note "what happened" (or --evidence <file>)
-look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
-ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<hash> evidence
-
-== what waits on what ==
-no links between open decisions and unmerged items
-
-== report ==
 P-1 open: first slice
 items: 1 claimed, 2 merged, 1 ready
-  I-1   merged   the event envelope (<hash>)
-  I-2   ready    the fold
-  I-3   merged   the cli (<hash>)
-  I-4   claimed  a lint fix (wren)
-substantive decisions (1 answered outside the offered options):
-  D-2 [substantive] daemon now or CLI-direct?  (about I-3)
-       0: daemon
-     * 1: cli-direct
-       taken by the person: 1. fewer failure modes for agents
-  D-3 [substantive] rocksdb or sqlite?  (about I-2)
-     * 0: rocksdb
-       1: sqlite
-     + 2: sqlite now, bench rocksdb later
-       taken by the person: 2, outside the offered options. the plan's own answer
-mechanical decisions (check the class):
-  D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
-failed checks:
-  I-1 lint failed (E-<hash>)
-  I-4 lint failed (E-<hash>)
-audited: 1 of 2 done or merged
-messages: 1
-log: 35 events, head <hash>
-report: <hash> (if closed now)
-previous report: <hash>
 
-== ready ==
-I-2   ready    the fold
+I-1  merged  the event envelope
+└── I-2  ready  the fold
+I-3  merged  the cli
+I-4  claimed (wren)  a lint fix
+--
+the report, decisions taken and failed checks: `ris report`
 [exit 0]
 
 $ ris verify
@@ -1024,6 +1016,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
+P-1: 4 planned, 2 merged, 2 carried over
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -1198,7 +1191,12 @@ $ ris --json report
           "kind": "person"
         }
       }
-    ]
+    ],
+    "tally": {
+      "carried_over": 2,
+      "merged": 2,
+      "planned": 4
+    }
   },
   "format": 1,
   "ok": true

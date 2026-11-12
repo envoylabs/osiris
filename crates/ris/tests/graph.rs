@@ -50,16 +50,21 @@ fn raise_substantive(dir: &Path, about: &str) {
     );
 }
 
+/// The drawing in the summary: what lies between the phase's heading
+/// lines and the footer.
+fn picture(text: &str) -> &str {
+    text.split_once("\n\n")
+        .unwrap()
+        .1
+        .split("\n--\n")
+        .next()
+        .unwrap()
+}
+
 /// Read the drawing back into `(parent, child, kind)` edges, using the
 /// indentation: a child sits four columns right of its parent.
 fn edges_drawn(text: &str) -> Vec<(String, String, String)> {
-    let section = text
-        .split("== what waits on what ==")
-        .nth(1)
-        .unwrap()
-        .split("== report ==")
-        .next()
-        .unwrap();
+    let section = picture(text);
     let mut stack: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for line in section.lines().filter(|l| !l.trim().is_empty()) {
@@ -170,9 +175,26 @@ fn every_edge_is_drawn_once_and_matches_the_json() {
     // I-3 has two parents: drawn once, marked under the other.
     assert!(text.contains("I-3  (above)"), "{text}");
     assert_eq!(v["data"]["graph"]["unlinked"], 1, "I-6 has no links");
-    assert!(text.contains("1 open decision(s) and unmerged item(s) have no links"));
-    let section = text.split("== what waits on what ==").nth(1).unwrap();
-    let section = section.split("== report ==").next().unwrap();
+    // The phase's picture draws an item with no links as well, and
+    // leaves out the item that was replaced.
+    let section = picture(&text);
+    assert!(section.lines().any(|l| l == "I-6  ready  alone"), "{text}");
+    assert!(!section.contains("I-4"), "{text}");
+    let nodes: Vec<&str> = v["data"]["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        nodes,
+        ["D-1", "D-2", "I-1", "I-2", "I-3", "I-5", "I-6"],
+        "{v}"
+    );
+    // Every phase's graph counts the unlinked instead of drawing them.
+    let all = ok(&dir, None, &["summary", "--all"]);
+    assert!(all.contains("1 open decision(s) and unmerged item(s) have no links"));
+    assert!(!all.contains("I-6  ready  alone"), "{all}");
     for line in section.lines() {
         assert!(line.chars().count() <= 80, "too wide: {line}");
     }
@@ -249,25 +271,20 @@ fn a_waiting_item_has_one_state_on_every_screen() {
     let ready = ok(&dir, Some("heron"), &["ready"]);
     assert!(!ready.contains("I-2"), "{ready}");
     let text = ok(&dir, None, &["summary"]);
-    let graph = text
-        .split("== what waits on what ==")
-        .nth(1)
-        .unwrap()
-        .split("== report ==")
-        .next()
-        .unwrap();
-    assert!(graph.contains("I-2  waiting"), "{text}");
+    assert!(text.contains("items: 1 ready, 1 waiting"), "{text}");
+    assert!(picture(&text).contains("I-2  waiting"), "{text}");
     let report = ok(&dir, None, &["report"]);
     assert!(report.contains("items: 1 ready, 1 waiting"), "{report}");
     let line = report.lines().find(|l| l.contains("I-2")).unwrap();
     assert!(line.contains("waiting"), "{report}");
     assert!(!line.contains("ready"), "{report}");
-    let report_in_summary = text.split("== report ==").nth(1).unwrap();
+    let all = ok(&dir, None, &["summary", "--all"]);
+    let report_in_summary = all.split("== report ==").nth(1).unwrap();
     let line = report_in_summary
         .lines()
         .find(|l| l.contains("I-2"))
         .unwrap();
-    assert!(line.contains("waiting"), "{text}");
+    assert!(line.contains("waiting"), "{all}");
     assert!(ok(&dir, None, &["show", "I-2"]).starts_with("I-2 waiting"));
 
     let out = ris(&dir, None, &["--json", "report"]);

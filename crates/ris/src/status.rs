@@ -56,6 +56,10 @@ pub struct Seat {
     /// For a running seat: what its latest run last did, and how long
     /// ago its output last changed.
     pub activity: Option<Activity>,
+    /// Faults in its setup it reported (`ris fault`) since its latest
+    /// run started, oldest first: what the person fixes in the
+    /// configuration before the next `ris up`.
+    pub faults: Vec<String>,
 }
 
 /// What a running seat last did, read from its run's output file.
@@ -208,6 +212,14 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 activity: running
                     .then(|| activity(&runs, name, p.config.runner.quiet_after_seconds, now))
                     .flatten(),
+                faults: l
+                    .state
+                    .faults
+                    .get(&AgentName(name.clone()))
+                    .into_iter()
+                    .flatten()
+                    .map(|at| l.text(*at, "what").to_owned())
+                    .collect(),
             }
         })
         .collect()
@@ -263,6 +275,9 @@ fn seat_lines(s: &Seat, place: &str) -> String {
             a.last.as_deref().unwrap_or("(nothing said yet)")
         ));
     }
+    for f in &s.faults {
+        line.push_str(&format!("\n{:<10} setup fault: {f}", ""));
+    }
     line
 }
 
@@ -280,6 +295,12 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
     if seats.is_empty() {
         text.push_str("no seats\n  next: ris seat add <name> --role lead\n");
     }
+    if seats.iter().any(|s| !s.faults.is_empty()) {
+        text.push_str(
+            "a setup fault is something a seat's sandbox or permissions do not allow\n  \
+             next: allow it in [runner] in .osiris/config.toml, then `ris up <seat>`\n",
+        );
+    }
     text.push_str("--\n+n -n: commits ahead of and behind the phase branch");
     let rows: Vec<_> = seats
         .iter()
@@ -296,6 +317,7 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
                 "paused": s.paused,
                 "running": s.running,
                 "activity": s.activity,
+                "faults": s.faults,
             })
         })
         .collect();
@@ -326,10 +348,15 @@ mod tests {
                 quiet_seconds: 5,
                 stuck: false,
             }),
+            faults: vec!["cannot write the build cache".into()],
         };
         let text = seat_lines(&s, "../heron");
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2, "{text}");
+        assert_eq!(lines.len(), 3, "{text}");
+        assert_eq!(
+            lines[2].trim_start(),
+            "setup fault: cannot write the build cache"
+        );
         assert!(
             lines[0].starts_with("heron") && lines[0].ends_with("running  paused"),
             "{text}"
