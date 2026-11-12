@@ -23,6 +23,7 @@ use ris::render::{self, Output};
 #[command(
     name = "ris",
     version,
+    disable_version_flag = true,
     disable_help_subcommand = true,
     about = "osiris: decide at the boundaries, build in between",
     after_help = "Ids: I-n item (a unit of work, one commit), D-n decision, A-n person action, \
@@ -32,6 +33,11 @@ struct Cli {
     /// Print JSON instead of text.
     #[arg(long, global = true)]
     json: bool,
+    /// Print the version. It works as it always has and is left out of
+    /// the help, which must fit one screen: nobody reads the help to
+    /// find it.
+    #[arg(short = 'V', long, action = clap::ArgAction::Version, hide = true)]
+    version: (),
     #[command(subcommand)]
     command: Cmd,
 }
@@ -178,6 +184,17 @@ enum Cmd {
     },
     /// The phase report.
     Report,
+    /// The phase's change set as a map of the source code: every source
+    /// file with the lines the phase added and removed, and how the
+    /// files connect. With no phase named, the open phase, or the last
+    /// one closed.
+    Map {
+        /// The phase, such as P-3.
+        phase: Option<ris_core::ids::PhaseId>,
+        /// Write one self-contained page that draws the map here.
+        #[arg(long, value_name = "FILE")]
+        html: Option<PathBuf>,
+    },
     /// Where each seat is: role, worktree, branch, claim, commits ahead
     /// of and behind the phase branch, uncommitted changes.
     Status,
@@ -798,7 +815,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 };
                 let out = render::report(&l);
                 Ok(Output::new(
-                    format!("{}\n{closing}", out.text),
+                    format!(
+                        "{}\n{closing}\nthe change set as a map of the source: `ris map --html <file>`",
+                        out.text
+                    ),
                     json!({ "report": report, "phase": out.json, "closing_merge": closing }),
                 ))
             }
@@ -1381,6 +1401,11 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 
+        Cmd::Map { phase, html } => {
+            let range = ris::map::range(&p, &p.load()?, *phase)?;
+            ris::map::output(ris::map::build(&p, &range)?, html.as_deref())
+        }
+
         Cmd::Status => Ok(ris::status::render(&p, &p.load()?)),
 
         Cmd::Scan { paths } => {
@@ -1842,6 +1867,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         | Cmd::Show { .. }
         | Cmd::Summary { .. }
         | Cmd::Report
+        | Cmd::Map { html: None, .. }
         | Cmd::Status
         | Cmd::Verify
         | Cmd::Eli5 { .. }

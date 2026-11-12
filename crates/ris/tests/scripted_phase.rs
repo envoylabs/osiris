@@ -564,6 +564,7 @@ fn every_help_fits_one_screen() {
         &["show"],
         &["summary"],
         &["report"],
+        &["map"],
         &["scan"],
         &["verify"],
         &["export"],

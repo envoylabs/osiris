@@ -221,6 +221,7 @@ tries it again.
 ```sh
 ris summary                            # the phase in one picture: its items and what they wait on
 ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
+ris map --html map.html                # the phase's change set drawn over the source files, as one page
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
@@ -246,6 +247,30 @@ decisions, `ris report` for the report, the decisions taken, failed
 checks and hashes, and `ris summary --all` for the long view of every
 phase (the decision queue, all work in motion, the report and what is
 ready). With no phase open, the summary says so and how to open one.
+
+Where the summary draws the phase's items, `ris map` draws what the
+phase did to the code. Its nodes are the repository's source files,
+each with the lines the phase added and removed, read from git as the
+phase branch against the main line; unchanged files are there too,
+faint. Its edges are how the code connects (for Rust, `mod` and `use`
+lines, found by scanning). A file that touches the outside (a
+database, the filesystem, the network, starting a process), found from
+what it imports, is ringed, and so is one you list as a contract or
+format:
+
+```toml
+[map]
+contracts = ["docs/json.md", "crates/*/src/event.rs", "**/*.proto"]
+```
+
+A node is larger the more the phase changed it, and larger again for
+touching the outside, so the eye lands first on large changes at the
+edges of the system. `ris map --html map.html` writes one page that
+needs no network (d3 is inlined): hover a file for its path and
+numbers, drag it, scroll to zoom. `ris map` alone lists the changed
+files, and `ris map --json` prints the graph document the page draws
+(`docs/json.md`). After `ris phase close` the same commands show the
+phase just closed, and `ris map P-n` an earlier one.
 
 Person actions (A-n) are your own to-do list: only you raise them
 (`ris action raise "..." --done-when "..." --blocks I-7`), linked to

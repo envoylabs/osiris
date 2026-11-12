@@ -1038,6 +1038,7 @@ log: 36 events, head <hash>
 report: <hash>
 previous report: <hash>
 closing merge: none needed; the phase's work is already on main
+the change set as a map of the source: `ris map --html <file>`
 [exit 0]
 
 $ ris phase close

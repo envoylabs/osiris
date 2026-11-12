@@ -119,3 +119,75 @@ line of output per envelope, and ends once no seat is running; without
 
 `crates/ris/tests/json_contract.rs` pins the envelope and the top-level
 keys of the most-read commands' `data`.
+
+## The map document
+
+`ris map` gives the phase's change set as a graph over the source
+code: the open phase's, or with none open the last closed one's, or
+that of the phase named (`ris map P-3`). Its `data` is the graph
+document. The document is the contract and holds everything there is
+to draw: `ris map --html <file>` writes a page that embeds the same
+document, as JSON in the element `<script id="map-data"
+type="application/json">`, and draws nothing that is not in it, so any
+other renderer draws the same map from either source. It follows the
+rule of the rest of format 1: keys are added, never removed, renamed
+or reshaped.
+
+```json
+{
+  "phase": "P-3",
+  "base": "<commit>",
+  "tip": "<commit>",
+  "tip_ref": "phase/P-3",
+  "totals": {"files": 64, "changed": 12, "added": 371, "removed": 48, "outside": 43},
+  "nodes": [
+    {"path": "src/store.rs", "language": "rust", "status": "modified",
+     "added": 12, "removed": 3, "external": ["filesystem"],
+     "contract": false, "weight": 5.77}
+  ],
+  "edges": [
+    {"from": "src/store.rs", "to": "src/wire.rs", "kind": "use"}
+  ]
+}
+```
+
+- `base` and `tip` are the commits compared: where the phase left the
+  main line, and the phase's tip, whose files are the nodes. `tip_ref`
+  says what named the tip: the phase's branch while it exists, `HEAD`
+  for an open phase with no branch of its own, or the closing merge
+  for a closed phase. `base` is null when where the work left the main
+  line is not known, and then no node carries a diff. `phase` is null
+  in a project that has never opened one.
+- `nodes` are the repository's source files, sorted by `path`, which
+  is relative to the repository root and is the node's identity. A
+  file is source by its extension; `language` names it. A file that
+  matches a `[map] contracts` pattern in `.osiris/config.toml` is a
+  node as well, with `language` null when it is not source code.
+  Files that are neither are not on the map, whatever the phase did to
+  them.
+- `status` is `added`, `modified`, `deleted` or `unchanged` in the
+  phase, and `added` and `removed` count the lines the phase added and
+  removed (`git diff --numstat` of `base` against `tip`, renames not
+  followed). A deleted file is a node with no edges.
+- `external` says how the file touches the outside, found from what it
+  imports: any of `database`, `filesystem`, `network` and `process`,
+  sorted; empty when it does not. `contract` is whether a `[map]
+  contracts` pattern names it.
+- `weight` is how much the node should draw the eye. It is 1 for a
+  file nothing happened to, grows with the size of the diff (on a log
+  scale) and is 2 higher for a file that is external or a contract. A
+  renderer may size by it; the exact formula is not part of the
+  contract.
+- `edges` are how the code connects, each from the file that names the
+  other, sorted. `kind` is the kind of line that makes the edge. For
+  Rust: `mod` (a `mod name;` line, to the module's file) and `use` (a
+  `use` line or a qualified path through `crate`, `self`, `super` or a
+  package of the repository, to the deepest module file it names).
+  Edges are found by scanning the text, per language; a language with
+  no scanner yet has nodes and no edges, and gaining one adds edges
+  and `kind` values without changing the document's shape.
+- `totals` counts the nodes (`files`), those not `unchanged`
+  (`changed`), their lines `added` and `removed`, and the nodes that
+  are external or a contract (`outside`).
+
+`crates/ris/tests/map.rs` pins these keys.
