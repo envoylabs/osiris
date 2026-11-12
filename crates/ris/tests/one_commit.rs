@@ -3,6 +3,8 @@
 //! phase the merged item was added in), or from where
 //! the phase branch left the main line before the first.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -21,6 +23,7 @@ fn ris(dir: &Path, agent: Option<&str>, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_ris"));
     cmd.args(args)
         .current_dir(dir)
+        .envs(common::GIT_IDENTITY)
         .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1");

@@ -1697,6 +1697,32 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Refuse, before git is asked to commit in `dir`, when git has no
+/// identity to commit with there. `git var GIT_COMMITTER_IDENT` fails
+/// exactly when a commit would, so the person is told what is missing
+/// and how to set it, instead of reading the failed merge or rebase as
+/// a conflict. `what` names the step that commits.
+fn require_git_identity(dir: &std::path::Path, what: &str) -> Result<(), CliError> {
+    match git_identity_missing(dir, what) {
+        None => Ok(()),
+        Some(why) => Err(CliError::Other(format!(
+            "refused: {why}, then run it again"
+        ))),
+    }
+}
+
+/// Why git cannot commit in `dir` for `what`, with the commands that
+/// set an identity, or `None` when it can.
+fn git_identity_missing(dir: &std::path::Path, what: &str) -> Option<String> {
+    git(dir, &["var", "GIT_COMMITTER_IDENT"]).err().map(|_| {
+        format!(
+            "git has no identity to commit with here, and {what} makes a commit\n  \
+             next: `git config user.name \"<your name>\"` and `git config user.email \"<your address>\"` \
+             (add --global to set them for every repository)"
+        )
+    })
+}
+
 /// `ris show E-<hex>`: one piece of evidence, by full hash or a unique
 /// prefix. Content-addressed, so the bytes are checked against the id.
 fn show_evidence(p: &Project, hex: &str) -> Result<Output, CliError> {
@@ -2231,6 +2257,9 @@ fn rebase_over_rules(
              next: `git rebase {phase}` in its worktree and resolve, then `ris up {seat}`",
             files.join(", ")
         ));
+    }
+    if let Some(why) = git_identity_missing(dir, &format!("the rebase onto {phase}")) {
+        return left(format!("{why}, then `ris up {seat}`"));
     }
     match git(dir, &["rebase", "--quiet", phase]) {
         Ok(_) => format!(
@@ -2901,6 +2930,7 @@ fn merge_from_worktree(
     // that cannot go through leaves the worktree as it was. A branch
     // already on top of the phase branch has nothing to rebase.
     if git(&p.work, &["merge-base", "--is-ancestor", &phase, "HEAD"]).is_err() {
+        require_git_identity(&p.work, &format!("the rebase onto {phase}"))?;
         match rebase_outlook(&p.work, &phase) {
             RebaseOutlook::Conflict(files) => {
                 return Err(CliError::Other(format!(
@@ -3058,6 +3088,10 @@ fn closing_merge(
              next: the phase stays open until {branch} can merge into {main}"
         )));
     }
+    require_git_identity(
+        &p.root,
+        &format!("the closing merge of {branch} into {main}"),
+    )?;
     let switched = here != main;
     if switched {
         git(&p.root, &["switch", "--quiet", &main])

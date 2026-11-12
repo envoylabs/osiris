@@ -3,6 +3,8 @@
 //! a merging and a close. Output is compared to a golden file with
 //! hashes normalised. Set `UPDATE_GOLDEN=1` to rewrite the golden file.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -43,6 +45,7 @@ impl Sandbox {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_ris"));
         cmd.args(args)
             .current_dir(&self.dir)
+            .envs(common::GIT_IDENTITY)
             .env_remove("RIS_ROOT")
             .env("RIS_AGENT", "person");
         if let Some(a) = agent {

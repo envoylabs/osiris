@@ -9,6 +9,8 @@
 //! recording a person action done. The phase ends with every item
 //! merged and reviewed and the chain verified.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -32,6 +34,7 @@ fn ris(dir: &Path, agent: &str, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ris"))
         .args(args)
         .current_dir(dir)
+        .envs(common::GIT_IDENTITY)
         .env("RIS_AGENT", agent)
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1")
