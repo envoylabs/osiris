@@ -21,6 +21,7 @@ toml.workspace = true
 getrandom.workspace = true
 anstyle.workspace = true
 crossterm.workspace = true
+rustix.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

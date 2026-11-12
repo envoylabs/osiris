@@ -529,6 +529,7 @@ dependencies = [
  "getrandom",
  "ris-core",
  "ris-store-sqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
