@@ -245,14 +245,15 @@ checks and hashes, and `ris summary --all` for the long view of every
 phase (the decision queue, all work in motion, the report and what is
 ready). With no phase open, the summary says so and how to open one.
 
-Person actions (A-n) are your own to-do list:
-only you raise them (`ris action raise "..." --done-when "..." --blocks
-I-7`), linked to the items they hold up. An agent that is blocked raises
+Person actions (A-n) are your own to-do list: only you raise them
+(`ris action raise "..." --done-when "..." --blocks I-7`), linked to
+the items they hold up. An agent that is blocked raises a setup fault,
 an item or a decision instead, and never an action. An action that
 names a check closes itself the next time you run `ris inbox`, `ris
 summary` or `ris up` once the check passes. A check that runs past
 `action_check_seconds` does not pass and is stopped with everything it
-started; if stopping it fails, the command says so and why, since what it started may still be running.
+started; if stopping it fails, the command says so and why, since what
+it started may still be running.
 
 Only substantive decisions wait for you: those expensive to reverse,
 such as removing, renaming or changing the meaning of something in a
