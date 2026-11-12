@@ -989,49 +989,15 @@ previous report: <hash>
 [exit 0]
 
 $ ris summary
-== decisions ==
-no decisions waiting
---
-answer:  ris decide D-n --choose <option number> --rationale "..."
-     or  ris decide D-n --other "your own answer" --rationale "..."
-   and   ris action done A-n --note "what happened" (or --evidence <file>)
-look:    ris eli5 D-n (a decision's full case)    ris show <id>    ris ready    ris report
-ids:     I-n item   D-n decision   A-n action   P-n phase   M-n message   E-<hash> evidence
-
-== what waits on what ==
-no links between open decisions and unmerged items
-
-== report ==
 P-1 open: first slice
 items: 1 claimed, 2 merged, 1 ready
-  I-1   merged   the event envelope (<hash>)
-  I-2   ready    the fold
-  I-3   merged   the cli (<hash>)
-  I-4   claimed  a lint fix (wren)
-P-1: 4 planned, 2 merged, 2 carry over if closed now
-substantive decisions (1 answered outside the offered options):
-  D-2 [substantive] daemon now or CLI-direct?  (about I-3)
-       0: daemon
-     * 1: cli-direct
-       taken by the person: 1. fewer failure modes for agents
-  D-3 [substantive] rocksdb or sqlite?  (about I-2)
-     * 0: rocksdb
-       1: sqlite
-     + 2: sqlite now, bench rocksdb later
-       taken by the person: 2, outside the offered options. the plan's own answer
-mechanical decisions (check the class):
-  D-1   sha2 or blake3?  → sha2  (agent heron, I-1)
-failed checks:
-  I-1 lint failed (E-<hash>)
-  I-4 lint failed (E-<hash>)
-audited: 1 of 2 done or merged
-messages: 1
-log: 35 events, head <hash>
-report: <hash> (if closed now)
-previous report: <hash>
 
-== ready ==
-I-2   ready    the fold
+I-1  merged  the event envelope
+└── I-2  ready  the fold
+I-3  merged  the cli
+I-4  claimed (wren)  a lint fix
+--
+the report, decisions taken and failed checks: `ris report`
 [exit 0]
 
 $ ris verify

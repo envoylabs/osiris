@@ -57,8 +57,10 @@ line of output per envelope, and ends once no seat is running; without
 - An item's `state` is its stored state. A `ready` item with an
   unmerged dependency also has `waiting_on`, the ids it waits on; the
   text output shows it as `waiting`, and `ris ready` leaves it out.
-- Graph edges (`ris summary`'s `graph`) have `from`, `to` and `kind`,
-  either `blocks` (the target waits) or `informs` (it proceeds).
+- Graph edges (`ris summary`'s `graph`) have `from`, `to` and `kind`:
+  `blocks` (the target waits), `informs` (it proceeds) or `met` (the
+  target depended on an item that has merged). Graph nodes have `id`
+  and `state`, and an item node has its `phase`.
 - Hashes are 64 lowercase hex characters.
 - Actors are typed: `{"kind": "person"}` or
   `{"kind": "agent", "seat": "heron"}`.
@@ -67,12 +69,19 @@ line of output per envelope, and ends once no seat is running; without
 
 ## What a client reads most
 
-- `ris summary`: `inbox`, `report`, `ready`, `graph` (the nodes and
-  edges of work in motion) and `checks` (what running the person's
-  action checks did, often empty). By default these cover the open
-  phase alone, and `carried_over` counts the `items` and open
-  `decisions` from earlier phases left out; `all` says whether
-  `--all` was given, in which case nothing is left out.
+- `ris summary`: `inbox`, `report`, `ready`, `graph` and `checks`
+  (what running the person's action checks did, often empty). By
+  default these cover the open phase alone. The `graph` is then the
+  phase's picture, which is all the text output draws: every item of
+  the phase in whatever state, each unmerged item of an earlier phase
+  that one of them waits on, and the open decisions and actions
+  attached to any of those, whatever phase raised them; `unlinked`
+  counts the nodes with no edge, which are listed all the same.
+  `carried_over` counts the unmerged `items` and open `decisions` from
+  earlier phases that are left out. `all` says whether `--all` was
+  given, in which case nothing is left out and the `graph` is the work
+  in motion in every phase: open decisions, open actions and unmerged
+  items, where only nodes with an edge are listed.
 - `ris report` (and `phase` in `ris phase close`'s data): `tally`,
   the phase's `planned` items, the `merged` count (merges made while it
   was open, carried-in items included) and `carried_over` (items, from

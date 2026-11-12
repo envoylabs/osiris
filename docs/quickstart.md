@@ -202,7 +202,7 @@ tries it again.
 ## 5. Step three: review
 
 ```sh
-ris summary                            # decisions, your actions, what waits on what, the report
+ris summary                            # the phase in one picture: its items and what they wait on
 ris decide                             # each queued decision's case, then pick with one key
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
@@ -215,14 +215,20 @@ queued decision in turn. Taking one returns the items it alone set
 aside to ready: a seat still running takes them, and `ris up` starts
 the seats that have stopped.
 
-The summary covers the open phase: its decisions, its items and what
-of it is ready. Work carried over from earlier phases is counted at the
-top, and `ris summary --all` shows it. With no phase open, the summary
-says so and names the next step.
+The summary is one picture of the open phase and nothing else: its
+goal, its items counted by state, and a drawing of the items, each with
+its state, under what it waits on. An item the phase waits on from an
+earlier phase is drawn too, marked with that phase, and so is every
+open decision or action attached to a drawn item, whatever phase raised
+it. Hard edges (the item waits, or waited on something now merged) are
+solid and soft ones (it proceeds) dashed. A footer counts what is left
+out and names the command that shows it: `ris decide` for the open
+decisions, `ris report` for the report, the decisions taken, failed
+checks and hashes, and `ris summary --all` for the long view of every
+phase (the decision queue, all work in motion, the report and what is
+ready). With no phase open, the summary says so and how to open one.
 
-The summary draws what waits on what: open decisions, actions and
-unmerged items, with hard edges (the item waits) solid and soft ones
-(it proceeds) dashed. Person actions (A-n) are your own to-do list:
+Person actions (A-n) are your own to-do list:
 only you raise them (`ris action raise "..." --done-when "..." --blocks
 I-7`), linked to the items they hold up. An agent that is blocked raises
 an item or a decision instead, and never an action. An action that

@@ -1064,25 +1064,35 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
     Output::new(s.trim_end(), json)
 }
 
-/// `ris summary`: the review view. The decision queue first, since
-/// it is what blocks agents; then the graph, the report and what is
-/// ready to claim. By default each section covers the open phase alone,
-/// and what it leaves out from earlier phases is counted; `all` shows
-/// everything, each section then the same as its own command.
+/// `ris summary`: the review view, one picture of the open phase. Its
+/// goal, its items counted by state, and the graph: the phase's items with their
+/// states, what they wait on, and the open decisions attached to any of
+/// those. What is left out is counted in a footer that names the
+/// command showing it. With no phase open it says so and how to open
+/// one.
+///
+/// `all` is the long view of every phase instead: the decision queue,
+/// the graph of all work in motion, the report and what is ready, each
+/// section the same as its own command.
+///
+/// The JSON carries the same keys either way; by default `inbox`,
+/// `report` and `ready` cover the open phase alone.
 pub fn summary(l: &Loaded, actor: &Actor, all: bool) -> Output {
+    use crate::graph::Node;
     let scope = Scope::of(l, all);
     let queue = inbox_in(l, actor, scope);
     let rep = report_in(l, scope);
     let rdy = ready_in(l, scope);
     let graph = crate::graph::Graph::of_scope(l, scope);
-    // Unsettled work outside the scope: items not merged or superseded,
-    // and open decisions.
+    // Unsettled work left out: items not merged or superseded and open
+    // decisions that are outside the scope and not drawn in the graph.
     let carried_items = l
         .state
         .items
         .values()
         .filter(|i| {
             !scope.item(i)
+                && !graph.nodes.contains(&Node::Item(i.id))
                 && !matches!(
                     i.state,
                     ItemState::Merged { .. } | ItemState::Superseded { .. }
@@ -1092,34 +1102,65 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool) -> Output {
     let carried_decisions = l
         .state
         .open_decisions()
-        .filter(|d| !scope.decision(l, d))
+        .filter(|d| !scope.decision(l, d) && !graph.nodes.contains(&Node::Decision(d.id)))
         .count();
-    let mut head = String::new();
-    if scope == Scope::Open(None) {
-        head.push_str(
-            "no phase is open\n  next: open one with `ris phase open \"<goal>\"`, then bring items into it\n",
-        );
-    }
-    if carried_items + carried_decisions > 0 {
-        head.push_str(&format!(
+    let carried = if carried_items + carried_decisions > 0 {
+        format!(
             "{carried_items} item(s) and {carried_decisions} open decision(s) from earlier phases are not shown\n  \
              next: `ris summary --all` shows them\n"
-        ));
-    }
-    if !head.is_empty() {
-        head.push('\n');
-    }
-    let text = format!(
-        "{head}{}\n{}\n\n{}\n{}\n\n{}\n{}\n\n{}\n{}",
-        style::header("== decisions =="),
-        queue.text,
-        style::header("== what waits on what =="),
-        graph.draw(l),
-        style::header("== report =="),
-        rep.text,
-        style::header("== ready =="),
-        rdy.text
-    );
+        )
+    } else {
+        String::new()
+    };
+    let text = if all {
+        format!(
+            "{}\n{}\n\n{}\n{}\n\n{}\n{}\n\n{}\n{}",
+            style::header("== decisions =="),
+            queue.text,
+            style::header("== what waits on what =="),
+            graph.draw(l),
+            style::header("== report =="),
+            rep.text,
+            style::header("== ready =="),
+            rdy.text
+        )
+    } else if let Some(phase) = l.state.open_phase() {
+        let mut counts = std::collections::BTreeMap::new();
+        for i in l.state.items.values().filter(|i| scope.item(i)) {
+            *counts.entry(shown_state(l, i)).or_insert(0usize) += 1;
+        }
+        let mut s = format!("{} open: {}\n", phase.id, l.text(phase.at, "goal"));
+        if !counts.is_empty() {
+            s.push_str(&format!(
+                "items: {}\n",
+                counts
+                    .iter()
+                    .map(|(k, v)| format!("{v} {k}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        s.push_str(&format!("\n{}\n", graph.draw(l)));
+        let open = l
+            .state
+            .open_decisions()
+            .filter(|d| d.class == DecisionClass::Substantive)
+            .count();
+        let mut foot = String::from("--\n");
+        if open > 0 {
+            foot.push_str(&format!(
+                "{open} open decision(s) in all, for the person\n  next: `ris decide` walks them\n"
+            ));
+        }
+        foot.push_str(&carried);
+        foot.push_str("the report, decisions taken and failed checks: `ris report`");
+        s.push_str(&style::dim(&foot));
+        s
+    } else {
+        format!("no phase is open\n  next: open one with `ris phase open \"<goal>\"`\n{carried}")
+            .trim_end()
+            .to_owned()
+    };
     Output::new(
         text,
         json!({

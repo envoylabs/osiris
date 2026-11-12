@@ -168,7 +168,7 @@ enum Cmd {
     },
     /// One record in full: an item, decision, phase or message by id.
     Show { id: String },
-    /// The review view of the open phase: decisions, graph, report and what is ready.
+    /// One picture of the open phase: its items, what they wait on and the open decisions on them.
     Summary {
         /// Every phase's work, not only the open phase's.
         #[arg(long)]
