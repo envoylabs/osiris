@@ -143,6 +143,14 @@ pub enum Command {
         actor: Actor,
         status: Option<i32>,
     },
+    /// A seat reports a fault in its setup (a path it cannot write, a
+    /// host it cannot reach, a command it may not run). Not a decision:
+    /// nothing is chosen; the person fixes the configuration. Any
+    /// seat's, about itself only.
+    SetupFault {
+        seat: AgentName,
+        what: Text,
+    },
     /// Pause seats: each finishes what it holds, and its next claim or
     /// audit is refused until it is resumed. The person's only.
     Pause {
@@ -189,6 +197,7 @@ impl Command {
             Self::Supersede { .. } => CommandKind::Supersede,
             Self::RunStart { .. } => CommandKind::RunStart,
             Self::RunStop { .. } => CommandKind::RunStop,
+            Self::SetupFault { .. } => CommandKind::SetupFault,
             Self::RaiseAction { .. } => CommandKind::RaiseAction,
             Self::ActionDone { .. } => CommandKind::ActionDone,
             Self::SetActionCheck { .. } => CommandKind::SetActionCheck,
@@ -659,6 +668,10 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             })])
         }
 
+        Command::SetupFault { seat, what } => Ok(vec![
+            Effect::new(Structure::SetupFault { seat: seat.clone() }).with("what", what),
+        ]),
+
         Command::RaiseAction {
             by,
             what,
@@ -1062,6 +1075,7 @@ mod tests {
             | CommandKind::SetActionCheck
             | CommandKind::RunStart
             | CommandKind::RunStop
+            | CommandKind::SetupFault
             | CommandKind::MessageSend => return None,
         })
     }

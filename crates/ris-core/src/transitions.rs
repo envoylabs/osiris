@@ -42,6 +42,8 @@ pub enum CommandKind {
     /// The runner recording that a seat's agent started or stopped.
     RunStart,
     RunStop,
+    /// A seat reporting a fault in its setup.
+    SetupFault,
     /// Raising a person action; it sets aside the items it blocks.
     RaiseAction,
     /// The person recording an action done; items blocked only on it
@@ -76,6 +78,7 @@ impl CommandKind {
         Self::SetActionCheck,
         Self::RunStart,
         Self::RunStop,
+        Self::SetupFault,
     ];
 }
 

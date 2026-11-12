@@ -60,8 +60,9 @@ role = "auditor"
 
 [runner]
 write = ["~/.cargo"]                   # more paths agents may write, e.g. a build cache
-network = []                           # hosts agents may reach
+network = ["*.crates.io"]              # hosts agents may reach, e.g. a registry
 quiet_after_seconds = 600              # ris status marks a seat quiet for longer possibly stuck
+preflight = true                       # ris up checks the seats can run the checks first
 
 [runner.allow]
 builder = ["Bash(cargo *)"]            # more tool permissions, in the agent tool's syntax
@@ -148,6 +149,22 @@ ris status                             # where each seat is, what it holds, what
 ris logs rook --follow                 # what rook is doing
 ris logs -f                            # every seat at once, each line prefixed with its seat
 ```
+
+Before it starts any seat, `ris up` checks that the writing seats can
+run the project's checks: each check's program is on your PATH, which
+the seats inherit, and the build tools a check names (cargo, npm, pip,
+uv, go) may write their caches and reach their registries under
+`[runner] write` and `network`. Anything missing is named with the line
+that allows it, and no seat starts until it is fixed. `ris phase open`
+says the same, so you can fix it first. The check reads the
+configuration and does not run the build; a tool it does not know is
+not checked, and `preflight = false` turns it off for a build that
+needs none of it (vendored dependencies, say).
+
+A seat that meets a missing permission while it works reports it with
+`ris seat fault "..."`, and takes another item. That is a fault in the
+setup, not a decision: `ris status` shows it under the seat until its
+next run, and you fix the configuration and run `ris up <seat>`.
 
 `ris up` compares the file with what exists and does only the
 difference: a worktree for each builder that has none, each idle

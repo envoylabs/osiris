@@ -96,7 +96,15 @@ line of output per envelope, and ends once no seat is running; without
   `paused`, `running` and `activity`: for a running seat with a run
   file, `last` (what it last ran or said, or null), `quiet_seconds`
   since its output last changed, and `stuck` (quiet for longer than
-  `[runner] quiet_after_seconds`); null otherwise.
+  `[runner] quiet_after_seconds`); null otherwise; and `faults`, the
+  setup faults the seat reported with `ris seat fault` since its latest
+  run started, oldest first.
+- `ris phase open`: `phase`, `branch`, `docs_item` and `preflight`, what
+  the writing seats would lack to run the checks, each
+  `{"kind": "program", "check", "program"}`, `{"kind": "write", "tool",
+  "path"}` or `{"kind": "network", "tool", "host"}`; empty when nothing
+  is missing or `[runner] preflight` is off. `ris up` refuses with the
+  same findings, as a `config` error, before it starts any seat.
 - `ris show A-n`: a person action, with `blocks`, `informs`, `state`
   and, when it has one, its `check`.
 - `ris decide` with no decision: `queue`, the open substantive
@@ -105,7 +113,9 @@ line of output per envelope, and ends once no seat is running; without
   null). A client shows each and answers with
   `ris decide D-n --choose <k>`; `--rationale` is optional.
 - `ris watch`: every event as it is appended, including `run_started`
-  and `run_stopped` when the runner starts and stops a seat's agent.
+  and `run_stopped` when the runner starts and stops a seat's agent,
+  and `setup_fault` (with `seat`) when a seat reports a fault in its
+  setup.
 
 `crates/ris/tests/json_contract.rs` pins the envelope and the top-level
 keys of the most-read commands' `data`.
