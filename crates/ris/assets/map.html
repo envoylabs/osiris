@@ -16,6 +16,8 @@
     --deleted: #ff3d6e;
     --unchanged: #56607f;
     --outside: #ff2bd6;
+    --pane: min(52vw, 860px);
+    --pane-ground: #080a14;
   }
   html, body { height: 100%; margin: 0; }
   body {
@@ -26,6 +28,9 @@
   }
   svg { display: block; width: 100vw; height: 100vh; cursor: grab; }
   svg:active { cursor: grabbing; }
+  /* With the pane open the graph keeps the rest of the window. */
+  body.paned svg { width: calc(100vw - var(--pane)); }
+  body.paned header { max-width: calc(100vw - var(--pane) - 50px); }
   header, #legend, #tip {
     position: fixed;
     background: var(--panel);
@@ -78,6 +83,92 @@
   .dim .node:not(.lit) { opacity: 0.08; }
   .dim .link:not(.lit) { stroke-opacity: 0.06; }
   .node.lit { opacity: 1; }
+  .node { cursor: pointer; }
+  .node.picked { opacity: 1; }
+  .node.picked circle { stroke: #ffffff; stroke-width: 2.5; }
+
+  /* The diff pane: one file's change, beside the graph. */
+  #pane {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: var(--pane);
+    display: none;
+    flex-direction: column;
+    background: var(--pane-ground);
+    border-left: 1px solid var(--line);
+    box-shadow: -14px 0 36px rgba(0, 0, 0, 0.55), -1px 0 14px rgba(0, 229, 255, 0.12);
+  }
+  body.paned #pane { display: flex; }
+  #pane-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(12, 14, 26, 0.9);
+  }
+  #pane-file { flex: 1; min-width: 0; }
+  #pane-path {
+    color: var(--text);
+    font-weight: 600;
+    word-break: break-all;
+    text-shadow: 0 0 8px rgba(0, 229, 255, 0.35);
+  }
+  #pane-totals { color: var(--faint); }
+  #pane-totals .plus { color: var(--added); }
+  #pane-totals .minus { color: var(--deleted); }
+  #pane-totals .outside { color: var(--outside); }
+  #pane-close {
+    flex: none;
+    font: inherit;
+    color: var(--faint);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  #pane-close:hover, #pane-close:focus-visible {
+    color: var(--modified);
+    border-color: var(--modified);
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.35);
+    outline: none;
+  }
+  /* Long lines and long diffs scroll here, not the page. */
+  #pane-body { flex: 1; overflow: auto; font-size: 12px; line-height: 1.5; tab-size: 4; }
+  #pane-body::-webkit-scrollbar { width: 10px; height: 10px; }
+  #pane-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+  #pane-body::-webkit-scrollbar-corner { background: transparent; }
+  .diff { display: inline-block; min-width: 100%; padding-bottom: 16px; }
+  .diff .row { display: flex; }
+  /* The line numbers stay put while a long line scrolls sideways. */
+  .diff .gutter {
+    position: sticky;
+    left: 0;
+    flex: none;
+    display: flex;
+    background: var(--pane-ground);
+    border-right: 1px solid var(--line);
+    color: var(--faint);
+    user-select: none;
+  }
+  .diff .num { width: 5ch; padding: 0 6px; text-align: right; }
+  .diff .sign { flex: none; width: 2ch; text-align: center; color: var(--faint); user-select: none; }
+  .diff .code { flex: 1; white-space: pre; padding-right: 16px; }
+  .diff .add { background: rgba(57, 255, 136, 0.09); }
+  .diff .add .gutter { background: #0b1d18; }
+  .diff .add .sign, .diff .add .num { color: var(--added); }
+  .diff .add .code { color: #d3ffe4; }
+  .diff .del { background: rgba(255, 61, 110, 0.11); }
+  .diff .del .gutter { background: #1e0c17; }
+  .diff .del .sign, .diff .del .num { color: var(--deleted); }
+  .diff .del .code { color: #ffd3dd; }
+  .diff .hunk { background: rgba(0, 229, 255, 0.07); border-top: 1px solid var(--line); }
+  .diff .hunk:first-child { border-top: 0; }
+  .diff .hunk .gutter { background: #0a1626; }
+  .diff .hunk .code { color: var(--modified); padding: 2px 16px 2px 0; }
+  .diff .note .code { color: var(--faint); font-style: italic; }
+  #pane-body p { margin: 0; padding: 14px; color: var(--faint); }
 </style>
 </head>
 <body>
@@ -110,8 +201,18 @@
   <div><i style="background: var(--unchanged)"></i>unchanged</div>
   <div><i style="border: 2px solid var(--outside)"></i>touches the outside, or a contract</div>
   <div>size: lines added and removed; an unchanged file is a dot</div>
-  <div>drag a file, scroll to zoom, hover for its numbers</div>
+  <div>drag a file, scroll to zoom, hover for its numbers, click for its diff</div>
 </div>
+<aside id="pane" aria-label="The picked file's diff for the phase">
+  <div id="pane-head">
+    <div id="pane-file">
+      <div id="pane-path"></div>
+      <div id="pane-totals"></div>
+    </div>
+    <button id="pane-close" type="button" title="Close the diff (Esc)">esc &#x2715;</button>
+  </div>
+  <div id="pane-body" tabindex="0"></div>
+</aside>
 <div id="tip"></div>
 <script id="map-data" type="application/json">/*DATA*/</script>
 <script>/*D3*/</script>
@@ -297,8 +398,122 @@
       node.classed("lit", false);
     });
 
+  // Click: the file's diff for the phase, in a pane beside the graph.
+  // The pane draws only what the document holds: `diffs` has each
+  // changed file's unified diff, as git writes it.
+  var pane = document.getElementById("pane");
+  var paneBody = document.getElementById("pane-body");
+  var picked = null;
+  var span = function (cls, text) {
+    var s = document.createElement("span");
+    s.className = cls;
+    s.textContent = text;
+    return s;
+  };
+  var row = function (cls, was, now, sign, text) {
+    var r = document.createElement("div");
+    r.className = "row " + cls;
+    var gutter = span("gutter", "");
+    gutter.appendChild(span("num", was));
+    gutter.appendChild(span("num", now));
+    r.appendChild(gutter);
+    r.appendChild(span("sign", sign));
+    r.appendChild(span("code", text));
+    return r;
+  };
+  var say = function (text) {
+    var p = document.createElement("p");
+    p.textContent = text;
+    paneBody.appendChild(p);
+  };
+  // A unified diff as rows: the file header is left out (the pane's
+  // head names the file), each hunk header starts the old and new line
+  // numbers, and each line after it is added, removed or context.
+  var HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+  var rows = function (text) {
+    var out = document.createElement("div");
+    out.className = "diff";
+    var all = text.split("\n");
+    if (all[all.length - 1] === "") { all.pop(); }
+    var was = 0, now = 0, inHunk = false;
+    all.forEach(function (l) {
+      var m = HUNK.exec(l);
+      if (m) {
+        was = Number(m[1]); now = Number(m[2]); inHunk = true;
+        out.appendChild(row("hunk", "", "", "", l));
+        return;
+      }
+      if (!inHunk) {
+        if (l.indexOf("Binary files ") === 0) { out.appendChild(row("note", "", "", "", l)); }
+        return;
+      }
+      var mark = l.charAt(0), rest = l.slice(1);
+      if (mark === "+") {
+        out.appendChild(row("add", "", now, "+", rest)); now += 1;
+      } else if (mark === "-") {
+        out.appendChild(row("del", was, "", "-", rest)); was += 1;
+      } else if (mark === "\\") {
+        // Git's remark that the file does not end in a newline.
+        out.appendChild(row("note", "", "", "", rest.trim()));
+      } else {
+        out.appendChild(row("ctx", was, now, "", rest)); was += 1; now += 1;
+      }
+    });
+    return out;
+  };
+  var show = function (n) {
+    document.getElementById("pane-path").textContent = n.path;
+    var totals = document.getElementById("pane-totals");
+    totals.textContent = "";
+    totals.appendChild(span("plus", "+" + n.added));
+    totals.appendChild(span("minus", " -" + n.removed));
+    totals.appendChild(span("", "  " + n.status));
+    var marks = n.external.slice();
+    if (n.contract) { marks.push("contract"); }
+    if (marks.length > 0) { totals.appendChild(span("outside", "  " + marks.join(", "))); }
+    paneBody.textContent = "";
+    var text = (doc.diffs || {})[n.path];
+    if (n.status === "unchanged") {
+      say("Unchanged in the phase.");
+    } else if (text === undefined) {
+      say("The document holds no diff for this file.");
+    } else {
+      var diff = rows(text);
+      if (diff.childNodes.length === 0) {
+        say("No line changed: the file is empty, or only its mode changed.");
+      } else {
+        paneBody.appendChild(diff);
+      }
+    }
+    paneBody.scrollTop = 0;
+    paneBody.scrollLeft = 0;
+  };
+  // The graph's share of the window: all of it, less the open pane.
+  var room = function () {
+    width = window.innerWidth - (picked ? pane.getBoundingClientRect().width : 0);
+    height = window.innerHeight;
+  };
+  var pick = function (n) {
+    var wasOpen = picked !== null;
+    picked = n;
+    document.body.classList.toggle("paned", n !== null);
+    node.classed("picked", function (m) { return m === n; });
+    if (n !== null) { show(n); }
+    // Opening and closing change the graph's room, so it is fitted
+    // again; swapping one file for another leaves the view as it is.
+    if (wasOpen !== (n !== null)) { room(); fit(); }
+  };
+  // A drag ends without a click, so moving a node does not open it.
+  node.on("click", function (event, n) {
+    if (!event.defaultPrevented) { pick(n); }
+  });
+  document.getElementById("pane-close").addEventListener("click", function () { pick(null); });
+  window.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && picked !== null) { pick(null); }
+  });
+
   window.addEventListener("resize", function () {
-    width = window.innerWidth; height = window.innerHeight;
+    room();
     fit();
   });
 }());

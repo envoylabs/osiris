@@ -175,6 +175,7 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(before["tip"], json!(main), "{before}");
     assert_eq!(before["totals"]["changed"], 0, "{before}");
     assert_eq!(node(&before, "src/old.rs")["status"], "unchanged");
+    assert_eq!(before["diffs"], json!({}), "nothing changed: {before}");
 
     work(&dir);
     let tip = git(&dir, &["rev-parse", "phase/P-1"]);
@@ -185,7 +186,7 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(
         keys(&doc),
         [
-            "base", "edges", "nodes", "phase", "tip", "tip_ref", "totals"
+            "base", "diffs", "edges", "nodes", "phase", "tip", "tip_ref", "totals"
         ]
     );
     assert_eq!(
@@ -301,8 +302,70 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     );
     assert!(
         !doc.to_string().contains("tests/"),
-        "no node or edge names a test file: {doc}"
+        "no node, edge or diff names a test file: {doc}"
     );
+
+    // Diffs: each changed node's unified diff between base and tip, by
+    // path. An unchanged file has none, and neither has a file that is
+    // not a node, whatever the phase did to it.
+    assert_eq!(
+        keys(&doc["diffs"]),
+        [
+            "docs/wire.md",
+            "src/lib.rs",
+            "src/net.rs",
+            "src/old.rs",
+            "src/wire.rs"
+        ]
+    );
+    let diff = |path: &str| doc["diffs"][path].as_str().unwrap().to_owned();
+    // The whole text of one, less the line that carries blob ids: the
+    // file header, the hunk header, then context, removed and added
+    // lines, each marked in its first column.
+    let wire = diff("src/wire.rs");
+    let lines: Vec<&str> = wire.lines().filter(|l| !l.starts_with("index ")).collect();
+    assert_eq!(
+        lines,
+        [
+            "diff --git a/src/wire.rs b/src/wire.rs",
+            "--- a/src/wire.rs",
+            "+++ b/src/wire.rs",
+            "@@ -1,2 +1,3 @@",
+            " pub struct Frame;",
+            "-// one",
+            "+// two",
+            "+// three",
+        ]
+    );
+    assert!(wire.ends_with("+// three\n"), "{wire}");
+    // An added file is all additions, a deleted one all removals.
+    let net = diff("src/net.rs");
+    assert!(
+        net.contains(
+            "\n--- /dev/null\n+++ b/src/net.rs\n@@ -0,0 +1,5 @@\n+use std::net::TcpStream;\n"
+        ),
+        "{net}"
+    );
+    let old = diff("src/old.rs");
+    assert!(
+        old.ends_with("\n--- a/src/old.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-pub fn gone() {}\n"),
+        "{old}"
+    );
+    // A diff's marked lines are the node's numbers.
+    for n in doc["nodes"].as_array().unwrap() {
+        let path = n["path"].as_str().unwrap();
+        let Some(text) = doc["diffs"][path].as_str() else {
+            assert_eq!(n["status"], "unchanged", "{path} has no diff");
+            continue;
+        };
+        // Past the file header and the one hunk header these small
+        // files have, whose own text begins with the old range.
+        let hunk = text.split_once("\n@@ ").expect("a hunk").1;
+        let body = hunk.split_once('\n').expect("the hunk's lines").1;
+        let count = |mark: char| body.lines().filter(|l| l.starts_with(mark)).count() as u64;
+        assert_eq!(count('+'), n["added"].as_u64().unwrap(), "{path}");
+        assert_eq!(count('-'), n["removed"].as_u64().unwrap(), "{path}");
+    }
 
     // In text: the totals, then the changed files with their numbers.
     let text = ok(&dir, "person", &["map"]);
@@ -343,6 +406,16 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
     let end = start + html[start..].find("</script>").unwrap();
     let embedded: Value = serde_json::from_str(&html[start..end]).unwrap();
     assert_eq!(embedded, doc);
+    // The diffs are in the embedded document, so the pane that shows
+    // one draws it from the page alone.
+    assert!(
+        embedded["diffs"]["src/wire.rs"]
+            .as_str()
+            .is_some_and(|d| d.contains("\n-// one\n+// two\n")),
+        "{embedded}"
+    );
+    assert!(html.contains("<aside id=\"pane\""), "the diff pane");
+    assert!(html.contains("doc.diffs"), "the pane reads the document");
     assert!(html.contains("forceSimulation"), "d3 is inlined");
     assert!(html.contains("d3js.org v7"), "the vendored build's banner");
     // No element that loads anything: every script is inline, and
@@ -374,6 +447,7 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
     assert_eq!(after["base"], doc["base"]);
     assert_eq!(after["nodes"], doc["nodes"]);
     assert_eq!(after["edges"], doc["edges"]);
+    assert_eq!(after["diffs"], doc["diffs"]);
     assert_eq!(data(&dir, &["map", "P-1"]), after);
 
     // A phase that does not exist is said to be so.

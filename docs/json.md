@@ -207,7 +207,10 @@ or reshaped.
   ],
   "edges": [
     {"from": "src/store.rs", "to": "src/wire.rs", "kind": "use"}
-  ]
+  ],
+  "diffs": {
+    "src/store.rs": "diff --git a/src/store.rs b/src/store.rs\nindex ...\n--- a/src/store.rs\n+++ b/src/store.rs\n@@ -1,4 +1,5 @@\n use std::fs;\n+use std::io;\n ..."
+  }
 }
 ```
 
@@ -258,5 +261,19 @@ or reshaped.
   left off the map in the same terms: all of them (`files`), those the
   phase changed (`changed`), and the lines `added` and `removed` in
   them. A page shows it as one line of text.
+
+- `diffs` holds each changed node's unified diff between `base` and
+  `tip`, by `path`: the text `git diff` writes for that one file, with
+  its file header (`diff --git`, `index`, `---`, `+++`), then each hunk
+  header (`@@ -old,count +new,count @@`) and its lines, marked in the
+  first column as added (`+`), removed (`-`) or context (a space),
+  with three lines of context, the prefixes `a/` and `b/`, and renames
+  not followed. An added file's old side is `/dev/null`, and a deleted
+  file's new side. A node that is `unchanged` has no entry, and
+  neither has a file that is not a node; the object is empty when
+  `base` is null. A binary file's entry has the header and git's one
+  line saying the files differ, and no hunk. Bytes that are not UTF-8
+  are replaced. The page draws a clicked node's entry in a pane beside
+  the graph, so another renderer can draw the same pane.
 
 `crates/ris/tests/map.rs` pins these keys.

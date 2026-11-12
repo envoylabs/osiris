@@ -263,6 +263,7 @@ pub fn document(
         },
         nodes,
         edges: edges.into_iter().collect(),
+        diffs: BTreeMap::new(),
     }
 }
 
@@ -492,7 +493,43 @@ pub fn build(p: &Project, range: &Range) -> Result<crate::schema::Map, CliError>
             }
         }
     }
-    Ok(document(range, &paths, &tree, &diff, &p.config.map))
+    let mut map = document(range, &paths, &tree, &diff, &p.config.map);
+    if let Some(base) = &range.base {
+        for node in map.nodes.iter().filter(|n| n.status != "unchanged") {
+            map.diffs.insert(
+                node.path.clone(),
+                unified_diff(dir, base, &range.tip, &node.path)?,
+            );
+        }
+    }
+    Ok(map)
+}
+
+/// One file's unified diff between two commits, as git writes it: the
+/// file header, then each hunk. The flags fix its form whatever the
+/// reader's git configuration says, so the same range gives the same
+/// text everywhere. Bytes that are not UTF-8 are replaced.
+fn unified_diff(dir: &Path, base: &str, tip: &str, path: &str) -> Result<String, CliError> {
+    let out = git(
+        dir,
+        &[
+            "--literal-pathspecs",
+            "diff",
+            "--no-renames",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--unified=3",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            base,
+            tip,
+            "--",
+            path,
+        ],
+    )
+    .map_err(CliError::Other)?;
+    Ok(String::from_utf8_lossy(&out).into_owned())
 }
 
 /// The page's template: the vendored d3 build goes in at `/*D3*/` and

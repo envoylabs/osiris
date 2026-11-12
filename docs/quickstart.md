@@ -272,7 +272,9 @@ A node is larger the more the phase changed it, so the eye lands first
 on the large changes, and the ring picks out those at the edges of the
 system. `ris map --html map.html` writes one page that
 needs no network (d3 is inlined): hover a file for its path and
-numbers, drag it, scroll to zoom. `ris map` alone lists the changed
+numbers, drag it, scroll to zoom, and click it to read its diff for
+the phase in a pane beside the graph (click another file to swap it,
+Esc or the pane's button to close it). `ris map` alone lists the changed
 files, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the
 phase just closed, and `ris map P-n` an earlier one.

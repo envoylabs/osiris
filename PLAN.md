@@ -538,8 +538,9 @@ Functional core, imperative shell; hexagonal between components.
   native app would tie the interface to one platform. Whatever draws,
   the document is the contract and the picture only a renderer of it:
   `ris map` gives the phase's change set as a graph document (the
-  source files, the lines the phase changed in each, how the code
-  connects, and which files touch the outside), and `ris map --html`
+  source files, the lines the phase changed in each and their diffs,
+  how the code connects, and which files touch the outside), and
+  `ris map --html`
   writes one self-contained page that embeds that document and draws
   nothing else, so a later interface draws the same map from the same
   JSON.

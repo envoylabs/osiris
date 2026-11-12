@@ -1654,6 +1654,13 @@
             "null"
           ]
         },
+        "diffs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Each changed node's unified diff between `base` and `tip`, by\npath, as `git diff` writes it; empty when `base` is null.",
+          "type": "object"
+        },
         "edges": {
           "items": {
             "$ref": "#/$defs/Edge"
@@ -1693,7 +1700,8 @@
         "tip_ref",
         "totals",
         "nodes",
-        "edges"
+        "edges",
+        "diffs"
       ],
       "type": "object"
     },

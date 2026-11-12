@@ -660,6 +660,9 @@ pub struct Map {
     pub totals: MapTotals,
     pub nodes: Vec<crate::map::Node>,
     pub edges: Vec<crate::map::Edge>,
+    /// Each changed node's unified diff between `base` and `tip`, by
+    /// path, as `git diff` writes it; empty when `base` is null.
+    pub diffs: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
