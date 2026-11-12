@@ -1,9 +1,10 @@
 //! `ris decide` with no decision named: the person's queue of open
 //! substantive decisions, walked one per screen. Each screen is the
 //! decision's case (what `ris eli5` shows) and then a prompt: a single
-//! key picks an option, a line gives the rationale or Enter skips it,
-//! and the walk moves to the next. Each decision is taken as it is
-//! picked, so quitting keeps what was decided.
+//! key picks an option, or `o` takes an answer that is none of them,
+//! typed as a line; a line gives the rationale or Enter skips it, and
+//! the walk moves to the next. Each decision is taken as it is
+//! answered, so quitting keeps what was decided.
 //!
 //! In a terminal, keys are read in raw mode, so a key needs no Enter.
 //! With stdin not a terminal (a script, a test), each prompt reads one
@@ -54,17 +55,21 @@ pub fn queue_output(l: &Loaded) -> Output {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Key {
     Pick(usize),
+    /// None of the options: the person's own answer, asked for as text.
+    Own,
     Skip,
     Quit,
 }
 
 /// A key read at the prompt, for a decision with `options` options:
-/// a digit naming one picks it, `s` moves on without deciding, `q`
-/// quits. Anything else is not an answer and is read past.
+/// a digit naming one picks it, `o` answers with none of them, `s`
+/// moves on without deciding, `q` quits. Anything else is not an answer
+/// and is read past.
 pub fn key(c: char, options: usize) -> Option<Key> {
     match c {
         'q' | 'Q' => Some(Key::Quit),
         's' | 'S' => Some(Key::Skip),
+        'o' | 'O' => Some(Key::Own),
         _ => c
             .to_digit(10)
             .map(|n| n as usize)
@@ -168,10 +173,22 @@ pub fn walk_stdin(p: &mut Project, actor: &Actor) -> Result<Output, CliError> {
     }
 }
 
+/// The prompt under a decision's case. It names every way to answer on
+/// every screen, the person's own answer among them, since the options
+/// offered are never the only answers.
+pub fn prompt(id: DecisionId, options: usize) -> String {
+    format!(
+        "{id}: pick 0-{}, o for none of these (your own answer), s to skip, q to quit: ",
+        options.saturating_sub(1).min(9)
+    )
+}
+
 /// Walk the queue: for each decision still open when its turn comes,
 /// its case, then the prompt; a pick is taken at once with the
-/// rationale given, which may be empty. Returns what was taken and what
-/// is still open.
+/// rationale given, which may be empty. `o` asks for the person's own
+/// answer as a line and records it as `ris decide D-n --other` does; an
+/// empty line there returns to the prompt, deciding nothing. Returns
+/// what was taken and what is still open.
 pub fn walk(
     p: &mut Project,
     actor: &Actor,
@@ -209,42 +226,62 @@ pub fn walk(
             writeln!(out)?;
         }
         write!(out, "{}", render::eli5_case(&l, d).text)?;
-        write!(
-            out,
-            "\n{id}: pick 0-{}, s to skip, q to quit: ",
-            options.saturating_sub(1).min(9)
-        )?;
-        out.flush()?;
-        let key = loop {
-            match input.key()? {
-                None => break Key::Quit,
-                Some(c) => {
-                    if let Some(k) = key(c, options) {
-                        break k;
+        writeln!(out)?;
+        // Until the decision is answered, skipped or the walk quits: an
+        // own answer left empty comes back here.
+        loop {
+            write!(out, "{}", prompt(*id, options))?;
+            out.flush()?;
+            let key = loop {
+                match input.key()? {
+                    None => break Key::Quit,
+                    Some(c) => {
+                        if let Some(k) = key(c, options) {
+                            break k;
+                        }
                     }
                 }
-            }
-        };
-        match key {
-            Key::Quit => {
-                writeln!(out)?;
-                quit = true;
-            }
-            Key::Skip => writeln!(out, "s")?,
-            Key::Pick(n) => {
-                write!(out, "{n}\nrationale (Enter skips): ")?;
-                out.flush()?;
-                let rationale = input.line()?;
-                let rationale = p.text("rationale", &rationale)?;
-                p.run(&Command::Decide {
-                    decision: *id,
-                    by: actor.clone(),
-                    chosen: Choice::Option(n),
-                    rationale,
-                })?;
-                writeln!(out, "{id} taken: option {n}")?;
-                taken.push(*id);
-            }
+            };
+            let (chosen, picked) = match key {
+                Key::Quit => {
+                    writeln!(out)?;
+                    quit = true;
+                    break;
+                }
+                Key::Skip => {
+                    writeln!(out, "s")?;
+                    break;
+                }
+                Key::Pick(n) => {
+                    writeln!(out, "{n}")?;
+                    (Choice::Option(n), format!("option {n}"))
+                }
+                Key::Own => {
+                    write!(out, "o\nyour own answer (Enter goes back): ")?;
+                    out.flush()?;
+                    let answer = input.line()?;
+                    if answer.trim().is_empty() {
+                        continue;
+                    }
+                    (
+                        Choice::Other(p.text("other", answer.trim())?),
+                        "your own answer, recorded as a new option".to_owned(),
+                    )
+                }
+            };
+            write!(out, "rationale (Enter skips): ")?;
+            out.flush()?;
+            let rationale = input.line()?;
+            let rationale = p.text("rationale", &rationale)?;
+            p.run(&Command::Decide {
+                decision: *id,
+                by: actor.clone(),
+                chosen,
+                rationale,
+            })?;
+            writeln!(out, "{id} taken: {picked}")?;
+            taken.push(*id);
+            break;
         }
     }
     let open = queue(&p.load()?);
@@ -287,6 +324,8 @@ mod tests {
         assert_eq!(key('1', 2), Some(Key::Pick(1)));
         assert_eq!(key('2', 2), None);
         assert_eq!(key('s', 2), Some(Key::Skip));
+        assert_eq!(key('o', 2), Some(Key::Own));
+        assert_eq!(key('O', 0), Some(Key::Own));
         assert_eq!(key('q', 2), Some(Key::Quit));
         assert_eq!(key('x', 2), None);
         assert_eq!(key('\n', 2), None);

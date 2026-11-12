@@ -123,7 +123,8 @@ enum Cmd {
     Eli5 { decision: DecisionId },
     /// Take a queued decision: one of its options, or your own answer.
     /// With no decision, walk the queue of open substantive decisions,
-    /// one per screen: a key picks an option, Enter skips the rationale.
+    /// one per screen: a key picks an option, o gives your own answer,
+    /// Enter skips the rationale.
     /// With --json and no decision, print the queue.
     Decide {
         decision: Option<DecisionId>,

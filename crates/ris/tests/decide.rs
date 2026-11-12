@@ -142,7 +142,13 @@ fn the_person_walks_the_queue_one_decision_at_a_time() {
     // Each screen is the case, then the prompt; not the eli5 footer.
     assert!(out.contains("Where the log lives"), "{out}");
     assert!(out.contains("+ nothing to install"), "{out}");
-    assert!(out.contains("D-1: pick 0-1, s to skip, q to quit"), "{out}");
+    // Every screen's prompt names the key for an answer that is none of
+    // the options: once per decision shown.
+    for id in ["D-1", "D-2", "D-3"] {
+        let prompt =
+            format!("{id}: pick 0-1, o for none of these (your own answer), s to skip, q to quit");
+        assert_eq!(out.matches(&prompt).count(), 1, "{prompt}: {out}");
+    }
     assert!(!out.contains("answer:  ris decide"), "{out}");
     assert!(out.contains("D-1 taken: option 1"), "{out}");
     assert!(out.contains("Which format?"), "{out}");
@@ -159,13 +165,67 @@ fn the_person_walks_the_queue_one_decision_at_a_time() {
     assert!(out.contains("taken: none"), "{out}");
     assert!(!out.contains("Which name?"), "{out}");
 
-    // Enter skips the rationale; the walk takes both that remain.
-    let out = ok(&dir, "person", &["decide"], "0\n\n1\n\n");
+    // Enter skips the rationale. For D-3, o asks for the person's own
+    // answer: an empty line goes back to the prompt and decides
+    // nothing, and a typed answer is taken with its rationale.
+    let out = ok(
+        &dir,
+        "person",
+        &["decide"],
+        "0\n\no\n\no\nneither: a third name\nnone fits\n",
+    );
     assert!(out.contains("D-2 taken: option 0"), "{out}");
-    assert!(out.contains("D-3 taken: option 1"), "{out}");
+    assert_eq!(
+        out.matches("your own answer (Enter goes back)").count(),
+        2,
+        "{out}"
+    );
+    assert_eq!(
+        out.matches("D-3: pick 0-1, o for none of these").count(),
+        2,
+        "{out}"
+    );
+    assert!(
+        out.contains("D-3 taken: your own answer, recorded as a new option"),
+        "{out}"
+    );
     let d2 = state(&dir, "D-2");
     assert_eq!(d2["state"], "taken", "{d2}");
     assert_eq!(d2["rationale"], "", "{d2}");
+    let d3 = state(&dir, "D-3");
+    assert_eq!(d3["state"], "taken", "{d3}");
+    assert_eq!(d3["rationale"], "none fits", "{d3}");
+
+    // The record is the one `ris decide D-n --other` makes: apart from
+    // the decision's own id, question and place in the log, the two
+    // documents are equal.
+    raise(&dir, "Which colour?");
+    ok(
+        &dir,
+        "person",
+        &[
+            "decide",
+            "D-4",
+            "--other",
+            "neither: a third name",
+            "--rationale",
+            "none fits",
+        ],
+        "",
+    );
+    let mut walked = d3.clone();
+    let mut flagged = state(&dir, "D-4");
+    assert!(
+        walked.to_string().contains("neither: a third name"),
+        "{walked}"
+    );
+    for doc in [&mut walked, &mut flagged] {
+        let doc = doc.as_object_mut().unwrap();
+        doc.remove("id");
+        doc.remove("question");
+        doc.remove("raised_at_event");
+    }
+    assert_eq!(walked, flagged);
 
     let out = ok(&dir, "person", &["decide"], "");
     assert!(out.contains("no open substantive decisions"), "{out}");

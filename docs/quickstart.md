@@ -220,7 +220,7 @@ tries it again.
 
 ```sh
 ris summary                            # the phase in one picture: its items and what they wait on
-ris decide                             # each queued decision's case, then pick with one key
+ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
@@ -228,7 +228,9 @@ ris action done A-2 --note "what happened"
 
 Review comes once the seats have run out of work, or whenever you
 choose to look; the seats never wait for it. `ris decide` walks every
-queued decision in turn. Taking one returns the items it alone set
+queued decision in turn. The options offered are never the only
+answers: on every screen `o` asks for your own answer as text and
+records it as `ris decide D-n --other "..."` does. Taking one returns the items it alone set
 aside to ready: a seat still running takes them, and `ris up` starts
 the seats that have stopped.
 

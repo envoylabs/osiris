@@ -160,7 +160,12 @@ fn a_raiser_explains_and_the_person_drills_down() {
     assert!(!inbox.contains("fast appends"), "no pros and cons: {inbox}");
     let summary = ok(&dir, None, &["summary"]);
     assert!(summary.contains("1 open decision(s) in all"), "{summary}");
-    assert!(summary.contains("`ris decide` walks them"), "{summary}");
+    assert!(
+        summary.contains(
+            "`ris decide` walks them; answer each with one of its options or with your own"
+        ),
+        "{summary}"
+    );
     assert!(
         !summary.contains("fast appends"),
         "no pros and cons on the summary"

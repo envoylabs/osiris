@@ -1149,7 +1149,7 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool) -> Output {
         let mut foot = String::from("--\n");
         if open > 0 {
             foot.push_str(&format!(
-                "{open} open decision(s) in all, for the person\n  next: `ris decide` walks them\n"
+                "{open} open decision(s) in all, for the person\n  next: `ris decide` walks them; answer each with one of its options or with your own\n"
             ));
         }
         foot.push_str(&carried);
