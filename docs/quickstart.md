@@ -134,12 +134,23 @@ ris item add "a task"                  # held to every check; --check names some
 ris item add "a review" --no-checks    # done on attached evidence instead
 ris import backlog.toml --dry-run      # a backlog file: validate,
 ris import backlog.toml                # then import
+ris item bring-in I-7                  # an unstarted item from the backlog, into this phase
 ```
 
 Every phase gets an item to bring the docs up to date, and `ris phase
 close` waits for it (turn it off with `docs_item = false`). The
 osiris-onboard skill (`skills/osiris-onboard`) drafts the import file
 from an existing project's backlog.
+
+Seats work only the open phase's items. An item added while a phase is
+open is that phase's; one left unmerged when its phase closed is in the
+backlog. A seat's `ris ready` shows the open phase's items and nothing
+else, and `ris claim` refuses a backlog item, naming the command that
+brings it in. Your own `ris ready` lists the open phase's items first
+and the backlog after them, and `ris item bring-in I-n`, which only you
+may run, moves an item nobody has started into the open phase. The item
+keeps the phase it was added in for that phase's report, so a closed
+phase's tally does not change when one of its items moves.
 
 ## 4. Step two: bring it up
 
@@ -327,8 +338,8 @@ ris phase close                        # merges phase/P-1 into main
 ```
 
 `ris phase close` merges what is merged into the main line and carries
-the rest over: an item not merged stays open and is offered in the next
-phase. The report it prints says how many items the phase planned, how
+the rest over: an item not merged stays open, in the backlog, until you
+bring it into a later phase with `ris item bring-in`. The report it prints says how many items the phase planned, how
 many were merged while it was open, and how many carry over; `ris
 report` shows the same line for the open phase, as it would read if
 closed now.

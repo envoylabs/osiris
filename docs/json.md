@@ -87,6 +87,18 @@ line of output per envelope, and ends once no seat is running; without
   was open, carried-in items included) and `carried_over` (items, from
   any phase up to it, neither merged nor superseded; for an open phase,
   what would carry over if it closed now).
+- `ris ready`: for a seat, the open phase's items it may claim and no
+  other. For the person, those first and then the backlog: the
+  unmerged items of earlier phases, which no seat may claim until the
+  person brings them in.
+- `ris item bring-in I-n`, the person's only: `item` and the open
+  `phase` it is now in. It writes the event `item_scoped` (with `item`
+  and `phase`). An item's current phase is the phase of the last of
+  its `item_added` and `item_scoped` events; the phase it was added in
+  does not change, and a phase's `tally` counts by that. A claim of an
+  item outside the open phase is refused with
+  `{"not_in_open_phase": {"item", "phase"}}`, and an agent's bring-in
+  with `{"bring_in_is_for_the_person": "I-n"}`.
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
 - `ris audit`: `queue`, the open phase's done and merged items the

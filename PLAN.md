@@ -130,7 +130,9 @@ Between up and review the agents never wait for the person: a
 substantive decision sets its item aside and the agent takes another,
 so nothing raised while the phase runs stops it, and every queued
 decision is put to the person once, at review. Closing the phase merges
-what is merged and carries the rest over to the next. How long a phase
+what is merged and carries the rest over: an unmerged item waits in the
+backlog, and seats, who work only the open phase's items, take it up
+once the person brings it into a later phase. How long a phase
 runs is the person's choice; a phase fits a working day, by default at
 most two a day.
 
@@ -439,6 +441,7 @@ enum ClaimState {                             // the type exists; no events yet
 enum Structure {                              // an event's structural part
     PhaseOpened { phase }, PhaseClosed { phase, report: Hash },
     ItemAdded { item, phase, checks, depends_on }, ItemClaimed { item, agent },
+    ItemScoped { item, phase },               // the person brought an unstarted item into a phase
     ItemBlocked { item, on }, ItemReady { item }, ItemDone { item, evidence },
     ItemMerged { item, commit }, ItemAudited { item, by }, ItemSuperseded { item, by },
     ActionRaised { action, by, blocks, informs }, ActionCheckSet { action },
@@ -546,7 +549,8 @@ Functional core, imperative shell; hexagonal between components.
   `ris map --html`
   writes one self-contained page that embeds that document and draws
   nothing else, so a later interface draws the same map from the same
-  JSON.
+  JSON. The person's `ris map` at a terminal writes that page inside
+  `.osiris` and opens it in the browser; a seat's never opens anything.
 - **Language:** Rust for the core, daemon and CLI.
 
 ## Runtime and environments
