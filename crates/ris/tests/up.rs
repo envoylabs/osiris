@@ -613,6 +613,52 @@ fn up_clears_a_run_whose_process_is_gone_and_starts_it_again() {
     assert!(!out.contains("heron:"), "{out}");
 }
 
+/// The summary's opening line names `ris up` only when no seat is
+/// running, and a run whose process is gone does not count as one,
+/// though the log still has it as running until `ris up` clears it.
+#[test]
+fn summary_says_when_no_seat_is_running() {
+    let rig = Rig::new("up-summary", WAITING_AGENT);
+    rig.ok(None, &["item", "add", "something to do"]);
+    let state = |r: &Rig| -> Value {
+        let v: Value = serde_json::from_slice(&r.ris(None, &["--json", "summary"]).stdout).unwrap();
+        v["data"]["phase_state"].clone()
+    };
+    let none = "no seat is running: start them with `ris up`";
+    let s = state(&rig);
+    assert!(s["line"].as_str().unwrap().ends_with(none), "{s}");
+
+    rig.ok(None, &["up", "rook"]);
+    rig.until("rook running", |r| {
+        state(r)["running"] == serde_json::json!(["rook"])
+    });
+    let s = state(&rig);
+    assert!(!s["line"].as_str().unwrap().contains(none), "{s}");
+    let text = rig.ok(None, &["summary"]);
+    assert!(!text.lines().next().unwrap().contains(none), "{text}");
+
+    // Its `ris seat start` killed outright: nothing records the stop.
+    let lock = rig.repo.join(".osiris/runs/rook.lock");
+    rig.until("rook's run names its process", |_| {
+        fs::read_to_string(&lock).is_ok_and(|s| !s.trim().is_empty())
+    });
+    let pid = fs::read_to_string(&lock).unwrap().trim().to_owned();
+    assert!(
+        Command::new("kill")
+            .args(["-KILL", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(rig.repo.join(".osiris/stop-rook"), "").unwrap();
+    rig.until("the gone run is not counted", |r| {
+        state(r)["running"] == serde_json::json!([])
+    });
+    let s = state(&rig);
+    assert!(s["line"].as_str().unwrap().ends_with(none), "{s}");
+    assert_eq!(rig.events("run_stopped").len(), 0, "nothing was recorded");
+}
+
 /// A start that fails is reported as failing, with why, not as started.
 #[test]
 fn up_reports_a_start_that_fails() {

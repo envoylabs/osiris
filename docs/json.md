@@ -78,7 +78,19 @@ line of output per envelope, and ends once no seat is running; without
   attached to any of those, whatever phase raised them; `unlinked`
   counts the nodes with no edge, which are listed all the same.
   `carried_over` counts the unmerged `items` and open `decisions` from
-  earlier phases that are left out. `all` says whether `--all` was
+  earlier phases that are left out. `phase_state` is where the open
+  phase stands, `null` with no phase open: `line` (the one line the
+  text output opens with), `items` (the phase's items, superseded ones
+  left out), `merged`, `in_progress` (claimed, or done and not yet
+  merged; each an `item` and the `seat` on it), `set_aside` (the
+  blocked items' ids), `not_started`, `open_decisions` (the phase's
+  open substantive decisions, which wait on the person), `faults` (the
+  seats with a setup fault), `running` (the seats whose agent is
+  running; a run whose process is gone is not counted) and
+  `ready_to_close` (every item merged, and at least one). `merged`,
+  `in_progress`, `set_aside` and `not_started` add up to `items`. It
+  is the open phase's whether or not `--all` is given, though only the
+  default text output shows the line. `all` says whether `--all` was
   given, in which case nothing is left out and the `graph` is the work
   in motion in every phase: open decisions, open actions and unmerged
   items, where only nodes with an edge are listed.

@@ -1534,7 +1534,17 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Summary { all } => {
             let closed = close_checked(&mut p, &actor)?;
-            Ok(render::summary(&p.load()?, &actor, *all, closed))
+            let l = p.load()?;
+            // A run whose process is gone stays in the log as running
+            // until `ris up` clears it; it is not counted here.
+            let running: Vec<AgentName> = l
+                .state
+                .running
+                .keys()
+                .filter(|seat| run_alive(&p, &seat.0))
+                .cloned()
+                .collect();
+            Ok(render::summary(&l, &actor, *all, closed, &running))
         }
 
         Cmd::Report => Ok(render::report(&p.load()?)),

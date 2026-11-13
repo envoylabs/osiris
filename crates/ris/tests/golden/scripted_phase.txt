@@ -1025,6 +1025,7 @@ previous report: <hash>
 [exit 0]
 
 $ ris summary
+2 of 4 items merged; 1 in progress (wren on I-4); 1 not started; no seat is running: start them with `ris up`
 P-1 open: first slice
 items: 1 claimed, 2 merged, 1 ready
 

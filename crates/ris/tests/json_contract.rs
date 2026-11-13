@@ -133,6 +133,7 @@ fn every_outcome_is_one_envelope_and_the_data_keys_are_pinned() {
                 "checks",
                 "graph",
                 "inbox",
+                "phase_state",
                 "ready",
                 "report",
             ],

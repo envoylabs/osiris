@@ -1391,6 +1391,28 @@
       ],
       "type": "object"
     },
+    "InProgress": {
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "seat": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "item",
+        "seat"
+      ],
+      "type": "object"
+    },
     "Inbox": {
       "anyOf": [
         {
@@ -2276,6 +2298,86 @@
         "log",
         "report",
         "previous_report"
+      ],
+      "type": "object"
+    },
+    "PhaseState": {
+      "description": "Where the open phase stands. Its items that are not superseded are\neach in one of `merged`, `in_progress`, `set_aside` and\n`not_started`, which add up to `items`.",
+      "properties": {
+        "faults": {
+          "description": "Seats with a setup fault reported in their latest run.",
+          "items": {
+            "$ref": "#/$defs/AgentName"
+          },
+          "type": "array"
+        },
+        "in_progress": {
+          "description": "Claimed, or done and not yet merged, each with the seat on it.",
+          "items": {
+            "$ref": "#/$defs/InProgress"
+          },
+          "type": "array"
+        },
+        "items": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "line": {
+          "description": "The state in one line, as the text output opens with it.",
+          "type": "string"
+        },
+        "merged": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "not_started": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "open_decisions": {
+          "description": "The open substantive decisions of the phase, which wait on the\nperson.",
+          "items": {
+            "$ref": "#/$defs/DecisionId"
+          },
+          "type": "array"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "ready_to_close": {
+          "description": "Every item is merged, and there is at least one.",
+          "type": "boolean"
+        },
+        "running": {
+          "description": "Seats whose agent is running.",
+          "items": {
+            "$ref": "#/$defs/AgentName"
+          },
+          "type": "array"
+        },
+        "set_aside": {
+          "description": "Blocked: set aside on a decision, an item or an action.",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "phase",
+        "line",
+        "items",
+        "merged",
+        "in_progress",
+        "set_aside",
+        "not_started",
+        "open_decisions",
+        "faults",
+        "running",
+        "ready_to_close"
       ],
       "type": "object"
     },
@@ -3917,6 +4019,17 @@
         "inbox": {
           "$ref": "#/$defs/Inbox"
         },
+        "phase_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The open phase's state in one line and as counts; `null` with\nno phase open."
+        },
         "ready": {
           "$ref": "#/$defs/Ready"
         },
@@ -3930,6 +4043,7 @@
         "report",
         "ready",
         "all",
+        "phase_state",
         "carried_over",
         "checks"
       ],

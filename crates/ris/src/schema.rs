@@ -279,9 +279,44 @@ pub struct Summary {
     pub ready: Ready,
     /// Whether `--all` was given.
     pub all: bool,
+    /// The open phase's state in one line and as counts; `null` with
+    /// no phase open.
+    pub phase_state: Option<PhaseState>,
     pub carried_over: CarriedOver,
     /// What running the person's action checks did.
     pub checks: Vec<String>,
+}
+
+/// Where the open phase stands. Its items that are not superseded are
+/// each in one of `merged`, `in_progress`, `set_aside` and
+/// `not_started`, which add up to `items`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct PhaseState {
+    pub phase: PhaseId,
+    /// The state in one line, as the text output opens with it.
+    pub line: String,
+    pub items: usize,
+    pub merged: usize,
+    /// Claimed, or done and not yet merged, each with the seat on it.
+    pub in_progress: Vec<InProgress>,
+    /// Blocked: set aside on a decision, an item or an action.
+    pub set_aside: Vec<ItemId>,
+    pub not_started: usize,
+    /// The open substantive decisions of the phase, which wait on the
+    /// person.
+    pub open_decisions: Vec<DecisionId>,
+    /// Seats with a setup fault reported in their latest run.
+    pub faults: Vec<AgentName>,
+    /// Seats whose agent is running.
+    pub running: Vec<AgentName>,
+    /// Every item is merged, and there is at least one.
+    pub ready_to_close: bool,
+}
+
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct InProgress {
+    pub item: ItemId,
+    pub seat: Option<AgentName>,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]

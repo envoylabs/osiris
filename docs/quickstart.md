@@ -252,7 +252,17 @@ records it as `ris decide D-n --other "..."` does. Taking one returns the items 
 aside to ready: a seat still running takes them, and `ris up` starts
 the seats that have stopped.
 
-The summary is one picture of the open phase and nothing else: its
+The summary opens with the phase's state in one line, for a glance:
+that all of its items are merged and it is ready to close with `ris
+phase close`, or how many of the phase's items are merged, how many are in progress and
+with which seats, how many are set aside and how many not started,
+then whatever waits on you with the command for it (open decisions:
+`ris decide`; a seat's setup fault: `ris status`, then `ris up
+<seat>`), and, when items remain and no seat is running, that `ris up`
+starts them. Superseded items are not counted.
+
+Below that line the summary is one picture of the open phase and
+nothing else: its
 goal, its items counted by state, and a drawing of the items, each with
 its state, under what it waits on. An item the phase waits on from an
 earlier phase is drawn too, marked with that phase, and so is every
