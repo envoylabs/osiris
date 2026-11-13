@@ -2302,7 +2302,7 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
 /// exception is a branch with commits of its own behind a change to a
 /// rules file, which is rebased (`rebase_over_rules`). One line per
 /// seat that was behind.
-fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) -> Vec<String> {
+fn bring_up_to_phase(p: &mut Project, l: &ris::project::Loaded, named: &[String]) -> Vec<String> {
     let Some(phase) = ris::status::phase_branch(p, l) else {
         return Vec::new();
     };
@@ -2328,7 +2328,7 @@ fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) ->
         if s.ahead.unwrap_or(1) > 0
             && let Some(rules) = rules_changed_since_fork(dir, &phase)
         {
-            lines.push(rebase_over_rules(dir, &s, &phase, behind, &rules));
+            lines.push(rebase_over_rules(p, dir, &s, &phase, behind, &rules));
             continue;
         }
         let held = if s.ahead.unwrap_or(1) > 0 {
@@ -2374,10 +2374,12 @@ fn rules_changed_since_fork(dir: &std::path::Path, phase: &str) -> Option<String
 /// branch that has changed the rules files `rules` since: the one
 /// rebase a seat cannot do for itself. Only when nothing can be lost
 /// and nothing is in the way: the worktree has no uncommitted or
-/// untracked files, the seat's agent is not running in it, and the
-/// commits apply without a conflict. The line says what was done, or
-/// why the seat was left alone.
+/// untracked files and the seat's agent is not running in it. Commits
+/// that conflict with the phase branch outside the rules files are
+/// handed back to the seat (`hand_back_conflict`), which resolves them
+/// itself. The line says what was done, or why the seat was left alone.
 fn rebase_over_rules(
+    p: &mut Project,
     dir: &std::path::Path,
     s: &ris::status::Seat,
     phase: &str,
@@ -2402,11 +2404,19 @@ fn rebase_over_rules(
         ));
     }
     if let RebaseOutlook::Conflict(files) = rebase_outlook(dir, phase) {
-        return left(format!(
-            "its commits conflict with {phase} (in {})\n  \
-             next: `git rebase {phase}` in its worktree and resolve, then `ris up {seat}`",
-            files.join(", ")
-        ));
+        // A conflict in a rules file is one the seat cannot resolve
+        // either: its sandbox refuses the file. That one is the person's.
+        if files
+            .iter()
+            .any(|f| ris::runner::RULES_FILES.contains(&f.as_str()))
+        {
+            return left(format!(
+                "its commits conflict with {phase} in a rules file (in {})\n  \
+                 next: `git rebase {phase}` in its worktree and resolve, then `ris up {seat}`",
+                files.join(", ")
+            ));
+        }
+        return hand_back_conflict(p, dir, s, phase, &files, &left);
     }
     if let Some(why) = git_identity_missing(dir, &format!("the rebase onto {phase}")) {
         return left(format!("{why}, then `ris up {seat}`"));
@@ -2422,6 +2432,107 @@ fn rebase_over_rules(
                 e.lines().next().unwrap_or("no reason given")
             ))
         }
+    }
+}
+
+/// The part of a conflicting rebase over a rules-file change that only
+/// the person's `ris up` can do. The seat's commits are kept on a branch
+/// named for the seat and its head, its worktree is reset to the phase
+/// branch (which writes the rules files its sandbox refuses), and the
+/// seat is sent a handoff naming the cherry-pick that brings its commits
+/// back, so it resolves the conflict in its own worktree, where no rules
+/// file is touched. The worktree is clean and its agent stopped, so the
+/// kept branch holds everything the reset moves past.
+fn hand_back_conflict(
+    p: &mut Project,
+    dir: &std::path::Path,
+    s: &ris::status::Seat,
+    phase: &str,
+    files: &[String],
+    left: &dyn Fn(String) -> String,
+) -> String {
+    let seat = &s.seat;
+    let in_files = files.join(", ");
+    let fallback = |why: String| {
+        left(format!(
+            "its commits conflict with {phase} (in {in_files}), and {why}\n  \
+             next: `git rebase {phase}` in its worktree and resolve, then `ris up {seat}`"
+        ))
+    };
+    let (Ok(head), Ok(fork)) = (
+        git(dir, &["rev-parse", "HEAD"]),
+        git(dir, &["merge-base", "HEAD", phase]),
+    ) else {
+        return fallback("its commits could not be read".to_owned());
+    };
+    let short = |c: &str| c.chars().take(12).collect::<String>();
+    let kept = format!("{seat}-kept-{}", short(&head));
+    // The name carries the head, so a branch already there under it from
+    // an earlier run holds these same commits.
+    let made = git(dir, &["branch", &kept, &head]).is_ok()
+        || git(dir, &["rev-parse", &format!("refs/heads/{kept}")]).ok() == Some(head.clone());
+    if !made {
+        return fallback(format!("the branch {kept} could not be made to keep them"));
+    }
+    if let Err(e) = git(dir, &["reset", "--quiet", "--hard", phase]) {
+        return fallback(format!(
+            "the reset to {phase} failed ({}); its commits are on {kept}",
+            e.lines().next().unwrap_or("no reason given")
+        ));
+    }
+    // The item the commits are for: the seat's claim, or else the Item
+    // trailer of its head commit.
+    let item = s
+        .claim
+        .clone()
+        .or_else(|| {
+            git(
+                dir,
+                &[
+                    "log",
+                    "-1",
+                    "--format=%(trailers:key=Item,valueonly)",
+                    &head,
+                ],
+            )
+            .ok()
+        })
+        .and_then(|i| i.trim().parse::<ItemId>().ok());
+    let merge = match item {
+        Some(i) => format!("`ris merge {i}`"),
+        None => "`ris merge` the item".to_owned(),
+    };
+    let range = format!("{}..{kept}", short(&fork));
+    let body = format!(
+        "ris up moved your worktree to {phase}: your commits conflict with it (in {in_files}), \
+         and it changed a rules file your sandbox cannot write, so you could not rebase. Your \
+         commits are kept on the branch {kept}. Next, in your worktree: `git cherry-pick {range}`, \
+         resolve the conflict in {in_files}, `git cherry-pick --continue`, keep one commit, \
+         then {merge}."
+    );
+    let line = format!(
+        "{seat}: moved to {phase}; its commits conflict with it (in {in_files}) and are kept on \
+         {kept}; the seat cherry-picks them ({range}) and resolves the conflict itself"
+    );
+    let sent = p
+        .load()
+        .map(|l| item.filter(|i| l.state.items.contains_key(i)))
+        .and_then(|about| {
+            let body = p.text("body", &body)?;
+            p.run(&Command::MessageSend {
+                from: Actor::Person,
+                to: AgentName(seat.clone()),
+                kind: MessageKind::Handoff,
+                about,
+                body,
+            })
+        });
+    match sent {
+        Ok(_) => format!("{line}; told in its inbox"),
+        Err(e) => format!(
+            "{line}; the message to it failed ({})\n  next: tell {seat}: {body}",
+            e.to_string().lines().next().unwrap_or("no reason given")
+        ),
     }
 }
 

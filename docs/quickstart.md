@@ -189,8 +189,14 @@ One case is rebased instead. A seat can never write a rules file
 whose branch already holds a commit cannot rebase over the change: its
 `ris merge` is refused before its worktree is touched, and names `ris
 up <seat>`. That `ris up` rebases the seat's branch onto the phase
-branch, keeping its commits, provided its worktree is clean, its agent
-has stopped and nothing conflicts; otherwise it says what is in the way.
+branch, keeping its commits, provided its worktree is clean and its
+agent has stopped; otherwise it says what is in the way. When the
+seat's commits conflict with the phase branch outside the rules files,
+`ris up` does the part only it can: it keeps the commits on a branch
+named `<seat>-kept-<commit>`, moves the seat's worktree to the phase
+branch, and sends the seat a handoff naming the `git cherry-pick` that
+brings the commits back, so the seat resolves the conflict in its own
+worktree. A conflict in a rules file itself is left for the person.
 
 An unattended agent may do only what its role allows: reading and
 `ris`; for a writing seat, edits, `git` and the project's check
