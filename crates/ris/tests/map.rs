@@ -192,8 +192,21 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(
         keys(&doc["nodes"][0]),
         [
-            "added", "contract", "external", "language", "path", "removed", "status", "weight"
+            "added",
+            "contract",
+            "dependents",
+            "external",
+            "language",
+            "path",
+            "removed",
+            "risk",
+            "status",
+            "weight"
         ]
+    );
+    assert_eq!(
+        keys(&node(&doc, "src/wire.rs")["risk"]),
+        ["computed", "judged", "level"]
     );
     assert_eq!(keys(&doc["edges"][0]), ["from", "kind", "to"]);
     assert_eq!(
@@ -275,6 +288,38 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(weight("src/store.rs"), 3.0, "unchanged, and outside");
     assert!(weight("src/wire.rs") > 1.0 && weight("src/wire.rs") < weight("src/net.rs"));
     assert!(weight("src/net.rs") > weight("src/store.rs"));
+
+    // Risk: computed from the signals for each changed file, and null
+    // for a file the phase left alone. The contract is medium for
+    // being one; the rest have at most one mild signal, and are low.
+    assert_eq!(node(&doc, "src/wire.rs")["dependents"], 3);
+    assert_eq!(
+        node(&doc, "docs/wire.md")["risk"],
+        json!({
+            "level": "medium",
+            "computed": {
+                "level": "medium",
+                "signals": [{ "signal": "contract", "reason": "a contract or format" }]
+            },
+            "judged": null
+        })
+    );
+    assert_eq!(
+        node(&doc, "src/net.rs")["risk"]["computed"],
+        json!({
+            "level": "low",
+            "signals": [{ "signal": "outside", "reason": "touches the outside: network" }]
+        })
+    );
+    assert_eq!(
+        node(&doc, "src/wire.rs")["risk"]["computed"],
+        json!({
+            "level": "low",
+            "signals": [{ "signal": "dependents", "reason": "3 other files depend on it" }]
+        })
+    );
+    assert_eq!(node(&doc, "src/old.rs")["risk"]["level"], "low");
+    assert!(node(&doc, "src/store.rs")["risk"].is_null());
 
     // Edges: mod lines and use lines, from the file that names the
     // other. The deleted file has none.
@@ -380,12 +425,138 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert!(!text.contains("tests/"), "{text}");
     assert!(text.contains("src/net.rs (added)  [network]"), "{text}");
     assert!(text.contains("docs/wire.md  [contract]"), "{text}");
+    // Each with its level, the highest first.
+    let listed: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("  "))
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|w| ["low", "medium", "high"].contains(w))
+        .collect();
+    assert_eq!(listed, ["medium", "low", "low", "low", "low"], "{text}");
     assert!(!text.contains("src/store.rs"), "unchanged: {text}");
     assert!(text.contains("`ris map --html map.html`"), "{text}");
 
     // A seat reads the same map from its own place.
     let seat: Value = serde_json::from_str(&ok(&dir, "heron", &["--json", "map"])).unwrap();
     assert_eq!(seat["data"], doc);
+}
+
+#[test]
+fn an_auditor_s_judgement_of_a_file_stands_on_the_map_over_the_computed_level() {
+    let dir = setup("risk");
+    ok(&dir, "person", &["phase", "open", "send frames"]);
+    work(&dir);
+    let refused = |agent: &str, args: &[&str], want: &str| {
+        let out = ris(&dir, agent, args);
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(!out.status.success(), "ris {}: accepted", args.join(" "));
+        assert!(err.contains(want), "{want} in {err}");
+        err
+    };
+    let audit = |path: &'static str, level: &'static str, why: &'static str| {
+        ["audit", "--file", path, "--risk", level, "--why", why]
+    };
+    let judge = audit("src/net.rs", "high", "opens a socket with no timeout");
+    // A judgement is a file, a level and a reason, and is not a review
+    // of an item.
+    refused("wren", &["audit", "--file", "src/net.rs"], "--risk");
+    refused("wren", &["audit", "--risk", "high"], "--file");
+    refused("wren", &[&judge[..], &["--all"]].concat(), "cannot be used");
+
+    // Only an auditor records one: not a seat that writes the change,
+    // and not the person, whose reading the map is for.
+    refused(
+        "heron",
+        &judge,
+        "heron is a lead, and a lead does not record a risk judgement",
+    );
+    refused("person", &judge, "this command is an agent's");
+    // Only of a file the phase changed and the map shows; the refusal
+    // does not repeat what was typed.
+    for path in [
+        "src/store.rs",
+        "README.md",
+        "tests/net.rs",
+        "src/nowhere.rs",
+    ] {
+        let err = refused(
+            "wren",
+            &audit(path, "high", "why"),
+            "P-1 has no changed file on the map at that path",
+        );
+        assert!(!err.contains(path), "{err}");
+    }
+    assert!(
+        node(&data(&dir, &["map"]), "src/net.rs")["risk"]["judged"].is_null(),
+        "nothing refused was recorded"
+    );
+
+    let said = ok(&dir, "wren", &judge);
+    assert!(said.contains("src/net.rs judged high by wren"), "{said}");
+    let doc = data(&dir, &["map"]);
+    assert_eq!(
+        node(&doc, "src/net.rs")["risk"],
+        json!({
+            "level": "high",
+            "computed": {
+                "level": "low",
+                "signals": [{ "signal": "outside", "reason": "touches the outside: network" }]
+            },
+            "judged": {
+                "level": "high",
+                "why": "opens a socket with no timeout",
+                "seat": "wren"
+            }
+        })
+    );
+    // No other file's level moved.
+    assert!(node(&doc, "src/wire.rs")["risk"]["judged"].is_null());
+    assert_eq!(node(&doc, "docs/wire.md")["risk"]["level"], "medium");
+
+    // In text it leads the list, with who judged it and why.
+    let text = ok(&dir, "person", &["map"]);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[2].starts_with("  high "), "{text}");
+    assert!(lines[2].contains("src/net.rs (added)"), "{text}");
+    assert_eq!(
+        lines[3].trim(),
+        "judged high by wren: opens a socket with no timeout (computed: low)",
+        "{text}"
+    );
+
+    // Recorded again, the later one stands, and a judgement may lower
+    // a level as well as raise it.
+    ok(
+        &dir,
+        "wren",
+        &audit("src/net.rs", "medium", "the caller sets a deadline"),
+    );
+    ok(
+        &dir,
+        "wren",
+        &audit("docs/wire.md", "low", "a sentence, no change of format"),
+    );
+    let doc = data(&dir, &["map"]);
+    let net = &node(&doc, "src/net.rs")["risk"];
+    assert_eq!(net["level"], "medium");
+    assert_eq!(net["judged"]["why"], "the caller sets a deadline");
+    let wire = &node(&doc, "docs/wire.md")["risk"];
+    assert_eq!(
+        (&wire["level"], &wire["computed"]["level"]),
+        (&json!("low"), &json!("medium"))
+    );
+
+    // The page carries it, being the same document.
+    let page = dir.join(".osiris/map.html");
+    ok(&dir, "person", &["map", "--html", page.to_str().unwrap()]);
+    let html = fs::read_to_string(&page).unwrap();
+    assert!(html.contains("the caller sets a deadline"), "embedded");
+
+    // The closed phase's map keeps its judgements, and with no phase
+    // open there is no change set to judge.
+    ok(&dir, "person", &["phase", "close"]);
+    assert_eq!(data(&dir, &["map"])["nodes"], doc["nodes"]);
+    refused("wren", &judge, "no phase is open");
 }
 
 #[test]

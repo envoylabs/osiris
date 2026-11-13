@@ -107,12 +107,24 @@ enum Cmd {
     /// Return a claimed item to ready: its holder, or the person.
     Release { item: ItemId },
     /// The review queue, the open phase's items; with an item, record
-    /// that you reviewed it.
+    /// that you reviewed it; with --file, record how closely that
+    /// file's change should be read, for the map.
     Audit {
         item: Option<ItemId>,
         /// Every phase's items, not only the open phase's.
         #[arg(long, conflicts_with = "item")]
         all: bool,
+        /// A file the open phase changed, as `ris map` lists it: record
+        /// your judgement of its risk. Again for the same file, the
+        /// later one stands.
+        #[arg(long, value_name = "PATH", requires_all = ["risk", "why"], conflicts_with_all = ["item", "all"])]
+        file: Option<String>,
+        /// The level you judge the file's change to be.
+        #[arg(long, value_enum, value_name = "LEVEL", requires = "file")]
+        risk: Option<Level>,
+        /// One line of why.
+        #[arg(long, requires = "file")]
+        why: Option<String>,
     },
     /// Something only the person can do: raise one, or record it done.
     Action {
@@ -425,6 +437,23 @@ struct DecisionRaise {
     /// Why the recommendation holds. Required for a mechanical decision.
     #[arg(long, default_value = "")]
     rationale: String,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Level {
+    Low,
+    Medium,
+    High,
+}
+
+impl From<Level> for ris_core::primitives::RiskLevel {
+    fn from(l: Level) -> Self {
+        match l {
+            Level::Low => Self::Low,
+            Level::Medium => Self::Medium,
+            Level::High => Self::High,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -1288,7 +1317,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Audit { item: None, all } => {
+        Cmd::Audit {
+            item: None,
+            all,
+            file: None,
+            ..
+        } => {
             let l = p.load()?;
             let scope = render::Scope::of(&l, *all);
             Ok(render::audit_queue(&l, &actor, scope))
@@ -1505,8 +1539,62 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Report => Ok(render::report(&p.load()?)),
 
         Cmd::Map { phase, html } => {
-            let range = ris::map::range(&p, &p.load()?, *phase)?;
-            ris::map::output(ris::map::build(&p, &range)?, html.as_deref())
+            let l = p.load()?;
+            let range = ris::map::range(&p, &l, *phase)?;
+            ris::map::output(ris::map::build(&p, &l, &range)?, html.as_deref())
+        }
+
+        Cmd::Audit {
+            file: Some(path),
+            risk,
+            why,
+            ..
+        } => {
+            let (Some(level), Some(why)) = (risk, why) else {
+                return Err(CliError::Other(
+                    "a risk judgement needs a level and a reason\n  \
+                     next: `ris audit --file <path> --risk <low|medium|high> --why \"<one line>\"`"
+                        .into(),
+                ));
+            };
+            let by = agent_only(&actor)?;
+            let l = p.load()?;
+            let open = l
+                .state
+                .open_phase()
+                .ok_or(ris_core::refusal::Refusal::NoOpenPhase)?
+                .id;
+            // The judgement is of a change, so the file must be one the
+            // open phase changed and the map shows.
+            let range = ris::map::range(&p, &l, Some(open))?;
+            let map = ris::map::survey(&p, &l, &range)?;
+            if !map
+                .nodes
+                .iter()
+                .any(|n| n.path == *path && n.status != "unchanged")
+            {
+                return Err(CliError::Other(format!(
+                    "{open} has no changed file on the map at that path\n  \
+                     next: `ris map` lists the changed files; give the path as it is written there"
+                )));
+            }
+            let level: ris_core::primitives::RiskLevel = (*level).into();
+            p.run(&Command::JudgeRisk {
+                by: by.clone(),
+                level,
+                path: p.text("path", path)?,
+                why: p.text("why", why)?,
+            })?;
+            let word = ris::map::level_word(level);
+            Ok(Output::of(
+                format!("{path} judged {word} by {by}; `ris map` shows it to the person"),
+                &schema::Audit::Risk(schema::RiskRecorded {
+                    phase: open,
+                    path: path.clone(),
+                    level,
+                    seat: by.0,
+                }),
+            ))
         }
 
         Cmd::Status => Ok(ris::status::render(&p, &p.load()?)),
@@ -1957,6 +2045,17 @@ fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), Cl
     let Actor::Agent(name) = actor else {
         return Ok(());
     };
+    // A risk judgement is the reviewer's: a seat that writes the change
+    // does not grade it.
+    if let (Cmd::Audit { file: Some(_), .. }, Some(role)) = (command, role_of(&name.0))
+        && role != Role::Auditor
+    {
+        return refuse(
+            &name.0,
+            role,
+            "record a risk judgement: an auditor does, as it reviews the phase",
+        );
+    }
     match role_of(&name.0) {
         Some(Role::Auditor) => match command {
             Cmd::Claim { .. } => refuse(&name.0, Role::Auditor, "claim items"),
@@ -1992,7 +2091,11 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         | Cmd::Log { .. }
         | Cmd::Watch { .. }
         | Cmd::Scan { .. }
-        | Cmd::Audit { item: None, .. }
+        | Cmd::Audit {
+            item: None,
+            file: None,
+            ..
+        }
         | Cmd::Send { .. }
         | Cmd::Seat {
             action: SeatCmd::Fault { .. },
@@ -2013,6 +2116,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         Cmd::Decide { .. } => Some("take decisions"),
         Cmd::Release { .. } => Some("release items"),
         Cmd::Audit { item: Some(_), .. } => Some("record reviews"),
+        Cmd::Audit { file: Some(_), .. } => Some("record risk judgements"),
         Cmd::Check { .. } => Some("run checks"),
         _ => Some("change the harness"),
     }

@@ -193,6 +193,7 @@ fn item_command(kind: CommandKind) -> Option<Command> {
         | CommandKind::RunStart
         | CommandKind::RunStop
         | CommandKind::SetupFault
+        | CommandKind::JudgeRisk
         | CommandKind::MessageSend => return None,
     })
 }
@@ -1070,6 +1071,49 @@ fn messages_go_to_another_agent() {
     h.must(send(Actor::Agent(agent("wren")), "heron"));
     h.must(send(Actor::Person, "heron"));
     assert_eq!(h.state.messages.len(), 2);
+}
+
+#[test]
+fn a_risk_judgement_is_recorded_against_the_open_phase() {
+    let judge = |level| Command::JudgeRisk {
+        by: agent("wren"),
+        level,
+        path: t("src/store.rs"),
+        why: t("writes the store with no lock"),
+    };
+    // With no phase open there is no change set to judge.
+    let mut h = Harness::new();
+    assert_eq!(h.run(judge(RiskLevel::High)), Err(Refusal::NoOpenPhase));
+
+    let mut h = with_phase_and_item();
+    h.must(judge(RiskLevel::Medium));
+    h.must(judge(RiskLevel::High));
+    // Both are kept, oldest first; which stands for a path is the
+    // reader's to say, since the path is text the fold does not read.
+    let seqs = h.state.risks[&PhaseId(1)].clone();
+    assert_eq!(seqs.len(), 2);
+    let last = h.log.iter().find(|e| e.seq == seqs[1]).unwrap();
+    assert_eq!(
+        last.structure,
+        Structure::RiskJudged {
+            phase: PhaseId(1),
+            seat: agent("wren"),
+            level: RiskLevel::High,
+        }
+    );
+    assert_eq!(last.text_field("path").unwrap().as_str(), "src/store.rs");
+    assert_eq!(State::fold(&h.log).unwrap(), h.state);
+
+    // A paused seat records none.
+    h.must(Command::Pause {
+        seats: vec![agent("wren")],
+        actor: Actor::Person,
+    });
+    assert_eq!(
+        h.run(judge(RiskLevel::Low)),
+        Err(Refusal::SeatPaused(agent("wren")))
+    );
+    assert!(RiskLevel::High > RiskLevel::Medium && RiskLevel::Medium > RiskLevel::Low);
 }
 
 #[test]

@@ -94,7 +94,7 @@ fn test_files_are_counted_and_left_off_unless_a_contract_names_them() {
     // The default: under a tests directory, at any depth. A file
     // that is not source is not counted as a test either.
     let config = crate::config::MapConfig::default();
-    let map = document(&range, &paths, &t, &diff, &config);
+    let map = document(&range, &paths, &t, &diff, &config, &BTreeMap::new());
     assert_eq!(paths_of(&map), ["src/lib.rs", "src/lib_test.rs"]);
     let tests = &map.totals.tests;
     assert_eq!((tests.files, tests.changed), (2, 1));
@@ -107,7 +107,7 @@ fn test_files_are_counted_and_left_off_unless_a_contract_names_them() {
         contracts: vec!["tests/*.proto".to_owned()],
         tests: vec!["**/tests/**".to_owned(), "**/*_test.rs".to_owned()],
     };
-    let map = document(&range, &paths, &t, &diff, &config);
+    let map = document(&range, &paths, &t, &diff, &config, &BTreeMap::new());
     assert_eq!(paths_of(&map), ["src/lib.rs", "tests/schema.proto"]);
     assert!(map.edges.is_empty(), "no edge to a test file");
     let tests = &map.totals.tests;
@@ -117,6 +117,202 @@ fn test_files_are_counted_and_left_off_unless_a_contract_names_them() {
         tests_line(tests),
         "2 test file(s) left off the map: 2 changed (+6 -3)"
     );
+}
+
+#[test]
+fn the_computed_level_adds_up_the_signals_and_lists_those_that_count() {
+    let signals = |c: &Computed| c.signals.iter().map(|s| s.signal).collect::<Vec<_>>();
+    // Nothing counts: low, with no signal listed.
+    let quiet = computed_risk(&[], false, 49, 2);
+    assert_eq!((quiet.level, signals(&quiet)), (RiskLevel::Low, vec![]));
+    // One mild signal alone stays low, and is still listed.
+    let outside = computed_risk(&["filesystem", "process"], false, 3, 0);
+    assert_eq!(outside.level, RiskLevel::Low);
+    assert_eq!(
+        outside.signals,
+        [Signal {
+            signal: "outside",
+            reason: "touches the outside: filesystem, process".to_owned()
+        }]
+    );
+    assert_eq!(computed_risk(&[], false, 50, 0).level, RiskLevel::Low);
+    assert_eq!(computed_risk(&[], false, 0, 3).level, RiskLevel::Low);
+    // A contract, a large change or many dependents alone is medium.
+    assert_eq!(computed_risk(&[], true, 1, 0).level, RiskLevel::Medium);
+    assert_eq!(computed_risk(&[], false, 200, 0).level, RiskLevel::Medium);
+    assert_eq!(computed_risk(&[], false, 0, 8).level, RiskLevel::Medium);
+    // So are two mild signals together.
+    assert_eq!(
+        computed_risk(&["network"], false, 50, 0).level,
+        RiskLevel::Medium
+    );
+    assert_eq!(
+        computed_risk(&["network"], true, 1, 0).level,
+        RiskLevel::Medium
+    );
+    // High takes signals together.
+    assert_eq!(computed_risk(&[], true, 200, 0).level, RiskLevel::High);
+    assert_eq!(computed_risk(&[], false, 200, 8).level, RiskLevel::High);
+    assert_eq!(
+        computed_risk(&["network"], true, 50, 0).level,
+        RiskLevel::High
+    );
+    let all = computed_risk(&["database"], true, 340, 12);
+    assert_eq!(all.level, RiskLevel::High);
+    assert_eq!(signals(&all), ["outside", "contract", "diff", "dependents"]);
+    assert_eq!(all.signals[2].reason, "a large change: 340 lines");
+    assert_eq!(all.signals[3].reason, "12 other files depend on it");
+    // More of anything never lowers the level.
+    for lines in [0, 49, 50, 199, 200, 5000] {
+        for dependents in [0, 2, 3, 7, 8, 40] {
+            let here = computed_risk(&[], false, lines, dependents).level;
+            assert!(computed_risk(&["process"], false, lines, dependents).level >= here);
+            assert!(computed_risk(&[], true, lines, dependents).level >= here);
+            assert!(computed_risk(&[], false, lines + 200, dependents).level >= here);
+            assert!(computed_risk(&[], false, lines, dependents + 8).level >= here);
+        }
+    }
+}
+
+#[test]
+fn a_changed_file_carries_its_risk_and_a_judgement_stands_over_the_computed_level() {
+    let range = Range {
+        phase: None,
+        base: Some("base".to_owned()),
+        tip: "tip".to_owned(),
+        tip_ref: "HEAD".to_owned(),
+    };
+    let paths: Vec<String> = [
+        "src/a.rs",
+        "src/b.rs",
+        "src/c.rs",
+        "src/lib.rs",
+        "src/wire.rs",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let t = tree(&[
+        ("Cargo.toml", "[package]\nname = \"fixture\"\n"),
+        ("src/lib.rs", "mod a;\nmod b;\nmod c;\nmod wire;\n"),
+        ("src/a.rs", "use crate::wire::Frame;\n"),
+        // Named by a `use` line and by a path: one dependent, once.
+        (
+            "src/b.rs",
+            "use crate::wire::Frame;\nfn f() { crate::wire::go() }\n",
+        ),
+        ("src/c.rs", "use crate::wire::Frame;\nuse std::fs;\n"),
+        ("src/wire.rs", "pub struct Frame;\n"),
+    ]);
+    let diff: BTreeMap<String, (&'static str, u64, u64)> = [
+        ("src/wire.rs".to_owned(), ("modified", 40, 20)),
+        ("src/c.rs".to_owned(), ("modified", 2, 0)),
+        ("src/old.rs".to_owned(), ("deleted", 0, 9)),
+    ]
+    .into_iter()
+    .collect();
+    let config = crate::config::MapConfig::default();
+    let judged: BTreeMap<String, Judged> = [
+        (
+            "src/c.rs".to_owned(),
+            Judged {
+                level: RiskLevel::High,
+                why: "writes outside the store's directory".to_owned(),
+                seat: "wren".to_owned(),
+            },
+        ),
+        // One for a file the phase did not change is not carried.
+        (
+            "src/a.rs".to_owned(),
+            Judged {
+                level: RiskLevel::High,
+                why: "stale".to_owned(),
+                seat: "wren".to_owned(),
+            },
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let map = document(&range, &paths, &t, &diff, &config, &judged);
+    let node = |path: &str| map.nodes.iter().find(|n| n.path == path).unwrap();
+
+    // Dependents: the files with an edge to it, the declaring module
+    // among them.
+    assert_eq!(node("src/wire.rs").dependents, 4, "lib, a, b and c");
+    assert_eq!(node("src/c.rs").dependents, 1, "lib");
+    assert_eq!(node("src/lib.rs").dependents, 0);
+
+    // Computed alone: a sizeable change that others depend on.
+    let wire = node("src/wire.rs").risk.as_ref().unwrap();
+    assert_eq!(wire.level, RiskLevel::Medium);
+    assert_eq!(wire.computed.level, RiskLevel::Medium);
+    assert_eq!(wire.judged, None);
+    assert_eq!(
+        wire.computed
+            .signals
+            .iter()
+            .map(|s| s.reason.as_str())
+            .collect::<Vec<_>>(),
+        ["a sizeable change: 60 lines", "4 other files depend on it"]
+    );
+
+    // Judged: the judgement's level stands, beside the computed one.
+    let c = node("src/c.rs").risk.as_ref().unwrap();
+    assert_eq!(c.level, RiskLevel::High);
+    assert_eq!(c.computed.level, RiskLevel::Low);
+    assert_eq!(c.judged, Some(judged["src/c.rs"].clone()));
+
+    // A deleted file is a change and has a level; an unchanged file
+    // has none, whatever was recorded for it.
+    assert_eq!(
+        node("src/old.rs").risk.as_ref().unwrap().level,
+        RiskLevel::Low
+    );
+    assert_eq!(node("src/a.rs").risk, None);
+    assert_eq!(node("src/lib.rs").risk, None);
+
+    // As the document spells them.
+    let doc = serde_json::to_value(&map).unwrap();
+    let c = doc["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["path"] == "src/c.rs")
+        .unwrap();
+    assert_eq!(
+        c["risk"],
+        serde_json::json!({
+            "level": "high",
+            "computed": {
+                "level": "low",
+                "signals": [
+                    { "signal": "outside", "reason": "touches the outside: filesystem" }
+                ]
+            },
+            "judged": {
+                "level": "high",
+                "why": "writes outside the store's directory",
+                "seat": "wren"
+            }
+        })
+    );
+}
+
+#[test]
+fn the_page_marks_risk_apart_from_size_and_the_ring_and_says_why() {
+    // The mark is its own shape, drawn from the level that stands.
+    assert!(PAGE.contains("n.risk.level"), "the level is the document's");
+    assert!(PAGE.contains("\"mark \" + level(n)"), "a mark per level");
+    assert!(PAGE.contains(".node .mark.high { fill: var(--risk); }"));
+    // Size is still the diff alone and the ring still the outside.
+    assert!(PAGE.contains(".node.outside circle { stroke: var(--outside)"));
+    // The reasons, on hover and in the pane's head, from one function.
+    assert!(PAGE.contains("riskLines(n).forEach(function (r) { line(r.cls, r.text); })"));
+    assert!(PAGE.contains("id=\"pane-risk\""));
+    assert!(PAGE.contains("\"judged \" + j.level + \" by \" + j.seat"));
+    assert!(PAGE.contains("c.signals.map"));
+    // The legend explains it.
+    assert!(PAGE.contains("high risk: read this change first"));
+    assert!(PAGE.contains("an auditor's judgement where one is recorded"));
 }
 
 #[test]

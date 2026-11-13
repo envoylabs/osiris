@@ -36,7 +36,7 @@ use crate::ids::{
     ActionId, Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
     MessageId, PhaseId,
 };
-use crate::primitives::{Blocker, DecisionClass, MessageKind};
+use crate::primitives::{Blocker, DecisionClass, MessageKind, RiskLevel};
 use crate::text::Text;
 
 /// The event format version. Events are versioned from the first
@@ -175,6 +175,15 @@ pub enum Structure {
     ItemAudited {
         item: ItemId,
         by: AgentName,
+    },
+    /// An auditor judged how closely one file's change in the phase
+    /// should be read. The text part carries `path`, the file, relative
+    /// to the repository root, and `why`, one line. The latest one for
+    /// a path in a phase is the one shown.
+    RiskJudged {
+        phase: PhaseId,
+        seat: AgentName,
+        level: RiskLevel,
     },
     DecisionRaised {
         decision: DecisionId,

@@ -167,6 +167,17 @@ pub struct Explanation {
     pub cons: Vec<usize>,
 }
 
+/// How closely a file's change should be read: where to look first.
+/// Ordered, so the higher of two levels is the greater.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+}
+
 /// The decision rule: the test is the cost of reversing.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

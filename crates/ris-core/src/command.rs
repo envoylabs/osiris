@@ -10,7 +10,7 @@ use crate::ids::{
     ActionId, Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
 };
 use crate::primitives::ActionState;
-use crate::primitives::{Blocker, DecisionClass, DecisionState, ItemState, MessageKind};
+use crate::primitives::{Blocker, DecisionClass, DecisionState, ItemState, MessageKind, RiskLevel};
 use crate::refusal::Refusal;
 use crate::state::State;
 use crate::text::Text;
@@ -151,6 +151,17 @@ pub enum Command {
         seat: AgentName,
         what: Text,
     },
+    /// An auditor's judgement of how closely one file's change in the
+    /// open phase should be read, with one line of why. Recorded again
+    /// for the same path, the later one stands. That the seat is an
+    /// auditor and the path a changed file is the shell's to check: the
+    /// core knows neither roles nor files.
+    JudgeRisk {
+        by: AgentName,
+        level: RiskLevel,
+        path: Text,
+        why: Text,
+    },
     /// Pause seats: each finishes what it holds, and its next claim or
     /// audit is refused until it is resumed. The person's only.
     Pause {
@@ -205,6 +216,7 @@ impl Command {
             Self::RunStart { .. } => CommandKind::RunStart,
             Self::RunStop { .. } => CommandKind::RunStop,
             Self::SetupFault { .. } => CommandKind::SetupFault,
+            Self::JudgeRisk { .. } => CommandKind::JudgeRisk,
             Self::RaiseAction { .. } => CommandKind::RaiseAction,
             Self::ActionDone { .. } => CommandKind::ActionDone,
             Self::SetActionCheck { .. } => CommandKind::SetActionCheck,
@@ -687,6 +699,27 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
         Command::SetupFault { seat, what } => Ok(vec![
             Effect::new(Structure::SetupFault { seat: seat.clone() }).with("what", what),
         ]),
+
+        Command::JudgeRisk {
+            by,
+            level,
+            path,
+            why,
+        } => {
+            if state.paused.contains(by) {
+                return Err(Refusal::SeatPaused(by.clone()));
+            }
+            let phase = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
+            Ok(vec![
+                Effect::new(Structure::RiskJudged {
+                    phase,
+                    seat: by.clone(),
+                    level: *level,
+                })
+                .with("path", path)
+                .with("why", why),
+            ])
+        }
 
         Command::RaiseAction {
             by,

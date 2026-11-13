@@ -91,7 +91,11 @@ line of output per envelope, and ends once no seat is running; without
   person, and `checks`.
 - `ris audit`: `queue`, the open phase's done and merged items the
   caller has still to review, each with its `id`, `phase`, `goal`,
-  `state` and `checks`; with `--all`, earlier phases' too.
+  `state` and `checks`; with `--all`, earlier phases' too. With an
+  item, the review recorded: `item` and `by`. With `--file <path>
+  --risk <low|medium|high> --why "<one line>"`, an auditor's risk
+  judgement of a file the open phase changed, recorded: `phase`,
+  `path`, `level` and `seat`. The map document carries it (below).
 - `ris status`: `seats`, each with its role, place, branch, claim,
   `paused`, `running` and `activity`: for a running seat with a run
   file, `last` (what it last ran or said, or null), `quiet_seconds`
@@ -120,8 +124,9 @@ line of output per envelope, and ends once no seat is running; without
   its text.
 - `ris watch`: every event as it is appended, including `run_started`
   and `run_stopped` when the runner starts and stops a seat's agent,
-  and `setup_fault` (with `seat`) when a seat reports a fault in its
-  setup.
+  `setup_fault` (with `seat`) when a seat reports a fault in its
+  setup, and `risk_judged` (with `phase`, `seat` and `level`) when an
+  auditor records a risk judgement.
 
 `crates/ris/tests/json_contract.rs` pins the envelope and the top-level
 keys of the most-read commands' `data`.
@@ -203,7 +208,14 @@ or reshaped.
   "nodes": [
     {"path": "src/store.rs", "language": "rust", "status": "modified",
      "added": 12, "removed": 3, "external": ["filesystem"],
-     "contract": false, "weight": 5.77}
+     "contract": false, "weight": 5.77, "dependents": 4,
+     "risk": {
+       "level": "high",
+       "computed": {"level": "medium", "signals": [
+         {"signal": "outside", "reason": "touches the outside: filesystem"},
+         {"signal": "dependents", "reason": "4 other files depend on it"}]},
+       "judged": {"level": "high", "why": "writes the store with no lock", "seat": "wren"}
+     }}
   ],
   "edges": [
     {"from": "src/store.rs", "to": "src/wire.rs", "kind": "use"}
@@ -247,6 +259,27 @@ or reshaped.
   scale) and is 2 higher for a file that is external or a contract. A
   renderer may size by it; the exact formula is not part of the
   contract.
+- `dependents` is how many other nodes have an edge to this one: the
+  files that name it, each counted once whatever kinds of line do.
+- `risk` says how closely a changed file should be read, so the person
+  sees where to look first; it is null for an `unchanged` node. It has
+  two layers. `computed` is what `ris` works out with no model: a
+  `level` of `low`, `medium` or `high`, and the `signals` that count
+  toward it, each with its name in `signal` and the same in words, with
+  its numbers, in `reason`. The signals are `outside` (the file is
+  `external`), `contract`, `diff` (the lines added plus removed are 50
+  or more, and count double from 200) and `dependents` (3 or more, and
+  double from 8), in that order; `signals` is empty when none counts.
+  A contract counts double and touching the outside once; two points
+  are `medium` and four `high`, so one mild signal alone stays `low`
+  and `high` takes signals together. The thresholds are not part of
+  the contract; the level, and the reasons given for it, are. `judged`
+  is what an auditor recorded for the file in this phase with
+  `ris audit --file`: its `level`, one line of `why`, and the `seat`;
+  the latest, if more than one was recorded, and null when none was.
+  `risk.level` is the level that stands, and the one to draw: the
+  judgement's where there is one, and the computed one otherwise. A
+  closed phase's map keeps its judgements.
 - `edges` are how the code connects, each from the file that names the
   other, sorted. `kind` is the kind of line that makes the edge. For
   Rust: `mod` (a `mod name;` line, to the module's file) and `use` (a

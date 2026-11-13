@@ -165,6 +165,22 @@ author disputes is raised as a substantive decision. `ris audit I-n`
 records the review. Merges never wait for it: findings are fixed
 forward.
 
+As it reads the phase's diffs, an auditor records how closely the
+person should read each changed file, for the map (`ris map`):
+
+```
+ris audit --file src/store.rs --risk high --why "writes the store with no lock"
+```
+
+The level is `low`, `medium` or `high`, the reason one line, and the
+path as `ris map` lists it. `ris` already computes a level for every
+changed file from what it can count (the file touches the outside, is
+a contract, the size of its diff, how many files depend on it), and
+the map shows it where no judgement is recorded. Record one where
+reading the change says otherwise, up or down, and for every file the
+person should look at first; recorded again for the same file, the
+later one stands. Only an auditor records one.
+
 ## An advisor's seat
 
 An advisor works beside the person and never writes to the tree. It

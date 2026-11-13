@@ -245,6 +245,11 @@ impl Loaded {
         Self { state, log, by_seq }
     }
 
+    /// The event at `seq`, if the log has it.
+    pub fn event(&self, seq: u64) -> Option<&Event> {
+        self.by_seq.get(&seq).map(|i| &self.log[*i])
+    }
+
     /// A text field of the event at `seq`, if the event carries it and
     /// it has not been removed: for optional fields.
     pub fn log_text(&self, seq: u64, field: &str) -> Option<&str> {

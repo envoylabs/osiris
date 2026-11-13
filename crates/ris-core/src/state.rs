@@ -39,6 +39,11 @@ pub struct State {
     /// the events that recorded them, oldest first.
     #[serde(default)]
     pub faults: BTreeMap<crate::ids::AgentName, Vec<u64>>,
+    /// The risk judgements auditors recorded in each phase, as the
+    /// events that recorded them, oldest first. The file each is about
+    /// is in the event's text, which the fold does not read.
+    #[serde(default)]
+    pub risks: BTreeMap<crate::ids::PhaseId, Vec<u64>>,
 }
 
 /// The reverse index: links that events record in one direction, read
@@ -452,6 +457,9 @@ impl State {
             }
             Structure::SetupFault { seat } => {
                 self.faults.entry(seat.clone()).or_default().push(seq);
+            }
+            Structure::RiskJudged { phase, .. } => {
+                self.risks.entry(*phase).or_default().push(seq);
             }
             Structure::RunStopped { seat, .. } => {
                 self.running.remove(seat);

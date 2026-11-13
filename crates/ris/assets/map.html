@@ -16,6 +16,7 @@
     --deleted: #ff3d6e;
     --unchanged: #56607f;
     --outside: #ff2bd6;
+    --risk: #ffb300;
     --pane: min(52vw, 860px);
     --pane-ground: #080a14;
   }
@@ -48,7 +49,7 @@
   }
   header p { margin: 0; color: var(--faint); }
   header b { color: var(--text); font-weight: 500; }
-  #legend { bottom: 12px; left: 12px; color: var(--faint); }
+  #legend { bottom: 12px; left: 12px; max-width: 64ch; color: var(--faint); }
   #legend div { display: flex; align-items: center; gap: 8px; }
   #legend i {
     display: inline-block; width: 10px; height: 10px; border-radius: 50%;
@@ -65,6 +66,14 @@
   #tip .minus { color: var(--deleted); }
   #tip .outside { color: var(--outside); }
   #tip .quiet { color: var(--faint); }
+  #tip .risk, #pane-risk .risk { color: var(--risk); }
+  /* The risk mark: a diamond beside the node, apart from its size (the
+     diff) and its ring (the outside). Hollow is medium, filled is high. */
+  .node .mark { stroke: var(--risk); stroke-width: 1.5; fill: var(--ground); }
+  .node .mark.high { fill: var(--risk); }
+  #legend svg { width: 10px; height: 10px; flex: none; cursor: default; }
+  #legend .mark { stroke: var(--risk); stroke-width: 1.5; fill: none; }
+  #legend .mark.high { fill: var(--risk); }
   .link { stroke: #2b3566; stroke-opacity: 0.5; stroke-width: 1; }
   .link.mod { stroke-dasharray: 3 3; }
   .link.lit { stroke: var(--modified); stroke-opacity: 0.95; stroke-width: 1.4; }
@@ -118,6 +127,8 @@
   #pane-totals .plus { color: var(--added); }
   #pane-totals .minus { color: var(--deleted); }
   #pane-totals .outside { color: var(--outside); }
+  #pane-risk { color: var(--faint); }
+  #pane-risk div { margin-top: 2px; }
   #pane-close {
     flex: none;
     font: inherit;
@@ -200,14 +211,18 @@
   <div><i style="background: var(--deleted)"></i>deleted</div>
   <div><i style="background: var(--unchanged)"></i>unchanged</div>
   <div><i style="border: 2px solid var(--outside)"></i>touches the outside, or a contract</div>
+  <div><svg viewBox="-5 -5 10 10"><path class="mark high" d="M0,-4L4,0L0,4L-4,0Z"></path></svg>high risk: read this change first</div>
+  <div><svg viewBox="-5 -5 10 10"><path class="mark" d="M0,-4L4,0L0,4L-4,0Z"></path></svg>medium risk; a changed file with no diamond is low</div>
+  <div>risk: an auditor's judgement where one is recorded, else worked out from the outside, contracts, the diff's size and how many files depend on it</div>
   <div>size: lines added and removed; an unchanged file is a dot</div>
-  <div>drag a file, scroll to zoom, hover for its numbers, click for its diff</div>
+  <div>drag a file, scroll to zoom, hover for its numbers and its risk, click for its diff</div>
 </div>
 <aside id="pane" aria-label="The picked file's diff for the phase">
   <div id="pane-head">
     <div id="pane-file">
       <div id="pane-path"></div>
       <div id="pane-totals"></div>
+      <div id="pane-risk"></div>
     </div>
     <button id="pane-close" type="button" title="Close the diff (Esc)">esc &#x2715;</button>
   </div>
@@ -278,6 +293,40 @@
     .attr("r", radius)
     .attr("fill", function (n) { return colour[n.status] || colour.unchanged; })
     .attr("filter", function (n) { return n.status === "unchanged" ? null : "url(#glow)"; });
+  // The risk mark: a diamond up and to the left of a changed file whose
+  // level is medium (hollow) or high (filled). The level is the
+  // document's `risk.level`: the auditor's judgement where one is
+  // recorded, and the computed one otherwise.
+  var level = function (n) { return n.risk ? n.risk.level : null; };
+  node.filter(function (n) { return level(n) === "medium" || level(n) === "high"; })
+    .append("path")
+    .attr("class", function (n) { return "mark " + level(n); })
+    .attr("d", function (n) {
+      var s = level(n) === "high" ? 5.5 : 4.5;
+      return "M0," + (-s) + "L" + s + ",0L0," + s + "L" + (-s) + ",0Z";
+    })
+    .attr("transform", function (n) {
+      var d = radius(n) * 0.71 + 5;
+      return "translate(" + (-d) + "," + (-d) + ")";
+    });
+  // What the document says about a file's risk, as lines of text: the
+  // level that stands, the judgement if there is one, and the computed
+  // level with the signals that gave it.
+  var riskLines = function (n) {
+    if (!n.risk) { return []; }
+    var out = [{ cls: "risk", text: "risk: " + n.risk.level }];
+    var j = n.risk.judged, c = n.risk.computed;
+    if (j) {
+      out.push({ cls: "", text: "judged " + j.level + " by " + j.seat + ": " + j.why });
+    }
+    var reasons = c.signals.map(function (s) { return s.reason; });
+    out.push({
+      cls: "quiet",
+      text: "computed " + c.level + ": " +
+        (reasons.length > 0 ? reasons.join("; ") : "no signal counts")
+    });
+    return out;
+  };
   var labelled = function (n) { return n.status !== "unchanged" || isOutside(n); };
   node.filter(labelled)
     .append("text")
@@ -379,6 +428,7 @@
       diff.appendChild(plus); diff.appendChild(minus); diff.appendChild(status);
       if (n.external.length > 0) { line("outside", "touches: " + n.external.join(", ")); }
       if (n.contract) { line("outside", "a contract or format"); }
+      riskLines(n).forEach(function (r) { line(r.cls, r.text); });
       tip.style.display = "block";
       place(event);
       var near = new Set([n.id]);
@@ -471,6 +521,14 @@
     var marks = n.external.slice();
     if (n.contract) { marks.push("contract"); }
     if (marks.length > 0) { totals.appendChild(span("outside", "  " + marks.join(", "))); }
+    var risk = document.getElementById("pane-risk");
+    risk.textContent = "";
+    riskLines(n).forEach(function (r) {
+      var div = document.createElement("div");
+      if (r.cls === "risk") { div.className = "risk"; }
+      div.textContent = r.text;
+      risk.appendChild(div);
+    });
     paneBody.textContent = "";
     var text = (doc.diffs || {})[n.path];
     if (n.status === "unchanged") {

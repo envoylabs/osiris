@@ -202,9 +202,12 @@
         },
         {
           "$ref": "#/$defs/Audited"
+        },
+        {
+          "$ref": "#/$defs/RiskRecorded"
         }
       ],
-      "description": "`ris audit`: the queue, or the review recorded."
+      "description": "`ris audit`: the queue, the review recorded, or the risk judgement\nrecorded."
     },
     "AuditQueue": {
       "description": "`ris audit` with no item.",
@@ -656,6 +659,11 @@
           "type": "string"
         },
         {
+          "const": "JudgeRisk",
+          "description": "An auditor judging how closely a file's change should be read.",
+          "type": "string"
+        },
+        {
           "const": "RaiseAction",
           "description": "Raising a person action; it sets aside the items it blocks.",
           "type": "string"
@@ -675,6 +683,26 @@
     "CommitHash": {
       "description": "A git commit, by its full hash as git prints it.",
       "type": "string"
+    },
+    "Computed": {
+      "description": "The level the signals give, and the signals that gave it.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "signals": {
+          "description": "The signals that count toward the level, in a fixed order; empty\nwhen none does.",
+          "items": {
+            "$ref": "#/$defs/Signal"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "level",
+        "signals"
+      ],
+      "type": "object"
     },
     "Decide": {
       "anyOf": [
@@ -1610,6 +1638,28 @@
       ],
       "type": "object"
     },
+    "Judged": {
+      "description": "An auditor's judgement of one file's change.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "seat": {
+          "description": "The auditor seat that recorded it.",
+          "type": "string"
+        },
+        "why": {
+          "description": "One line of why.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "why",
+        "seat"
+      ],
+      "type": "object"
+    },
     "LogHead": {
       "properties": {
         "head": {
@@ -1984,6 +2034,12 @@
           "description": "Whether a `[map] contracts` pattern names it.",
           "type": "boolean"
         },
+        "dependents": {
+          "description": "How many other files on the map have an edge to it.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
         "external": {
           "description": "How it touches the outside; empty when it does not.",
           "items": {
@@ -2007,6 +2063,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "risk": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Risk"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How closely its change should be read; null for a file the phase\ndid not change."
+        },
         "status": {
           "description": "`added`, `modified`, `deleted` or `unchanged`, in the phase.",
           "type": "string"
@@ -2025,7 +2092,9 @@
         "removed",
         "external",
         "contract",
-        "weight"
+        "weight",
+        "dependents",
+        "risk"
       ],
       "type": "object"
     },
@@ -2796,6 +2865,71 @@
       ],
       "description": "`ris report`: the phase report, or that there is no phase yet."
     },
+    "Risk": {
+      "description": "How closely one changed file should be read: where to look first.",
+      "properties": {
+        "computed": {
+          "$ref": "#/$defs/Computed",
+          "description": "What `ris` works out from the file's signals, with no model."
+        },
+        "judged": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Judged"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What an auditor recorded for the file in this phase, the latest\nif more than one; null when none has."
+        },
+        "level": {
+          "$ref": "#/$defs/RiskLevel",
+          "description": "The level that stands: the judgement's where one is recorded,\nand the computed one otherwise."
+        }
+      },
+      "required": [
+        "level",
+        "computed",
+        "judged"
+      ],
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "How closely a file's change should be read: where to look first.\nOrdered, so the higher of two levels is the greater.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "RiskRecorded": {
+      "description": "`ris audit --file`: the risk judgement recorded.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "path": {
+          "description": "The file judged, relative to the repository root.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "seat": {
+          "description": "The auditor seat that recorded it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "path",
+        "level",
+        "seat"
+      ],
+      "type": "object"
+    },
     "Role": {
       "description": "What a seat does.",
       "oneOf": [
@@ -3078,6 +3212,24 @@
         }
       ],
       "description": "`ris show <id>`: the record the id names."
+    },
+    "Signal": {
+      "description": "One signal that counts toward a computed level.",
+      "properties": {
+        "reason": {
+          "description": "The signal in words, with its numbers.",
+          "type": "string"
+        },
+        "signal": {
+          "description": "`outside`, `contract`, `diff` or `dependents`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signal",
+        "reason"
+      ],
+      "type": "object"
     },
     "Status": {
       "description": "`ris status`.",
@@ -3526,6 +3678,32 @@
             "event",
             "item",
             "by"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An auditor judged how closely one file's change in the phase\nshould be read. The text part carries `path`, the file, relative\nto the repository root, and `why`, one line. The latest one for\na path in a phase is the one shown.",
+          "properties": {
+            "event": {
+              "const": "risk_judged",
+              "type": "string"
+            },
+            "level": {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            "phase": {
+              "$ref": "#/$defs/PhaseId"
+            },
+            "seat": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "event",
+            "phase",
+            "seat",
+            "level"
           ],
           "type": "object"
         },

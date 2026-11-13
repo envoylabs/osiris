@@ -23,8 +23,9 @@ use std::process::{Command, Stdio};
 
 use crate::project::{CliError, Loaded, Project};
 use crate::render::Output;
+use ris_core::event::Structure;
 use ris_core::ids::PhaseId;
-use ris_core::primitives::PhaseState;
+use ris_core::primitives::{PhaseState, RiskLevel};
 use serde::Serialize;
 
 /// File extensions that are source code, and the language each names.
@@ -120,6 +121,125 @@ pub struct Node {
     /// How much it should draw the eye: grows with the diff's size and
     /// with being external or a contract.
     pub weight: f64,
+    /// How many other files on the map have an edge to it.
+    pub dependents: usize,
+    /// How closely its change should be read; null for a file the phase
+    /// did not change.
+    pub risk: Option<Risk>,
+}
+
+/// How closely one changed file should be read: where to look first.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct Risk {
+    /// The level that stands: the judgement's where one is recorded,
+    /// and the computed one otherwise.
+    pub level: RiskLevel,
+    /// What `ris` works out from the file's signals, with no model.
+    pub computed: Computed,
+    /// What an auditor recorded for the file in this phase, the latest
+    /// if more than one; null when none has.
+    pub judged: Option<Judged>,
+}
+
+/// The level the signals give, and the signals that gave it.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct Computed {
+    pub level: RiskLevel,
+    /// The signals that count toward the level, in a fixed order; empty
+    /// when none does.
+    pub signals: Vec<Signal>,
+}
+
+/// One signal that counts toward a computed level.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct Signal {
+    /// `outside`, `contract`, `diff` or `dependents`.
+    pub signal: &'static str,
+    /// The signal in words, with its numbers.
+    pub reason: String,
+}
+
+/// An auditor's judgement of one file's change.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct Judged {
+    pub level: RiskLevel,
+    /// One line of why.
+    pub why: String,
+    /// The auditor seat that recorded it.
+    pub seat: String,
+}
+
+/// A diff of this many lines, added plus removed, counts toward the
+/// level, and one of [`LARGE_DIFF`] counts twice.
+const SIZEABLE_DIFF: u64 = 50;
+const LARGE_DIFF: u64 = 200;
+/// This many dependents count toward the level, and [`MANY_DEPENDENTS`]
+/// count twice.
+const SOME_DEPENDENTS: usize = 3;
+const MANY_DEPENDENTS: usize = 8;
+
+/// The level a changed file's signals give. Each signal adds points:
+/// one for touching the outside, two for being a contract, one or two
+/// for the size of the diff, one or two for how many files depend on
+/// it. Two points are medium and four are high, so one mild signal
+/// alone (touching the outside, as most files of a command-line tool
+/// do) stays low, a contract or a large change is at least medium, and
+/// high takes signals together.
+pub fn computed_risk(
+    external: &[&'static str],
+    contract: bool,
+    lines: u64,
+    dependents: usize,
+) -> Computed {
+    let mut points = 0;
+    let mut signals = Vec::new();
+    let mut count = |n: u32, signal: &'static str, reason: String| {
+        points += n;
+        signals.push(Signal { signal, reason });
+    };
+    if !external.is_empty() {
+        count(
+            1,
+            "outside",
+            format!("touches the outside: {}", external.join(", ")),
+        );
+    }
+    if contract {
+        count(2, "contract", "a contract or format".to_owned());
+    }
+    if lines >= LARGE_DIFF {
+        count(2, "diff", format!("a large change: {lines} lines"));
+    } else if lines >= SIZEABLE_DIFF {
+        count(1, "diff", format!("a sizeable change: {lines} lines"));
+    }
+    if dependents >= MANY_DEPENDENTS {
+        count(
+            2,
+            "dependents",
+            format!("{dependents} other files depend on it"),
+        );
+    } else if dependents >= SOME_DEPENDENTS {
+        count(
+            1,
+            "dependents",
+            format!("{dependents} other files depend on it"),
+        );
+    }
+    let level = match points {
+        0 | 1 => RiskLevel::Low,
+        2 | 3 => RiskLevel::Medium,
+        _ => RiskLevel::High,
+    };
+    Computed { level, signals }
+}
+
+/// A level as the document and the text spell it.
+pub fn level_word(level: RiskLevel) -> &'static str {
+    match level {
+        RiskLevel::Low => "low",
+        RiskLevel::Medium => "medium",
+        RiskLevel::High => "high",
+    }
 }
 
 /// One connection, from the file that names the other.
@@ -182,12 +302,16 @@ pub fn glob(pattern: &str, path: &str) -> bool {
 ///
 /// A test file (a `tests` pattern names it, and no `contracts` one) is
 /// left out: no node and no edge, only a count in the totals.
+///
+/// `judged` is what auditors recorded for the phase, by path; one for
+/// a file the phase did not change is not carried.
 pub fn document(
     range: &Range,
     paths: &[String],
     tree: &Tree,
     diff: &BTreeMap<String, (&'static str, u64, u64)>,
     config: &crate::config::MapConfig,
+    judged: &BTreeMap<String, Judged>,
 ) -> crate::schema::Map {
     let is_contract = |path: &str| config.contracts.iter().any(|c| glob(c, path));
     let is_test = |path: &str| !is_contract(path) && config.tests.iter().any(|t| glob(t, path));
@@ -209,7 +333,7 @@ pub fn document(
             tests.removed += removed;
         }
     }
-    let nodes: Vec<Node> = names
+    let mut nodes: Vec<Node> = names
         .into_iter()
         .filter(|p| is_node(p))
         .map(|path| {
@@ -228,20 +352,43 @@ pub fn document(
                 weight: weight(added, removed, contract || !external.is_empty()),
                 external,
                 contract,
+                dependents: 0,
+                risk: None,
             }
         })
         .collect();
-    let known: BTreeSet<&str> = nodes.iter().map(|n| n.path.as_str()).collect();
     let mut edges = BTreeSet::new();
-    for (from, scan) in &scans {
-        for (to, kind) in &scan.edges {
-            if from != to && known.contains(from.as_str()) && known.contains(to.as_str()) {
-                edges.insert(Edge {
-                    from: from.clone(),
-                    to: to.clone(),
-                    kind,
-                });
+    {
+        let known: BTreeSet<&str> = nodes.iter().map(|n| n.path.as_str()).collect();
+        for (from, scan) in &scans {
+            for (to, kind) in &scan.edges {
+                if from != to && known.contains(from.as_str()) && known.contains(to.as_str()) {
+                    edges.insert(Edge {
+                        from: from.clone(),
+                        to: to.clone(),
+                        kind,
+                    });
+                }
             }
+        }
+    }
+    // A file's dependents are the files with an edge to it, each once
+    // however many kinds of line name it.
+    let mut dependents: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for e in &edges {
+        dependents.entry(&e.to).or_default().insert(&e.from);
+    }
+    for n in &mut nodes {
+        n.dependents = dependents.get(n.path.as_str()).map_or(0, BTreeSet::len);
+        if n.status != "unchanged" {
+            let computed =
+                computed_risk(&n.external, n.contract, n.added + n.removed, n.dependents);
+            let judged = judged.get(&n.path).cloned();
+            n.risk = Some(Risk {
+                level: judged.as_ref().map_or(computed.level, |j| j.level),
+                computed,
+                judged,
+            });
         }
     }
     let changed: Vec<&Node> = nodes.iter().filter(|n| n.status != "unchanged").collect();
@@ -432,8 +579,50 @@ fn read_blobs(dir: &Path, commit: &str, paths: &[&str]) -> Result<Tree, CliError
     Ok(tree)
 }
 
-/// The graph document for `range`, read from git.
-pub fn build(p: &Project, range: &Range) -> Result<crate::schema::Map, CliError> {
+/// What auditors recorded for `phase`, by path: the latest judgement of
+/// each file. One whose text has been removed is left out, since the
+/// file it was about is in that text.
+pub fn judgements(l: &Loaded, phase: Option<PhaseId>) -> BTreeMap<String, Judged> {
+    let mut out = BTreeMap::new();
+    let seqs = phase.and_then(|id| l.state.risks.get(&id));
+    for seq in seqs.into_iter().flatten() {
+        let Some(Structure::RiskJudged { seat, level, .. }) = l.event(*seq).map(|e| &e.structure)
+        else {
+            continue;
+        };
+        let (Some(path), Some(why)) = (l.log_text(*seq, "path"), l.log_text(*seq, "why")) else {
+            continue;
+        };
+        out.insert(
+            path.to_owned(),
+            Judged {
+                level: *level,
+                why: why.to_owned(),
+                seat: seat.0.clone(),
+            },
+        );
+    }
+    out
+}
+
+/// The graph document for `range`, read from git, with each changed
+/// file's diff.
+pub fn build(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::Map, CliError> {
+    let mut map = survey(p, l, range)?;
+    if let Some(base) = &range.base {
+        for node in map.nodes.iter().filter(|n| n.status != "unchanged") {
+            map.diffs.insert(
+                node.path.clone(),
+                unified_diff(&p.work, base, &range.tip, &node.path)?,
+            );
+        }
+    }
+    Ok(map)
+}
+
+/// The graph document for `range` without its diffs: the nodes, the
+/// edges and the totals.
+pub fn survey(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::Map, CliError> {
     let dir = &p.work;
     let listed =
         git(dir, &["ls-tree", "-r", "-z", "--name-only", &range.tip]).map_err(CliError::Other)?;
@@ -493,16 +682,14 @@ pub fn build(p: &Project, range: &Range) -> Result<crate::schema::Map, CliError>
             }
         }
     }
-    let mut map = document(range, &paths, &tree, &diff, &p.config.map);
-    if let Some(base) = &range.base {
-        for node in map.nodes.iter().filter(|n| n.status != "unchanged") {
-            map.diffs.insert(
-                node.path.clone(),
-                unified_diff(dir, base, &range.tip, &node.path)?,
-            );
-        }
-    }
-    Ok(map)
+    Ok(document(
+        range,
+        &paths,
+        &tree,
+        &diff,
+        &p.config.map,
+        &judgements(l, range.phase),
+    ))
 }
 
 /// One file's unified diff between two commits, as git writes it: the
@@ -557,7 +744,8 @@ pub fn tests_line(t: &crate::schema::MapTests) -> String {
 }
 
 /// `ris map`: the document, and in text its totals and the changed
-/// files, heaviest first. With `html`, also writes the page there.
+/// files, each with its risk level, the highest risk first and within a
+/// level the heaviest. With `html`, also writes the page there.
 pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, CliError> {
     let doc = serde_json::to_value(&map).expect("the map serialises");
     let t = &doc["totals"];
@@ -582,11 +770,19 @@ pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, Cl
         .flatten()
         .filter(|n| n["status"] != "unchanged")
         .collect();
+    // Where to look first: the highest risk, then the heaviest.
+    let rank = |n: &serde_json::Value| match n["risk"]["level"].as_str() {
+        Some("high") => 2,
+        Some("medium") => 1,
+        _ => 0,
+    };
     changed.sort_by(|a, b| {
-        b["weight"]
-            .as_f64()
-            .partial_cmp(&a["weight"].as_f64())
-            .unwrap_or(std::cmp::Ordering::Equal)
+        rank(b).cmp(&rank(a)).then(
+            b["weight"]
+                .as_f64()
+                .partial_cmp(&a["weight"].as_f64())
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
     });
     for n in changed {
         let mut marks: Vec<&str> = n["external"]
@@ -599,7 +795,8 @@ pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, Cl
             marks.push("contract");
         }
         text.push_str(&format!(
-            "  {:>6} {:<6} {}{}{}\n",
+            "  {:<6} {:>6} {:<6} {}{}{}\n",
+            n["risk"]["level"].as_str().unwrap_or(""),
             format!("+{}", n["added"]),
             format!("-{}", n["removed"]),
             n["path"].as_str().unwrap_or(""),
@@ -614,6 +811,16 @@ pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, Cl
                 format!("  [{}]", marks.join(", "))
             },
         ));
+        let judged = &n["risk"]["judged"];
+        if !judged.is_null() {
+            text.push_str(&format!(
+                "         judged {} by {}: {} (computed: {})\n",
+                judged["level"].as_str().unwrap_or(""),
+                judged["seat"].as_str().unwrap_or(""),
+                judged["why"].as_str().unwrap_or(""),
+                n["risk"]["computed"]["level"].as_str().unwrap_or(""),
+            ));
+        }
     }
     match html {
         Some(path) => {

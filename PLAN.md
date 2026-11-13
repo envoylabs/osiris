@@ -445,6 +445,7 @@ enum Structure {                              // an event's structural part
     ActionDone { action, evidence },
     RunStarted { seat }, RunStopped { seat, status },
     SetupFault { seat },                      // a seat's sandbox or permissions lack something
+    RiskJudged { phase, seat, level },        // an auditor's judgement of one changed file, for the map
     SeatPaused { seat }, SeatResumed { seat },
     DecisionRaised { decision, class, by, about, options, recommended },
     DecisionTaken { decision, by, chosen },
@@ -539,7 +540,9 @@ Functional core, imperative shell; hexagonal between components.
   the document is the contract and the picture only a renderer of it:
   `ris map` gives the phase's change set as a graph document (the
   source files, the lines the phase changed in each and their diffs,
-  how the code connects, and which files touch the outside), and
+  how the code connects, which files touch the outside, and a risk
+  level for each changed file: one computed from those signals, and an
+  auditor's judgement beside it where one is recorded), and
   `ris map --html`
   writes one self-contained page that embeds that document and draws
   nothing else, so a later interface draws the same map from the same

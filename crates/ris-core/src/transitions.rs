@@ -48,6 +48,8 @@ pub enum CommandKind {
     RunStop,
     /// A seat reporting a fault in its setup.
     SetupFault,
+    /// An auditor judging how closely a file's change should be read.
+    JudgeRisk,
     /// Raising a person action; it sets aside the items it blocks.
     RaiseAction,
     /// The person recording an action done; items blocked only on it
@@ -84,6 +86,7 @@ impl CommandKind {
         Self::RunStart,
         Self::RunStop,
         Self::SetupFault,
+        Self::JudgeRisk,
     ];
 }
 

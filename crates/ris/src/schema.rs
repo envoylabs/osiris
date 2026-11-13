@@ -330,12 +330,14 @@ pub struct Audited {
     pub by: AgentName,
 }
 
-/// `ris audit`: the queue, or the review recorded.
+/// `ris audit`: the queue, the review recorded, or the risk judgement
+/// recorded.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Audit {
     Queue(AuditQueue),
     Recorded(Audited),
+    Risk(RiskRecorded),
 }
 
 /// `ris claim`: the brief.
@@ -656,6 +658,17 @@ pub struct Imported {
 pub struct Exported {
     pub phases: Vec<String>,
     pub new: usize,
+}
+
+/// `ris audit --file`: the risk judgement recorded.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct RiskRecorded {
+    pub phase: PhaseId,
+    /// The file judged, relative to the repository root.
+    pub path: String,
+    pub level: ris_core::primitives::RiskLevel,
+    /// The auditor seat that recorded it.
+    pub seat: String,
 }
 
 /// `ris map`: the graph document (`docs/json.md`).

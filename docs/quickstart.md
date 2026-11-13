@@ -276,12 +276,19 @@ the phase changed and the lines added and removed in them. `tests`
 names them, and by default it is every file under a `tests` directory.
 A node is larger the more the phase changed it, so the eye lands first
 on the large changes, and the ring picks out those at the edges of the
-system. `ris map --html map.html` writes one page that
+system. An amber diamond beside a changed file is its risk: hollow for
+medium, filled for high, none for low. `ris` computes the level from
+what it can count (the file touches the outside, is a contract, the
+size of its diff, how many files depend on it), and an auditor seat
+records its own judgement as it reviews, with one line of why
+(`ris audit --file <path> --risk <level> --why "..."`); the judgement
+stands where there is one, and hovering shows both and the reasons.
+`ris map --html map.html` writes one page that
 needs no network (d3 is inlined): hover a file for its path and
 numbers, drag it, scroll to zoom, and click it to read its diff for
 the phase in a pane beside the graph (click another file to swap it,
 Esc or the pane's button to close it). `ris map` alone lists the changed
-files, and `ris map --json` prints the graph document the page draws
+files with their risk, the highest first, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the
 phase just closed, and `ris map P-n` an earlier one.
 
