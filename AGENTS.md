@@ -51,6 +51,9 @@ new, and end the session. The person brings seats back with `ris up`.
   never a binary built in your worktree from code you are changing.
   `cargo build -p ris` builds the code under work, at
   `target/debug/ris`, for its tests.
+- You work only the open phase's items. `ris ready` shows you nothing
+  else, and `ris claim` refuses an item in the backlog; the person
+  brings one into the phase with `ris item bring-in I-7`.
 
 ## Decisions
 
@@ -168,6 +171,20 @@ evidence against the goal, the decisions that touch it and these rules,
 and reads the item's mechanical decisions for any that should have been
 substantive. Findings go to the author as messages; a finding the
 author disputes is raised as a substantive decision.
+
+As it reads the phase's diffs, an auditor records how closely the
+person should read each changed file, for the map (`ris map`):
+
+```
+ris audit --file src/store.rs --risk high --why "writes the store with no lock"
+```
+
+The level is `low`, `medium` or `high`, the reason one line, and the
+path as `ris map` lists it. `ris` already computes a level for every
+changed file from what it can count, and the map shows it where no
+judgement is recorded. Record one where reading the change says
+otherwise, up or down, and for every file the person should look at
+first. Only an auditor records one.
 
 ## The advisor's seat
 
