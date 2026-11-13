@@ -227,7 +227,7 @@ tries it again.
 ```sh
 ris summary                            # the phase in one picture: its items and what they wait on
 ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
-ris map --html map.html                # the phase's change set drawn over the source files, as one page
+ris map                                # the phase's change set drawn over the source files, as one page in the browser
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
@@ -283,12 +283,18 @@ size of its diff, how many files depend on it), and an auditor seat
 records its own judgement as it reviews, with one line of why
 (`ris audit --file <path> --risk <level> --why "..."`); the judgement
 stands where there is one, and hovering shows both and the reasons.
-`ris map --html map.html` writes one page that
-needs no network (d3 is inlined): hover a file for its path and
-numbers, drag it, scroll to zoom, and click it to read its diff for
-the phase in a pane beside the graph (click another file to swap it,
-Esc or the pane's button to close it). `ris map` alone lists the changed
-files with their risk, the highest first, and `ris map --json` prints the graph document the page draws
+`ris map`, run by you at a terminal, writes one page to
+`.osiris/map.html` (which git ignores), replacing the last one, opens
+it in your browser and prints where it is; if the browser does not
+open, it says so and you open the file yourself. The page needs no
+network (d3 is inlined): hover a file for its path and numbers, drag
+it, scroll to zoom, and click it to read its diff for the phase in a
+pane beside the graph (click another file to swap it, Esc or the
+pane's button to close it). `ris map` also lists the changed files
+with their risk, the highest first; that list is all a seat gets, and
+all you get when the output is piped, since nothing is opened then.
+`ris map --html map.html` writes the page to a file you name and opens
+nothing, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the
 phase just closed, and `ris map P-n` an earlier one.
 
@@ -338,7 +344,7 @@ is refused before anything is touched and names what to run (`git
 config user.name` and `git config user.email`), and the phase or the
 item stays as it was.
 
-After the close, `ris map` and `ris map --html map.html` show the
+After the close, `ris map` and `ris map --html map.html` still show the
 phase just closed, and `ris report` its report.
 
 `ris show <id>` prints any item, decision, action, phase or message in

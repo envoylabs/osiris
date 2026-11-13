@@ -316,6 +316,118 @@ fn the_page_marks_risk_apart_from_size_and_the_ring_and_says_why() {
 }
 
 #[test]
+fn only_the_person_at_a_terminal_with_no_flags_has_the_page_opened() {
+    let seat = Actor::Agent(ris_core::ids::AgentName("heron".to_owned()));
+    assert!(opens_page(&Actor::Person, false, false, true));
+    // Not for a seat, whatever else holds.
+    assert!(!opens_page(&seat, false, false, true));
+    // Not when the output is piped or captured.
+    assert!(!opens_page(&Actor::Person, false, false, false));
+    // Not when JSON or a file of the person's own was asked for.
+    assert!(!opens_page(&Actor::Person, true, false, true));
+    assert!(!opens_page(&Actor::Person, false, true, true));
+}
+
+#[test]
+fn the_platform_opener_is_the_systems_own() {
+    let opener = Opener::platform();
+    let want = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "cmd"
+    } else {
+        "xdg-open"
+    };
+    assert_eq!(opener.program, want);
+}
+
+/// An empty map, for what `output` does with the page.
+#[cfg(unix)]
+fn empty_map() -> crate::schema::Map {
+    let range = Range {
+        phase: None,
+        base: None,
+        tip: "tip".to_owned(),
+        tip_ref: "HEAD".to_owned(),
+    };
+    document(
+        &range,
+        &[],
+        &Tree::new(),
+        &BTreeMap::new(),
+        &crate::config::MapConfig::default(),
+        &BTreeMap::new(),
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn the_page_is_written_to_its_file_and_opened_and_a_failure_to_open_is_said_not_raised() {
+    let dir = std::env::temp_dir().join(format!("ris-map-open-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(PAGE_FILE);
+    let show = |opener: &Opener| {
+        output(
+            empty_map(),
+            Show::Open {
+                file: &file,
+                shown: ".osiris/map.html",
+                opener,
+            },
+        )
+        .expect("a browser that does not open is not an error")
+        .text
+    };
+    let sh = |script: &str| Opener {
+        program: "sh".to_owned(),
+        args: vec!["-c".to_owned(), script.to_owned(), "sh".to_owned()],
+    };
+
+    // Opened: the opener is given the file, already written.
+    std::fs::write(&file, "the last one").unwrap();
+    let text = show(&sh("test -s \"$1\" && printf '%s' \"$1\" > \"$1.opened\""));
+    assert!(
+        text.ends_with("wrote .osiris/map.html and opened it in the browser"),
+        "{text}"
+    );
+    let html = std::fs::read_to_string(&file).unwrap();
+    assert!(html.contains("id=\"map-data\""), "the last one is replaced");
+    assert_eq!(
+        std::fs::read_to_string(dir.join(format!("{PAGE_FILE}.opened"))).unwrap(),
+        file.to_str().unwrap()
+    );
+
+    // The opener reports a failure: said, with the file, and the page
+    // is still written.
+    std::fs::remove_file(&file).unwrap();
+    let text = show(&sh("exit 3"));
+    assert!(
+        text.contains(
+            "wrote .osiris/map.html; it did not open in the browser: `sh` reported a failure"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("next: open that file in a browser yourself"),
+        "{text}"
+    );
+    assert!(file.exists());
+
+    // There is no opener on this machine: the same.
+    let none = Opener {
+        program: "ris-no-such-opener".to_owned(),
+        args: vec![],
+    };
+    let text = show(&none);
+    assert!(
+        text.contains("it did not open in the browser: `ris-no-such-opener` could not be started"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_page_writes_the_tests_line_from_the_document() {
     assert!(PAGE.contains("id=\"tests\""));
     assert!(PAGE.contains("t.tests.files + \" test file(s) left off the map: \""));

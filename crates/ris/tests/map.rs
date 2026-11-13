@@ -439,6 +439,18 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     // A seat reads the same map from its own place.
     let seat: Value = serde_json::from_str(&ok(&dir, "heron", &["--json", "map"])).unwrap();
     assert_eq!(seat["data"], doc);
+
+    // Only the person's `ris map` at a terminal writes the page to its
+    // fixed file and opens it. Here the output is captured, and a seat
+    // is not the person: each gets the text form, and nothing is
+    // written or opened.
+    let seat_text = ok(&dir, "heron", &["map"]);
+    assert_eq!(seat_text, text, "the same text form");
+    assert!(!text.contains("opened it in the browser"), "{text}");
+    assert!(
+        !dir.join(".osiris/map.html").exists(),
+        "no page was written"
+    );
 }
 
 #[test]
@@ -571,6 +583,9 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
     let page = dir.join(".osiris/map.html");
     let out = ok(&dir, "person", &["map", "--html", page.to_str().unwrap()]);
     assert!(out.contains("wrote "), "{out}");
+    // That file is where `ris map` with no flags puts the page, and git
+    // ignores it: the checkout stays clean for the close below.
+    assert_eq!(git(&dir, &["status", "--porcelain"]), "", "ignored");
     let html = fs::read_to_string(&page).unwrap();
     let open = "<script id=\"map-data\" type=\"application/json\">";
     let start = html.find(open).expect("the data element") + open.len();
@@ -606,7 +621,10 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
     // Closing names the command, and the closed phase's map is read
     // from its closing merge: the same files with the same numbers.
     let closed = ok(&dir, "person", &["phase", "close"]);
-    assert!(closed.contains("`ris map --html <file>`"), "{closed}");
+    assert!(
+        closed.contains("`ris map`, or `ris map --html <file>`"),
+        "{closed}"
+    );
     assert!(
         git(&dir, &["branch", "--list", "phase/P-1"]).is_empty(),
         "the phase branch is gone"

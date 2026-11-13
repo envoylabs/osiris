@@ -24,7 +24,7 @@ use std::process::{Command, Stdio};
 use crate::project::{CliError, Loaded, Project};
 use crate::render::Output;
 use ris_core::event::Structure;
-use ris_core::ids::PhaseId;
+use ris_core::ids::{Actor, PhaseId};
 use ris_core::primitives::{PhaseState, RiskLevel};
 use serde::Serialize;
 
@@ -743,10 +743,86 @@ pub fn tests_line(t: &crate::schema::MapTests) -> String {
     )
 }
 
+/// The page's fixed file inside the `.osiris` directory, which git
+/// ignores: where `ris map` with no flags writes it, replacing the
+/// last one.
+pub const PAGE_FILE: &str = "map.html";
+
+/// What `ris map` does with the page.
+pub enum Show<'a> {
+    /// Nothing: the text form alone.
+    Text,
+    /// Write it to the file named (`--html`).
+    Write(&'a Path),
+    /// Write it to `file`, which is said as `shown`, and open it in the
+    /// browser with `opener`.
+    Open {
+        file: &'a Path,
+        shown: &'a str,
+        opener: &'a Opener,
+    },
+}
+
+/// Whether `ris map` writes the page to its fixed file and opens it:
+/// only when the person runs it at a terminal and asks for neither
+/// JSON nor a file of their own. A seat never opens anything on the
+/// person's screen, and output that is piped or captured is being read
+/// by a program, not by someone who wants a browser window.
+pub fn opens_page(actor: &Actor, json: bool, html: bool, terminal: bool) -> bool {
+    matches!(actor, Actor::Person) && !json && !html && terminal
+}
+
+/// How a file is opened in the browser: a program, and the arguments
+/// that go before the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Opener {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl Opener {
+    /// The platform's own way to open a file with whatever handles it,
+    /// which for a page is the person's browser.
+    pub fn platform() -> Self {
+        let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+            ("open", &[])
+        } else if cfg!(windows) {
+            // `start` takes a quoted first argument as a window title.
+            ("cmd", &["/C", "start", ""])
+        } else {
+            ("xdg-open", &[])
+        };
+        Self {
+            program: program.to_owned(),
+            args: args.iter().map(|a| (*a).to_owned()).collect(),
+        }
+    }
+
+    /// Open `file`, or say in a few words why it did not open: the
+    /// program could not be started, or it reported a failure.
+    pub fn open(&self, file: &Path) -> Result<(), String> {
+        let status = Command::new(&self.program)
+            .args(&self.args)
+            .arg(file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| format!("`{}` could not be started: {}", self.program, e.kind()))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("`{}` reported a failure", self.program))
+        }
+    }
+}
+
 /// `ris map`: the document, and in text its totals and the changed
 /// files, each with its risk level, the highest risk first and within a
-/// level the heaviest. With `html`, also writes the page there.
-pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, CliError> {
+/// level the heaviest. `show` says what becomes of the page. A browser
+/// that does not open is said, with the file to open by hand, and is
+/// not an error: the page is written either way.
+pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
     let doc = serde_json::to_value(&map).expect("the map serialises");
     let t = &doc["totals"];
     let mut text = format!(
@@ -822,15 +898,32 @@ pub fn output(map: crate::schema::Map, html: Option<&Path>) -> Result<Output, Cl
             ));
         }
     }
-    match html {
-        Some(path) => {
+    match show {
+        Show::Write(path) => {
             std::fs::write(path, page(&doc))?;
             text.push_str(&format!(
                 "wrote {}\n  next: open it in a browser; it needs no network",
                 path.display()
             ));
         }
-        None => text.push_str("  next: `ris map --html map.html` draws it as a page"),
+        Show::Open {
+            file,
+            shown,
+            opener,
+        } => {
+            std::fs::write(file, page(&doc))?;
+            match opener.open(file) {
+                Ok(()) => text.push_str(&format!("wrote {shown} and opened it in the browser")),
+                Err(why) => text.push_str(&format!(
+                    "wrote {shown}; it did not open in the browser: {why}\n  \
+                     next: open that file in a browser yourself; it needs no network"
+                )),
+            }
+        }
+        Show::Text => text.push_str(
+            "  next: `ris map --html map.html` draws it as a page; \
+             the person's `ris map` at a terminal opens it",
+        ),
     }
     Ok(Output::of(text, &map))
 }

@@ -200,7 +200,8 @@ enum Cmd {
     /// The phase's change set as a map of the source code: every source
     /// file with the lines the phase added and removed, and how the
     /// files connect. With no phase named, the open phase, or the last
-    /// one closed.
+    /// one closed. Run by the person at a terminal with no flags, it
+    /// writes the page inside .osiris and opens it in the browser.
     Map {
         /// The phase, such as P-3.
         phase: Option<ris_core::ids::PhaseId>,
@@ -908,7 +909,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 let (text, phase) = render::report_data(&l);
                 Ok(Output::of(
                     format!(
-                        "{text}\n{closing}\nthe change set as a map of the source: `ris map --html <file>`"
+                        "{text}\n{closing}\nthe change set as a map of the source: `ris map`, or `ris map --html <file>`"
                     ),
                     &schema::PhaseClosed {
                         report,
@@ -1541,7 +1542,23 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         Cmd::Map { phase, html } => {
             let l = p.load()?;
             let range = ris::map::range(&p, &l, *phase)?;
-            ris::map::output(ris::map::build(&p, &l, &range)?, html.as_deref())
+            let map = ris::map::build(&p, &l, &range)?;
+            let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
+            if let Some(file) = html {
+                ris::map::output(map, ris::map::Show::Write(file))
+            } else if ris::map::opens_page(&actor, cli.json, false, terminal) {
+                let file = p.root.join(ris::project::DIR).join(ris::map::PAGE_FILE);
+                ris::map::output(
+                    map,
+                    ris::map::Show::Open {
+                        file: &file,
+                        shown: &shown_beside(&p, &file),
+                        opener: &ris::map::Opener::platform(),
+                    },
+                )
+            } else {
+                ris::map::output(map, ris::map::Show::Text)
+            }
         }
 
         Cmd::Audit {

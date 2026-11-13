@@ -193,7 +193,11 @@ document. The document is the contract and holds everything there is
 to draw: `ris map --html <file>` writes a page that embeds the same
 document, as JSON in the element `<script id="map-data"
 type="application/json">`, and draws nothing that is not in it, so any
-other renderer draws the same map from either source. It follows the
+other renderer draws the same map from either source. `ris map` with
+no flags, run by the person at a terminal, writes that page to
+`.osiris/map.html` and opens it in the browser; with `--json`, run by
+a seat, or with output that is not a terminal, nothing is written or
+opened. It follows the
 rule of the rest of format 1: keys are added, never removed, renamed
 or reshaped.
 
