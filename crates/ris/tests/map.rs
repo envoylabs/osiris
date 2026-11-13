@@ -572,6 +572,69 @@ fn an_auditor_s_judgement_of_a_file_stands_on_the_map_over_the_computed_level() 
 }
 
 #[test]
+fn a_binary_file_s_diff_is_one_line_and_bytes_that_are_not_utf8_are_replaced() {
+    let dir = setup("bytes");
+    ok(&dir, "person", &["phase", "open", "odd files"]);
+    git(&dir, &["switch", "-q", "phase/P-1"]);
+    // A contract that is binary (it holds a NUL, which is how git
+    // tells), and a source file with a Latin-1 byte, which is not
+    // UTF-8 and is still text to git.
+    fs::write(dir.join("docs/blob.md"), [0x89, b'B', 0, 1, 2, b'\n']).unwrap();
+    fs::write(
+        dir.join("src/latin.rs"),
+        [&b"// caf"[..], &[0xE9], &b"\npub fn f() {}\n"[..]].concat(),
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "-m", "feat: odd files"]);
+    git(&dir, &["switch", "-q", "main"]);
+
+    let doc = data(&dir, &["map"]);
+
+    // Binary: a node with no line counts, whose diff is the file
+    // header and git's one line, with no hunk.
+    let blob = node(&doc, "docs/blob.md");
+    assert_eq!(
+        (&blob["status"], &blob["added"], &blob["removed"]),
+        (&json!("added"), &json!(0), &json!(0))
+    );
+    let diff = doc["diffs"]["docs/blob.md"].as_str().unwrap();
+    let lines: Vec<&str> = diff.lines().filter(|l| !l.starts_with("index ")).collect();
+    assert_eq!(
+        lines,
+        [
+            "diff --git a/docs/blob.md b/docs/blob.md",
+            "new file mode 100644",
+            "Binary files /dev/null and b/docs/blob.md differ",
+        ]
+    );
+    assert!(!diff.contains("@@"), "no hunk: {diff}");
+
+    // Not UTF-8: the file is a node with its numbers, and in its diff
+    // the byte is the replacement character, the lines around it whole.
+    let latin = node(&doc, "src/latin.rs");
+    assert_eq!(
+        (&latin["status"], &latin["added"], &latin["removed"]),
+        (&json!("added"), &json!(2), &json!(0))
+    );
+    let diff = doc["diffs"]["src/latin.rs"].as_str().unwrap();
+    assert!(
+        diff.ends_with("@@ -0,0 +1,2 @@\n+// caf\u{FFFD}\n+pub fn f() {}\n"),
+        "{diff}"
+    );
+
+    // The page embeds the same document, replaced byte and all.
+    let page = dir.join(".osiris/map.html");
+    ok(&dir, "person", &["map", "--html", page.to_str().unwrap()]);
+    let html = fs::read_to_string(&page).unwrap();
+    let open = "<script id=\"map-data\" type=\"application/json\">";
+    let start = html.find(open).expect("the data element") + open.len();
+    let end = start + html[start..].find("</script>").unwrap();
+    let embedded: Value = serde_json::from_str(&html[start..end]).unwrap();
+    assert_eq!(embedded, doc);
+}
+
+#[test]
 fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
     let dir = setup("page");
     ok(&dir, "person", &["phase", "open", "send frames"]);
