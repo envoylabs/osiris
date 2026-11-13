@@ -202,9 +202,12 @@
         },
         {
           "$ref": "#/$defs/Audited"
+        },
+        {
+          "$ref": "#/$defs/RiskRecorded"
         }
       ],
-      "description": "`ris audit`: the queue, or the review recorded."
+      "description": "`ris audit`: the queue, the review recorded, or the risk judgement\nrecorded."
     },
     "AuditQueue": {
       "description": "`ris audit` with no item.",
@@ -433,6 +436,23 @@
       ],
       "type": "object"
     },
+    "BroughtIn": {
+      "description": "`ris item bring-in`.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId",
+          "description": "The open phase it is now in."
+        }
+      },
+      "required": [
+        "item",
+        "phase"
+      ],
+      "type": "object"
+    },
     "CarriedOver": {
       "properties": {
         "decisions": {
@@ -619,6 +639,11 @@
           "type": "string"
         },
         {
+          "const": "BringIn",
+          "description": "The person bringing an item that has not been started from the\nbacklog into the open phase.",
+          "type": "string"
+        },
+        {
           "const": "Pause",
           "description": "The person pausing seats, or resuming them.",
           "type": "string"
@@ -631,6 +656,11 @@
         {
           "const": "SetupFault",
           "description": "A seat reporting a fault in its setup.",
+          "type": "string"
+        },
+        {
+          "const": "JudgeRisk",
+          "description": "An auditor judging how closely a file's change should be read.",
           "type": "string"
         },
         {
@@ -653,6 +683,26 @@
     "CommitHash": {
       "description": "A git commit, by its full hash as git prints it.",
       "type": "string"
+    },
+    "Computed": {
+      "description": "The level the signals give, and the signals that gave it.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "signals": {
+          "description": "The signals that count toward the level, in a fixed order; empty\nwhen none does.",
+          "items": {
+            "$ref": "#/$defs/Signal"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "level",
+        "signals"
+      ],
+      "type": "object"
     },
     "Decide": {
       "anyOf": [
@@ -1341,6 +1391,28 @@
       ],
       "type": "object"
     },
+    "InProgress": {
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "seat": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "item",
+        "seat"
+      ],
+      "type": "object"
+    },
     "Inbox": {
       "anyOf": [
         {
@@ -1588,6 +1660,28 @@
       ],
       "type": "object"
     },
+    "Judged": {
+      "description": "An auditor's judgement of one file's change.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "seat": {
+          "description": "The auditor seat that recorded it.",
+          "type": "string"
+        },
+        "why": {
+          "description": "One line of why.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "why",
+        "seat"
+      ],
+      "type": "object"
+    },
     "LogHead": {
       "properties": {
         "head": {
@@ -1654,6 +1748,13 @@
             "null"
           ]
         },
+        "diffs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Each changed node's unified diff between `base` and `tip`, by\npath, as `git diff` writes it; empty when `base` is null.",
+          "type": "object"
+        },
         "edges": {
           "items": {
             "$ref": "#/$defs/Edge"
@@ -1693,7 +1794,8 @@
         "tip_ref",
         "totals",
         "nodes",
-        "edges"
+        "edges",
+        "diffs"
       ],
       "type": "object"
     },
@@ -1954,6 +2056,12 @@
           "description": "Whether a `[map] contracts` pattern names it.",
           "type": "boolean"
         },
+        "dependents": {
+          "description": "How many other files on the map have an edge to it.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
         "external": {
           "description": "How it touches the outside; empty when it does not.",
           "items": {
@@ -1977,6 +2085,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "risk": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Risk"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How closely its change should be read; null for a file the phase\ndid not change."
+        },
         "status": {
           "description": "`added`, `modified`, `deleted` or `unchanged`, in the phase.",
           "type": "string"
@@ -1995,7 +2114,9 @@
         "removed",
         "external",
         "contract",
-        "weight"
+        "weight",
+        "dependents",
+        "risk"
       ],
       "type": "object"
     },
@@ -2177,6 +2298,86 @@
         "log",
         "report",
         "previous_report"
+      ],
+      "type": "object"
+    },
+    "PhaseState": {
+      "description": "Where the open phase stands. Its items that are not superseded are\neach in one of `merged`, `in_progress`, `set_aside` and\n`not_started`, which add up to `items`.",
+      "properties": {
+        "faults": {
+          "description": "Seats with a setup fault reported in their latest run.",
+          "items": {
+            "$ref": "#/$defs/AgentName"
+          },
+          "type": "array"
+        },
+        "in_progress": {
+          "description": "Claimed, or done and not yet merged, each with the seat on it.",
+          "items": {
+            "$ref": "#/$defs/InProgress"
+          },
+          "type": "array"
+        },
+        "items": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "line": {
+          "description": "The state in one line, as the text output opens with it.",
+          "type": "string"
+        },
+        "merged": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "not_started": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "open_decisions": {
+          "description": "The open substantive decisions of the phase, which wait on the\nperson.",
+          "items": {
+            "$ref": "#/$defs/DecisionId"
+          },
+          "type": "array"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "ready_to_close": {
+          "description": "Every item is merged, and there is at least one.",
+          "type": "boolean"
+        },
+        "running": {
+          "description": "Seats whose agent is running.",
+          "items": {
+            "$ref": "#/$defs/AgentName"
+          },
+          "type": "array"
+        },
+        "set_aside": {
+          "description": "Blocked: set aside on a decision, an item or an action.",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "phase",
+        "line",
+        "items",
+        "merged",
+        "in_progress",
+        "set_aside",
+        "not_started",
+        "open_decisions",
+        "faults",
+        "running",
+        "ready_to_close"
       ],
       "type": "object"
     },
@@ -2692,6 +2893,57 @@
             "not_a_replacement"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An agent claims only the open phase's items; this one is in\nanother phase's backlog.",
+          "properties": {
+            "not_in_open_phase": {
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                },
+                "phase": {
+                  "$ref": "#/$defs/PhaseId"
+                }
+              },
+              "required": [
+                "item",
+                "phase"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "not_in_open_phase"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bringing an item into the phase is the person's to do.",
+          "properties": {
+            "bring_in_is_for_the_person": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "bring_in_is_for_the_person"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The item is already in the open phase.",
+          "properties": {
+            "already_in_open_phase": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "already_in_open_phase"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -2714,6 +2966,71 @@
         }
       ],
       "description": "`ris report`: the phase report, or that there is no phase yet."
+    },
+    "Risk": {
+      "description": "How closely one changed file should be read: where to look first.",
+      "properties": {
+        "computed": {
+          "$ref": "#/$defs/Computed",
+          "description": "What `ris` works out from the file's signals, with no model."
+        },
+        "judged": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Judged"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What an auditor recorded for the file in this phase, the latest\nif more than one; null when none has."
+        },
+        "level": {
+          "$ref": "#/$defs/RiskLevel",
+          "description": "The level that stands: the judgement's where one is recorded,\nand the computed one otherwise."
+        }
+      },
+      "required": [
+        "level",
+        "computed",
+        "judged"
+      ],
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "How closely a file's change should be read: where to look first.\nOrdered, so the higher of two levels is the greater.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "RiskRecorded": {
+      "description": "`ris audit --file`: the risk judgement recorded.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "path": {
+          "description": "The file judged, relative to the repository root.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "seat": {
+          "description": "The auditor seat that recorded it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "path",
+        "level",
+        "seat"
+      ],
+      "type": "object"
     },
     "Role": {
       "description": "What a seat does.",
@@ -2998,6 +3315,24 @@
       ],
       "description": "`ris show <id>`: the record the id names."
     },
+    "Signal": {
+      "description": "One signal that counts toward a computed level.",
+      "properties": {
+        "reason": {
+          "description": "The signal in words, with its numbers.",
+          "type": "string"
+        },
+        "signal": {
+          "description": "`outside`, `contract`, `diff` or `dependents`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signal",
+        "reason"
+      ],
+      "type": "object"
+    },
     "Status": {
       "description": "`ris status`.",
       "properties": {
@@ -3087,6 +3422,35 @@
             "phase",
             "checks",
             "depends_on"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The person moved an unstarted item into a phase, or (with no\nphase) back to the backlog. An item's current phase is the last\nof its `ItemAdded` and its `ItemScoped` events; the phase it was\nadded in does not change.",
+          "properties": {
+            "event": {
+              "const": "item_scoped",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/ItemId"
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PhaseId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "phase"
           ],
           "type": "object"
         },
@@ -3421,6 +3785,32 @@
         },
         {
           "additionalProperties": false,
+          "description": "An auditor judged how closely one file's change in the phase\nshould be read. The text part carries `path`, the file, relative\nto the repository root, and `why`, one line. The latest one for\na path in a phase is the one shown.",
+          "properties": {
+            "event": {
+              "const": "risk_judged",
+              "type": "string"
+            },
+            "level": {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            "phase": {
+              "$ref": "#/$defs/PhaseId"
+            },
+            "seat": {
+              "$ref": "#/$defs/AgentName"
+            }
+          },
+          "required": [
+            "event",
+            "phase",
+            "seat",
+            "level"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "properties": {
             "about": {
               "anyOf": [
@@ -3629,6 +4019,17 @@
         "inbox": {
           "$ref": "#/$defs/Inbox"
         },
+        "phase_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The open phase's state in one line and as counts; `null` with\nno phase open."
+        },
         "ready": {
           "$ref": "#/$defs/Ready"
         },
@@ -3642,6 +4043,7 @@
         "report",
         "ready",
         "all",
+        "phase_state",
         "carried_over",
         "checks"
       ],
@@ -3820,6 +4222,9 @@
     "data.item_add": {
       "$ref": "#/$defs/ItemRef"
     },
+    "data.item_bring-in": {
+      "$ref": "#/$defs/BroughtIn"
+    },
     "data.item_supersede": {
       "$ref": "#/$defs/Superseded"
     },
@@ -3974,6 +4379,9 @@
             },
             {
               "$ref": "#/$defs/data.item_supersede"
+            },
+            {
+              "$ref": "#/$defs/data.item_bring-in"
             },
             {
               "$ref": "#/$defs/data.ready"

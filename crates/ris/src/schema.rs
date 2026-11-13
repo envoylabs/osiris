@@ -279,9 +279,44 @@ pub struct Summary {
     pub ready: Ready,
     /// Whether `--all` was given.
     pub all: bool,
+    /// The open phase's state in one line and as counts; `null` with
+    /// no phase open.
+    pub phase_state: Option<PhaseState>,
     pub carried_over: CarriedOver,
     /// What running the person's action checks did.
     pub checks: Vec<String>,
+}
+
+/// Where the open phase stands. Its items that are not superseded are
+/// each in one of `merged`, `in_progress`, `set_aside` and
+/// `not_started`, which add up to `items`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct PhaseState {
+    pub phase: PhaseId,
+    /// The state in one line, as the text output opens with it.
+    pub line: String,
+    pub items: usize,
+    pub merged: usize,
+    /// Claimed, or done and not yet merged, each with the seat on it.
+    pub in_progress: Vec<InProgress>,
+    /// Blocked: set aside on a decision, an item or an action.
+    pub set_aside: Vec<ItemId>,
+    pub not_started: usize,
+    /// The open substantive decisions of the phase, which wait on the
+    /// person.
+    pub open_decisions: Vec<DecisionId>,
+    /// Seats with a setup fault reported in their latest run.
+    pub faults: Vec<AgentName>,
+    /// Seats whose agent is running.
+    pub running: Vec<AgentName>,
+    /// Every item is merged, and there is at least one.
+    pub ready_to_close: bool,
+}
+
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct InProgress {
+    pub item: ItemId,
+    pub seat: Option<AgentName>,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -330,12 +365,14 @@ pub struct Audited {
     pub by: AgentName,
 }
 
-/// `ris audit`: the queue, or the review recorded.
+/// `ris audit`: the queue, the review recorded, or the risk judgement
+/// recorded.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Audit {
     Queue(AuditQueue),
     Recorded(Audited),
+    Risk(RiskRecorded),
 }
 
 /// `ris claim`: the brief.
@@ -398,6 +435,14 @@ pub struct ItemRef {
 pub struct Superseded {
     pub item: ItemId,
     pub superseded_by: ItemId,
+}
+
+/// `ris item bring-in`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct BroughtIn {
+    pub item: ItemId,
+    /// The open phase it is now in.
+    pub phase: PhaseId,
 }
 
 /// `ris done`.
@@ -650,6 +695,17 @@ pub struct Exported {
     pub new: usize,
 }
 
+/// `ris audit --file`: the risk judgement recorded.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct RiskRecorded {
+    pub phase: PhaseId,
+    /// The file judged, relative to the repository root.
+    pub path: String,
+    pub level: ris_core::primitives::RiskLevel,
+    /// The auditor seat that recorded it.
+    pub seat: String,
+}
+
 /// `ris map`: the graph document (`docs/json.md`).
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Map {
@@ -660,6 +716,9 @@ pub struct Map {
     pub totals: MapTotals,
     pub nodes: Vec<crate::map::Node>,
     pub edges: Vec<crate::map::Edge>,
+    /// Each changed node's unified diff between `base` and `tip`, by
+    /// path, as `git diff` writes it; empty when `base` is null.
+    pub diffs: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -773,6 +832,7 @@ pub fn commands(g: &mut SchemaGenerator) -> Vec<(&'static str, Schema)> {
         ("phase close", g.subschema_for::<PhaseClosed>()),
         ("item add", g.subschema_for::<ItemRef>()),
         ("item supersede", g.subschema_for::<Superseded>()),
+        ("item bring-in", g.subschema_for::<BroughtIn>()),
         ("ready", g.subschema_for::<Ready>()),
         ("claim", g.subschema_for::<Brief>()),
         ("release", g.subschema_for::<ItemRef>()),
@@ -882,65 +942,5 @@ pub fn text() -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_command_has_one_entry_and_every_reference_resolves() {
-        let mut g = SchemaSettings::draft2020_12()
-            .for_serialize()
-            .into_generator();
-        let names: Vec<&str> = commands(&mut g).into_iter().map(|(n, _)| n).collect();
-        let mut unique = names.clone();
-        unique.sort_unstable();
-        unique.dedup();
-        assert_eq!(unique.len(), names.len(), "a command is listed twice");
-
-        let doc = document();
-        let defs = doc["$defs"].as_object().unwrap();
-        for name in &names {
-            assert!(defs.contains_key(&data_name(name)), "{name}");
-        }
-        // Every $ref in the document points at a definition in it.
-        fn refs(v: &Value, out: &mut Vec<String>) {
-            match v {
-                Value::Object(m) => {
-                    if let Some(Value::String(r)) = m.get("$ref") {
-                        out.push(r.clone());
-                    }
-                    m.values().for_each(|v| refs(v, out));
-                }
-                Value::Array(a) => a.iter().for_each(|v| refs(v, out)),
-                _ => {}
-            }
-        }
-        let mut found = Vec::new();
-        refs(&doc, &mut found);
-        assert!(!found.is_empty());
-        for r in found {
-            let name = r.strip_prefix("#/$defs/").unwrap_or_else(|| panic!("{r}"));
-            assert!(defs.contains_key(name), "{r} does not resolve");
-        }
-    }
-
-    #[test]
-    fn the_document_is_the_same_each_time_it_is_generated() {
-        assert_eq!(text(), text());
-    }
-
-    /// The committed file is what the types generate: a change to any
-    /// output type that is not regenerated and committed fails here.
-    #[test]
-    fn the_committed_schema_is_the_generated_one() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(PATH);
-        let committed = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(
-            committed == text(),
-            "{PATH} is not what the output types generate\n  \
-             next: `cargo run -p ris -- schema > {PATH}`, read the diff, and commit it; \
-             a key removed, renamed or reshaped there is a new format, not format {JSON_FORMAT}"
-        );
-    }
-}
+#[path = "tests/schema.rs"]
+mod tests;

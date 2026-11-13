@@ -4,7 +4,7 @@
 //! JSON carries the same facts with their ids.
 
 use ris_core::command::report_hash;
-use ris_core::ids::{Actor, AgentName, Hash, PhaseId};
+use ris_core::ids::{Actor, AgentName, DecisionId, Hash, PhaseId};
 use ris_core::primitives::{
     Action, ActionState, Decision, DecisionClass, DecisionState, Item, ItemState, Message,
     PhaseState,
@@ -507,12 +507,16 @@ fn message_json(l: &Loaded, m: &Message) -> schema::Message {
     }
 }
 
-/// `ris ready`: what an agent may claim now, the open phase's own items
-/// first, then items carried over from earlier phases, each group in id
-/// order. A seat takes the first, so the phase's work comes before the
-/// backlog.
-pub fn ready(l: &Loaded) -> Output {
-    let (text, data) = ready_in(l, Scope::All);
+/// `ris ready`: what may be claimed now, in id order. A seat sees only
+/// the open phase's items, since it may claim no other. The person sees
+/// those first and then the backlog, the items carried over from
+/// earlier phases, which they bring in with `ris item bring-in`.
+pub fn ready(l: &Loaded, actor: &Actor) -> Output {
+    let scope = match actor {
+        Actor::Person => Scope::All,
+        Actor::Agent(_) => Scope::of(l, false),
+    };
+    let (text, data) = ready_in(l, scope);
     Output::of(text, &data)
 }
 
@@ -887,10 +891,13 @@ pub fn tally(l: &Loaded, phase: PhaseId) -> Tally {
         .filter(|e| e.seq > opened && e.seq < closed)
         .filter(|e| matches!(e.structure, Structure::ItemMerged { .. }))
         .count();
-    let items = l.state.items.values().filter(|i| i.phase <= phase);
+    // By the phase each item was added in, which never changes, so a
+    // closed phase's tally stays what it was when an item it left is
+    // later brought into another phase.
+    let items = l.state.items.values().filter(|i| i.added_in <= phase);
     let (mut planned, mut carried_over) = (0, 0);
     for i in items {
-        planned += usize::from(i.phase == phase);
+        planned += usize::from(i.added_in == phase);
         carried_over += usize::from(!matches!(
             i.state,
             ItemState::Merged { .. } | ItemState::Superseded { .. }
@@ -1141,6 +1148,108 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
     Output::of(s.trim_end(), &schema::Show::Item(Box::new(data)))
 }
 
+/// The open phase's state, counted, and said in one line: what
+/// `ris summary` opens with. `running` is the seats whose agent is
+/// running now. `None` with no phase open.
+///
+/// Every item of the phase that is not superseded is in exactly one of
+/// `merged`, `in_progress` (claimed, or done and not yet merged),
+/// `set_aside` (blocked) and `not_started`, so the four add up to
+/// `items` and can be checked against the item list.
+pub fn phase_state(l: &Loaded, running: &[AgentName]) -> Option<schema::PhaseState> {
+    let phase = l.state.open_phase()?.id;
+    let scope = Scope::Open(Some(phase));
+    let (mut items, mut merged, mut not_started) = (0, 0, 0);
+    let (mut in_progress, mut set_aside) = (Vec::new(), Vec::new());
+    for i in l.state.items.values().filter(|i| scope.item(i)) {
+        match &i.state {
+            ItemState::Superseded { .. } => continue,
+            ItemState::Merged { .. } => merged += 1,
+            ItemState::Ready => not_started += 1,
+            ItemState::Claimed { agent } => in_progress.push(schema::InProgress {
+                item: i.id,
+                seat: Some(agent.clone()),
+            }),
+            ItemState::Done { .. } => in_progress.push(schema::InProgress {
+                item: i.id,
+                seat: i.author.clone(),
+            }),
+            ItemState::Blocked { .. } => set_aside.push(i.id),
+        }
+        items += 1;
+    }
+    let open_decisions: Vec<DecisionId> = l
+        .state
+        .open_decisions()
+        .filter(|d| d.class == DecisionClass::Substantive && scope.decision(l, d))
+        .map(|d| d.id)
+        .collect();
+    let faults: Vec<AgentName> = l
+        .state
+        .faults
+        .iter()
+        .filter(|(_, f)| !f.is_empty())
+        .map(|(seat, _)| seat.clone())
+        .collect();
+    let ready_to_close = items > 0 && merged == items;
+
+    let mut parts = Vec::new();
+    if items == 0 {
+        parts.push("no items yet: add one with `ris item add \"<goal>\"`".to_owned());
+    } else if ready_to_close {
+        parts.push(format!(
+            "all {items} items merged: ready to close with `ris phase close`"
+        ));
+    } else {
+        parts.push(format!("{merged} of {items} items merged"));
+        if !in_progress.is_empty() {
+            parts.push(format!(
+                "{} in progress ({})",
+                in_progress.len(),
+                in_progress
+                    .iter()
+                    .map(|p| match &p.seat {
+                        Some(seat) => format!("{seat} on {}", p.item),
+                        None => p.item.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !set_aside.is_empty() {
+            parts.push(format!("{} set aside", set_aside.len()));
+        }
+        parts.push(format!("{not_started} not started"));
+    }
+    if !open_decisions.is_empty() {
+        parts.push(format!(
+            "{} open decision(s) wait on you: `ris decide`",
+            open_decisions.len()
+        ));
+    }
+    for seat in &faults {
+        parts.push(format!(
+            "a setup fault on {seat} waits on you: `ris status` says what, then `ris up {seat}`"
+        ));
+    }
+    if items > 0 && !ready_to_close && running.is_empty() {
+        parts.push("no seat is running: start them with `ris up`".to_owned());
+    }
+    Some(schema::PhaseState {
+        phase,
+        line: parts.join("; "),
+        items,
+        merged,
+        in_progress,
+        set_aside,
+        not_started,
+        open_decisions,
+        faults,
+        running: running.to_vec(),
+        ready_to_close,
+    })
+}
+
 /// `ris summary`: the review view, one picture of the open phase. Its
 /// goal, its items counted by state, and the graph: the phase's items with their
 /// states, what they wait on, and the open decisions attached to any of
@@ -1155,9 +1264,16 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
 /// The JSON carries the same keys either way; by default `inbox`,
 /// `report` and `ready` cover the open phase alone. `checks` is what
 /// running the person's action checks did before this.
-pub fn summary(l: &Loaded, actor: &Actor, all: bool, checks: Vec<String>) -> Output {
+pub fn summary(
+    l: &Loaded,
+    actor: &Actor,
+    all: bool,
+    checks: Vec<String>,
+    running: &[AgentName],
+) -> Output {
     use crate::graph::Node;
     let scope = Scope::of(l, all);
+    let state = phase_state(l, running);
     let (queue_text, queue) = inbox_in(l, actor, scope);
     let (rep_text, rep) = report_in(l, scope);
     let (rdy_text, rdy) = ready_in(l, scope);
@@ -1185,7 +1301,7 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool, checks: Vec<String>) -> Out
     let carried = if carried_items + carried_decisions > 0 {
         format!(
             "{carried_items} item(s) and {carried_decisions} open decision(s) from earlier phases are not shown\n  \
-             next: `ris summary --all` shows them\n"
+             next: `ris summary --all` shows them; the person brings one in with `ris item bring-in <item>`\n"
         )
     } else {
         String::new()
@@ -1207,7 +1323,15 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool, checks: Vec<String>) -> Out
         for i in l.state.items.values().filter(|i| scope.item(i)) {
             *counts.entry(shown_state(l, i)).or_insert(0usize) += 1;
         }
-        let mut s = format!("{} open: {}\n", phase.id, l.text(phase.at, "goal"));
+        let mut s = String::new();
+        if let Some(state) = &state {
+            s.push_str(&format!("{}\n", state.line));
+        }
+        s.push_str(&format!(
+            "{} open: {}\n",
+            phase.id,
+            l.text(phase.at, "goal")
+        ));
         if !counts.is_empty() {
             s.push_str(&format!(
                 "items: {}\n",
@@ -1247,6 +1371,7 @@ pub fn summary(l: &Loaded, actor: &Actor, all: bool, checks: Vec<String>) -> Out
             report: rep,
             ready: rdy,
             all,
+            phase_state: state,
             carried_over: schema::CarriedOver {
                 items: carried_items,
                 decisions: carried_decisions,

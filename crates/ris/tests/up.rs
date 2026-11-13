@@ -483,6 +483,87 @@ fn up_rebases_a_seat_over_a_rules_file_change() {
     assert_eq!(fs::read_to_string(wt.join("mine")).unwrap(), "work\n");
 }
 
+/// A seat one commit ahead whose commit conflicts with the phase branch,
+/// which has also changed a rules file: neither up nor the seat can
+/// finish the rebase alone. Up keeps the commit on a branch named for
+/// the seat, moves the worktree to the phase branch (writing the rules
+/// file the seat's sandbox refuses), and tells the seat in its inbox to
+/// cherry-pick the commit back and resolve the conflict itself.
+#[test]
+fn up_hands_a_conflicting_rebase_over_a_rules_file_change_back_to_the_seat() {
+    let rig = Rig::new("up-rules-conflict", WAITING_AGENT);
+    rig.git(&["config", "user.name", "ris"]);
+    rig.git(&["config", "user.email", "ris@localhost"]);
+    rig.ok(None, &["up", "rook"]);
+    rig.ok(Some("heron"), &["item", "add", "x"]);
+    rig.ok(Some("rook"), &["claim", "I-1"]);
+    let wt = rig.repo.with_file_name("repo-rook");
+    fs::write(wt.join("shared"), "rook's\n").unwrap();
+    rig.git_in(&wt, &["add", "shared"]);
+    rig.git_in(&wt, &["commit", "-q", "-m", "mine"]);
+    let own = rig.git_in(&wt, &["rev-parse", "HEAD"]);
+    let fork = rig.git_in(&wt, &["rev-parse", "HEAD^"]);
+
+    // The phase branch adds a rules file and the same file, differently.
+    let side = rig.repo.with_file_name("repo-side");
+    rig.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        side.to_str().unwrap(),
+        "phase/P-1",
+    ]);
+    fs::write(side.join("AGENTS.md"), "rules\n").unwrap();
+    fs::write(side.join("shared"), "the phase's\n").unwrap();
+    rig.git_in(&side, &["add", "AGENTS.md", "shared"]);
+    rig.git_in(&side, &["commit", "-q", "-m", "rules"]);
+    let tip = rig.git_in(&side, &["rev-parse", "HEAD"]);
+    rig.git(&["update-ref", "refs/heads/phase/P-1", &tip]);
+    rig.git(&["worktree", "remove", "--force", side.to_str().unwrap()]);
+
+    rig.stop_all();
+    rig.until("rook stopped", |r| r.events("run_stopped").len() == 1);
+    let out = rig.ok(None, &["up", "rook"]);
+    let kept = format!("rook-kept-{}", &own[..12]);
+    assert!(
+        out.contains(&format!(
+            "rook: moved to phase/P-1; its commits conflict with it (in shared) and are kept on {kept}"
+        )),
+        "{out}"
+    );
+    assert!(out.contains("told in its inbox"), "{out}");
+
+    // The worktree is on the phase branch, still on the seat's branch,
+    // and the commit is kept.
+    assert_eq!(rig.git_in(&wt, &["rev-parse", "HEAD"]), tip);
+    assert_eq!(head_branch(&wt), "rook");
+    assert_eq!(rig.git_in(&wt, &["rev-parse", &kept]), own);
+    assert_eq!(fs::read_to_string(wt.join("AGENTS.md")).unwrap(), "rules\n");
+
+    // The seat is told, about its item, the cherry-pick that brings the
+    // commit back.
+    let inbox = rig.ok(Some("rook"), &["inbox"]);
+    let range = format!("{}..{kept}", &fork[..12]);
+    assert!(
+        inbox.contains(&format!("`git cherry-pick {range}`")),
+        "{inbox}"
+    );
+    assert!(inbox.contains("about I-1"), "{inbox}");
+    assert!(inbox.contains("`ris merge I-1`"), "{inbox}");
+
+    // What it is told works: the cherry-pick stops on the conflict in
+    // the seat's own file, not in a rules file.
+    let pick = Command::new("git")
+        .current_dir(&wt)
+        .args(["cherry-pick", &range])
+        .output()
+        .unwrap();
+    assert!(!pick.status.success());
+    let unmerged = rig.git_in(&wt, &["diff", "--name-only", "--diff-filter=U"]);
+    assert_eq!(unmerged, "shared");
+}
+
 /// A `ris seat start` killed outright never records its stop. Up sees
 /// its process is gone, clears the run and starts the seat again,
 /// instead of counting it as running for good.
@@ -530,6 +611,52 @@ fn up_clears_a_run_whose_process_is_gone_and_starts_it_again() {
     assert_eq!(rook_runs(&rig, "run_started"), 2);
     // The live ones are left as they are.
     assert!(!out.contains("heron:"), "{out}");
+}
+
+/// The summary's opening line names `ris up` only when no seat is
+/// running, and a run whose process is gone does not count as one,
+/// though the log still has it as running until `ris up` clears it.
+#[test]
+fn summary_says_when_no_seat_is_running() {
+    let rig = Rig::new("up-summary", WAITING_AGENT);
+    rig.ok(None, &["item", "add", "something to do"]);
+    let state = |r: &Rig| -> Value {
+        let v: Value = serde_json::from_slice(&r.ris(None, &["--json", "summary"]).stdout).unwrap();
+        v["data"]["phase_state"].clone()
+    };
+    let none = "no seat is running: start them with `ris up`";
+    let s = state(&rig);
+    assert!(s["line"].as_str().unwrap().ends_with(none), "{s}");
+
+    rig.ok(None, &["up", "rook"]);
+    rig.until("rook running", |r| {
+        state(r)["running"] == serde_json::json!(["rook"])
+    });
+    let s = state(&rig);
+    assert!(!s["line"].as_str().unwrap().contains(none), "{s}");
+    let text = rig.ok(None, &["summary"]);
+    assert!(!text.lines().next().unwrap().contains(none), "{text}");
+
+    // Its `ris seat start` killed outright: nothing records the stop.
+    let lock = rig.repo.join(".osiris/runs/rook.lock");
+    rig.until("rook's run names its process", |_| {
+        fs::read_to_string(&lock).is_ok_and(|s| !s.trim().is_empty())
+    });
+    let pid = fs::read_to_string(&lock).unwrap().trim().to_owned();
+    assert!(
+        Command::new("kill")
+            .args(["-KILL", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(rig.repo.join(".osiris/stop-rook"), "").unwrap();
+    rig.until("the gone run is not counted", |r| {
+        state(r)["running"] == serde_json::json!([])
+    });
+    let s = state(&rig);
+    assert!(s["line"].as_str().unwrap().ends_with(none), "{s}");
+    assert_eq!(rig.events("run_stopped").len(), 0, "nothing was recorded");
 }
 
 /// A start that fails is reported as failing, with why, not as started.

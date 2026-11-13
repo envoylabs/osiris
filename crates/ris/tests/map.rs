@@ -175,6 +175,7 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(before["tip"], json!(main), "{before}");
     assert_eq!(before["totals"]["changed"], 0, "{before}");
     assert_eq!(node(&before, "src/old.rs")["status"], "unchanged");
+    assert_eq!(before["diffs"], json!({}), "nothing changed: {before}");
 
     work(&dir);
     let tip = git(&dir, &["rev-parse", "phase/P-1"]);
@@ -185,14 +186,27 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(
         keys(&doc),
         [
-            "base", "edges", "nodes", "phase", "tip", "tip_ref", "totals"
+            "base", "diffs", "edges", "nodes", "phase", "tip", "tip_ref", "totals"
         ]
     );
     assert_eq!(
         keys(&doc["nodes"][0]),
         [
-            "added", "contract", "external", "language", "path", "removed", "status", "weight"
+            "added",
+            "contract",
+            "dependents",
+            "external",
+            "language",
+            "path",
+            "removed",
+            "risk",
+            "status",
+            "weight"
         ]
+    );
+    assert_eq!(
+        keys(&node(&doc, "src/wire.rs")["risk"]),
+        ["computed", "judged", "level"]
     );
     assert_eq!(keys(&doc["edges"][0]), ["from", "kind", "to"]);
     assert_eq!(
@@ -275,6 +289,38 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert!(weight("src/wire.rs") > 1.0 && weight("src/wire.rs") < weight("src/net.rs"));
     assert!(weight("src/net.rs") > weight("src/store.rs"));
 
+    // Risk: computed from the signals for each changed file, and null
+    // for a file the phase left alone. The contract is medium for
+    // being one; the rest have at most one mild signal, and are low.
+    assert_eq!(node(&doc, "src/wire.rs")["dependents"], 3);
+    assert_eq!(
+        node(&doc, "docs/wire.md")["risk"],
+        json!({
+            "level": "medium",
+            "computed": {
+                "level": "medium",
+                "signals": [{ "signal": "contract", "reason": "a contract or format" }]
+            },
+            "judged": null
+        })
+    );
+    assert_eq!(
+        node(&doc, "src/net.rs")["risk"]["computed"],
+        json!({
+            "level": "low",
+            "signals": [{ "signal": "outside", "reason": "touches the outside: network" }]
+        })
+    );
+    assert_eq!(
+        node(&doc, "src/wire.rs")["risk"]["computed"],
+        json!({
+            "level": "low",
+            "signals": [{ "signal": "dependents", "reason": "3 other files depend on it" }]
+        })
+    );
+    assert_eq!(node(&doc, "src/old.rs")["risk"]["level"], "low");
+    assert!(node(&doc, "src/store.rs")["risk"].is_null());
+
     // Edges: mod lines and use lines, from the file that names the
     // other. The deleted file has none.
     let edges: Vec<(&str, &str, &str)> = doc["edges"]
@@ -301,8 +347,70 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     );
     assert!(
         !doc.to_string().contains("tests/"),
-        "no node or edge names a test file: {doc}"
+        "no node, edge or diff names a test file: {doc}"
     );
+
+    // Diffs: each changed node's unified diff between base and tip, by
+    // path. An unchanged file has none, and neither has a file that is
+    // not a node, whatever the phase did to it.
+    assert_eq!(
+        keys(&doc["diffs"]),
+        [
+            "docs/wire.md",
+            "src/lib.rs",
+            "src/net.rs",
+            "src/old.rs",
+            "src/wire.rs"
+        ]
+    );
+    let diff = |path: &str| doc["diffs"][path].as_str().unwrap().to_owned();
+    // The whole text of one, less the line that carries blob ids: the
+    // file header, the hunk header, then context, removed and added
+    // lines, each marked in its first column.
+    let wire = diff("src/wire.rs");
+    let lines: Vec<&str> = wire.lines().filter(|l| !l.starts_with("index ")).collect();
+    assert_eq!(
+        lines,
+        [
+            "diff --git a/src/wire.rs b/src/wire.rs",
+            "--- a/src/wire.rs",
+            "+++ b/src/wire.rs",
+            "@@ -1,2 +1,3 @@",
+            " pub struct Frame;",
+            "-// one",
+            "+// two",
+            "+// three",
+        ]
+    );
+    assert!(wire.ends_with("+// three\n"), "{wire}");
+    // An added file is all additions, a deleted one all removals.
+    let net = diff("src/net.rs");
+    assert!(
+        net.contains(
+            "\n--- /dev/null\n+++ b/src/net.rs\n@@ -0,0 +1,5 @@\n+use std::net::TcpStream;\n"
+        ),
+        "{net}"
+    );
+    let old = diff("src/old.rs");
+    assert!(
+        old.ends_with("\n--- a/src/old.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-pub fn gone() {}\n"),
+        "{old}"
+    );
+    // A diff's marked lines are the node's numbers.
+    for n in doc["nodes"].as_array().unwrap() {
+        let path = n["path"].as_str().unwrap();
+        let Some(text) = doc["diffs"][path].as_str() else {
+            assert_eq!(n["status"], "unchanged", "{path} has no diff");
+            continue;
+        };
+        // Past the file header and the one hunk header these small
+        // files have, whose own text begins with the old range.
+        let hunk = text.split_once("\n@@ ").expect("a hunk").1;
+        let body = hunk.split_once('\n').expect("the hunk's lines").1;
+        let count = |mark: char| body.lines().filter(|l| l.starts_with(mark)).count() as u64;
+        assert_eq!(count('+'), n["added"].as_u64().unwrap(), "{path}");
+        assert_eq!(count('-'), n["removed"].as_u64().unwrap(), "{path}");
+    }
 
     // In text: the totals, then the changed files with their numbers.
     let text = ok(&dir, "person", &["map"]);
@@ -317,12 +425,213 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert!(!text.contains("tests/"), "{text}");
     assert!(text.contains("src/net.rs (added)  [network]"), "{text}");
     assert!(text.contains("docs/wire.md  [contract]"), "{text}");
+    // Each with its level, the highest first.
+    let listed: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("  "))
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|w| ["low", "medium", "high"].contains(w))
+        .collect();
+    assert_eq!(listed, ["medium", "low", "low", "low", "low"], "{text}");
     assert!(!text.contains("src/store.rs"), "unchanged: {text}");
     assert!(text.contains("`ris map --html map.html`"), "{text}");
 
     // A seat reads the same map from its own place.
     let seat: Value = serde_json::from_str(&ok(&dir, "heron", &["--json", "map"])).unwrap();
     assert_eq!(seat["data"], doc);
+
+    // Only the person's `ris map` at a terminal writes the page to its
+    // fixed file and opens it. Here the output is captured, and a seat
+    // is not the person: each gets the text form, and nothing is
+    // written or opened.
+    let seat_text = ok(&dir, "heron", &["map"]);
+    assert_eq!(seat_text, text, "the same text form");
+    assert!(!text.contains("opened it in the browser"), "{text}");
+    assert!(
+        !dir.join(".osiris/map.html").exists(),
+        "no page was written"
+    );
+}
+
+#[test]
+fn an_auditor_s_judgement_of_a_file_stands_on_the_map_over_the_computed_level() {
+    let dir = setup("risk");
+    ok(&dir, "person", &["phase", "open", "send frames"]);
+    work(&dir);
+    let refused = |agent: &str, args: &[&str], want: &str| {
+        let out = ris(&dir, agent, args);
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(!out.status.success(), "ris {}: accepted", args.join(" "));
+        assert!(err.contains(want), "{want} in {err}");
+        err
+    };
+    let audit = |path: &'static str, level: &'static str, why: &'static str| {
+        ["audit", "--file", path, "--risk", level, "--why", why]
+    };
+    let judge = audit("src/net.rs", "high", "opens a socket with no timeout");
+    // A judgement is a file, a level and a reason, and is not a review
+    // of an item.
+    refused("wren", &["audit", "--file", "src/net.rs"], "--risk");
+    refused("wren", &["audit", "--risk", "high"], "--file");
+    refused("wren", &[&judge[..], &["--all"]].concat(), "cannot be used");
+
+    // Only an auditor records one: not a seat that writes the change,
+    // and not the person, whose reading the map is for.
+    refused(
+        "heron",
+        &judge,
+        "heron is a lead, and a lead does not record a risk judgement",
+    );
+    refused("person", &judge, "this command is an agent's");
+    // Only of a file the phase changed and the map shows; the refusal
+    // does not repeat what was typed.
+    for path in [
+        "src/store.rs",
+        "README.md",
+        "tests/net.rs",
+        "src/nowhere.rs",
+    ] {
+        let err = refused(
+            "wren",
+            &audit(path, "high", "why"),
+            "P-1 has no changed file on the map at that path",
+        );
+        assert!(!err.contains(path), "{err}");
+    }
+    assert!(
+        node(&data(&dir, &["map"]), "src/net.rs")["risk"]["judged"].is_null(),
+        "nothing refused was recorded"
+    );
+
+    let said = ok(&dir, "wren", &judge);
+    assert!(said.contains("src/net.rs judged high by wren"), "{said}");
+    let doc = data(&dir, &["map"]);
+    assert_eq!(
+        node(&doc, "src/net.rs")["risk"],
+        json!({
+            "level": "high",
+            "computed": {
+                "level": "low",
+                "signals": [{ "signal": "outside", "reason": "touches the outside: network" }]
+            },
+            "judged": {
+                "level": "high",
+                "why": "opens a socket with no timeout",
+                "seat": "wren"
+            }
+        })
+    );
+    // No other file's level moved.
+    assert!(node(&doc, "src/wire.rs")["risk"]["judged"].is_null());
+    assert_eq!(node(&doc, "docs/wire.md")["risk"]["level"], "medium");
+
+    // In text it leads the list, with who judged it and why.
+    let text = ok(&dir, "person", &["map"]);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[2].starts_with("  high "), "{text}");
+    assert!(lines[2].contains("src/net.rs (added)"), "{text}");
+    assert_eq!(
+        lines[3].trim(),
+        "judged high by wren: opens a socket with no timeout (computed: low)",
+        "{text}"
+    );
+
+    // Recorded again, the later one stands, and a judgement may lower
+    // a level as well as raise it.
+    ok(
+        &dir,
+        "wren",
+        &audit("src/net.rs", "medium", "the caller sets a deadline"),
+    );
+    ok(
+        &dir,
+        "wren",
+        &audit("docs/wire.md", "low", "a sentence, no change of format"),
+    );
+    let doc = data(&dir, &["map"]);
+    let net = &node(&doc, "src/net.rs")["risk"];
+    assert_eq!(net["level"], "medium");
+    assert_eq!(net["judged"]["why"], "the caller sets a deadline");
+    let wire = &node(&doc, "docs/wire.md")["risk"];
+    assert_eq!(
+        (&wire["level"], &wire["computed"]["level"]),
+        (&json!("low"), &json!("medium"))
+    );
+
+    // The page carries it, being the same document.
+    let page = dir.join(".osiris/map.html");
+    ok(&dir, "person", &["map", "--html", page.to_str().unwrap()]);
+    let html = fs::read_to_string(&page).unwrap();
+    assert!(html.contains("the caller sets a deadline"), "embedded");
+
+    // The closed phase's map keeps its judgements, and with no phase
+    // open there is no change set to judge.
+    ok(&dir, "person", &["phase", "close"]);
+    assert_eq!(data(&dir, &["map"])["nodes"], doc["nodes"]);
+    refused("wren", &judge, "no phase is open");
+}
+
+#[test]
+fn a_binary_file_s_diff_is_one_line_and_bytes_that_are_not_utf8_are_replaced() {
+    let dir = setup("bytes");
+    ok(&dir, "person", &["phase", "open", "odd files"]);
+    git(&dir, &["switch", "-q", "phase/P-1"]);
+    // A contract that is binary (it holds a NUL, which is how git
+    // tells), and a source file with a Latin-1 byte, which is not
+    // UTF-8 and is still text to git.
+    fs::write(dir.join("docs/blob.md"), [0x89, b'B', 0, 1, 2, b'\n']).unwrap();
+    fs::write(
+        dir.join("src/latin.rs"),
+        [&b"// caf"[..], &[0xE9], &b"\npub fn f() {}\n"[..]].concat(),
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "-m", "feat: odd files"]);
+    git(&dir, &["switch", "-q", "main"]);
+
+    let doc = data(&dir, &["map"]);
+
+    // Binary: a node with no line counts, whose diff is the file
+    // header and git's one line, with no hunk.
+    let blob = node(&doc, "docs/blob.md");
+    assert_eq!(
+        (&blob["status"], &blob["added"], &blob["removed"]),
+        (&json!("added"), &json!(0), &json!(0))
+    );
+    let diff = doc["diffs"]["docs/blob.md"].as_str().unwrap();
+    let lines: Vec<&str> = diff.lines().filter(|l| !l.starts_with("index ")).collect();
+    assert_eq!(
+        lines,
+        [
+            "diff --git a/docs/blob.md b/docs/blob.md",
+            "new file mode 100644",
+            "Binary files /dev/null and b/docs/blob.md differ",
+        ]
+    );
+    assert!(!diff.contains("@@"), "no hunk: {diff}");
+
+    // Not UTF-8: the file is a node with its numbers, and in its diff
+    // the byte is the replacement character, the lines around it whole.
+    let latin = node(&doc, "src/latin.rs");
+    assert_eq!(
+        (&latin["status"], &latin["added"], &latin["removed"]),
+        (&json!("added"), &json!(2), &json!(0))
+    );
+    let diff = doc["diffs"]["src/latin.rs"].as_str().unwrap();
+    assert!(
+        diff.ends_with("@@ -0,0 +1,2 @@\n+// caf\u{FFFD}\n+pub fn f() {}\n"),
+        "{diff}"
+    );
+
+    // The page embeds the same document, replaced byte and all.
+    let page = dir.join(".osiris/map.html");
+    ok(&dir, "person", &["map", "--html", page.to_str().unwrap()]);
+    let html = fs::read_to_string(&page).unwrap();
+    let open = "<script id=\"map-data\" type=\"application/json\">";
+    let start = html.find(open).expect("the data element") + open.len();
+    let end = start + html[start..].find("</script>").unwrap();
+    let embedded: Value = serde_json::from_str(&html[start..end]).unwrap();
+    assert_eq!(embedded, doc);
 }
 
 #[test]
@@ -337,12 +646,25 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
     let page = dir.join(".osiris/map.html");
     let out = ok(&dir, "person", &["map", "--html", page.to_str().unwrap()]);
     assert!(out.contains("wrote "), "{out}");
+    // That file is where `ris map` with no flags puts the page, and git
+    // ignores it: the checkout stays clean for the close below.
+    assert_eq!(git(&dir, &["status", "--porcelain"]), "", "ignored");
     let html = fs::read_to_string(&page).unwrap();
     let open = "<script id=\"map-data\" type=\"application/json\">";
     let start = html.find(open).expect("the data element") + open.len();
     let end = start + html[start..].find("</script>").unwrap();
     let embedded: Value = serde_json::from_str(&html[start..end]).unwrap();
     assert_eq!(embedded, doc);
+    // The diffs are in the embedded document, so the pane that shows
+    // one draws it from the page alone.
+    assert!(
+        embedded["diffs"]["src/wire.rs"]
+            .as_str()
+            .is_some_and(|d| d.contains("\n-// one\n+// two\n")),
+        "{embedded}"
+    );
+    assert!(html.contains("<aside id=\"pane\""), "the diff pane");
+    assert!(html.contains("doc.diffs"), "the pane reads the document");
     assert!(html.contains("forceSimulation"), "d3 is inlined");
     assert!(html.contains("d3js.org v7"), "the vendored build's banner");
     // No element that loads anything: every script is inline, and
@@ -362,7 +684,10 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
     // Closing names the command, and the closed phase's map is read
     // from its closing merge: the same files with the same numbers.
     let closed = ok(&dir, "person", &["phase", "close"]);
-    assert!(closed.contains("`ris map --html <file>`"), "{closed}");
+    assert!(
+        closed.contains("`ris map`, or `ris map --html <file>`"),
+        "{closed}"
+    );
     assert!(
         git(&dir, &["branch", "--list", "phase/P-1"]).is_empty(),
         "the phase branch is gone"
@@ -374,6 +699,7 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
     assert_eq!(after["base"], doc["base"]);
     assert_eq!(after["nodes"], doc["nodes"]);
     assert_eq!(after["edges"], doc["edges"]);
+    assert_eq!(after["diffs"], doc["diffs"]);
     assert_eq!(data(&dir, &["map", "P-1"]), after);
 
     // A phase that does not exist is said to be so.

@@ -107,12 +107,24 @@ enum Cmd {
     /// Return a claimed item to ready: its holder, or the person.
     Release { item: ItemId },
     /// The review queue, the open phase's items; with an item, record
-    /// that you reviewed it.
+    /// that you reviewed it; with --file, record how closely that
+    /// file's change should be read, for the map.
     Audit {
         item: Option<ItemId>,
         /// Every phase's items, not only the open phase's.
         #[arg(long, conflicts_with = "item")]
         all: bool,
+        /// A file the open phase changed, as `ris map` lists it: record
+        /// your judgement of its risk. Again for the same file, the
+        /// later one stands.
+        #[arg(long, value_name = "PATH", requires_all = ["risk", "why"], conflicts_with_all = ["item", "all"])]
+        file: Option<String>,
+        /// The level you judge the file's change to be.
+        #[arg(long, value_enum, value_name = "LEVEL", requires = "file")]
+        risk: Option<Level>,
+        /// One line of why.
+        #[arg(long, requires = "file")]
+        why: Option<String>,
     },
     /// Something only the person can do: raise one, or record it done.
     Action {
@@ -188,7 +200,8 @@ enum Cmd {
     /// The phase's change set as a map of the source code: every source
     /// file with the lines the phase added and removed, and how the
     /// files connect. With no phase named, the open phase, or the last
-    /// one closed.
+    /// one closed. Run by the person at a terminal with no flags, it
+    /// writes the page inside .osiris and opens it in the browser.
     Map {
         /// The phase, such as P-3.
         phase: Option<ris_core::ids::PhaseId>,
@@ -270,6 +283,11 @@ enum ItemCmd {
         item: ItemId,
         #[arg(long)]
         by: ItemId,
+    },
+    /// Bring an item nobody has started from the backlog into the open
+    /// phase, so a seat may claim it (the person's only).
+    BringIn {
+        item: ItemId,
     },
 }
 
@@ -420,6 +438,23 @@ struct DecisionRaise {
     /// Why the recommendation holds. Required for a mechanical decision.
     #[arg(long, default_value = "")]
     rationale: String,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Level {
+    Low,
+    Medium,
+    High,
+}
+
+impl From<Level> for ris_core::primitives::RiskLevel {
+    fn from(l: Level) -> Self {
+        match l {
+            Level::Low => Self::Low,
+            Level::Medium => Self::Medium,
+            Level::High => Self::High,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -874,7 +909,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 let (text, phase) = render::report_data(&l);
                 Ok(Output::of(
                     format!(
-                        "{text}\n{closing}\nthe change set as a map of the source: `ris map --html <file>`"
+                        "{text}\n{closing}\nthe change set as a map of the source: `ris map`, or `ris map --html <file>`"
                     ),
                     &schema::PhaseClosed {
                         report,
@@ -926,9 +961,20 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     },
                 ))
             }
+            ItemCmd::BringIn { item } => {
+                let (l, _) = p.run(&Command::BringIn {
+                    item: *item,
+                    actor: actor.clone(),
+                })?;
+                let phase = l.state.items[item].phase;
+                Ok(Output::of(
+                    format!("{item} brought into {phase}"),
+                    &schema::BroughtIn { item: *item, phase },
+                ))
+            }
         },
 
-        Cmd::Ready => Ok(render::ready(&p.load()?)),
+        Cmd::Ready => Ok(render::ready(&p.load()?, &actor)),
 
         Cmd::Claim { item } => {
             let agent = agent_only(&actor)?;
@@ -1272,7 +1318,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             ))
         }
 
-        Cmd::Audit { item: None, all } => {
+        Cmd::Audit {
+            item: None,
+            all,
+            file: None,
+            ..
+        } => {
             let l = p.load()?;
             let scope = render::Scope::of(&l, *all);
             Ok(render::audit_queue(&l, &actor, scope))
@@ -1483,14 +1534,94 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Summary { all } => {
             let closed = close_checked(&mut p, &actor)?;
-            Ok(render::summary(&p.load()?, &actor, *all, closed))
+            let l = p.load()?;
+            // A run whose process is gone stays in the log as running
+            // until `ris up` clears it; it is not counted here.
+            let running: Vec<AgentName> = l
+                .state
+                .running
+                .keys()
+                .filter(|seat| run_alive(&p, &seat.0))
+                .cloned()
+                .collect();
+            Ok(render::summary(&l, &actor, *all, closed, &running))
         }
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 
         Cmd::Map { phase, html } => {
-            let range = ris::map::range(&p, &p.load()?, *phase)?;
-            ris::map::output(ris::map::build(&p, &range)?, html.as_deref())
+            let l = p.load()?;
+            let range = ris::map::range(&p, &l, *phase)?;
+            let map = ris::map::build(&p, &l, &range)?;
+            let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
+            if let Some(file) = html {
+                ris::map::output(map, ris::map::Show::Write(file))
+            } else if ris::map::opens_page(&actor, cli.json, false, terminal) {
+                let file = p.root.join(ris::project::DIR).join(ris::map::PAGE_FILE);
+                ris::map::output(
+                    map,
+                    ris::map::Show::Open {
+                        file: &file,
+                        shown: &shown_beside(&p, &file),
+                        opener: &ris::map::Opener::platform(),
+                    },
+                )
+            } else {
+                ris::map::output(map, ris::map::Show::Text)
+            }
+        }
+
+        Cmd::Audit {
+            file: Some(path),
+            risk,
+            why,
+            ..
+        } => {
+            let (Some(level), Some(why)) = (risk, why) else {
+                return Err(CliError::Other(
+                    "a risk judgement needs a level and a reason\n  \
+                     next: `ris audit --file <path> --risk <low|medium|high> --why \"<one line>\"`"
+                        .into(),
+                ));
+            };
+            let by = agent_only(&actor)?;
+            let l = p.load()?;
+            let open = l
+                .state
+                .open_phase()
+                .ok_or(ris_core::refusal::Refusal::NoOpenPhase)?
+                .id;
+            // The judgement is of a change, so the file must be one the
+            // open phase changed and the map shows.
+            let range = ris::map::range(&p, &l, Some(open))?;
+            let map = ris::map::survey(&p, &l, &range)?;
+            if !map
+                .nodes
+                .iter()
+                .any(|n| n.path == *path && n.status != "unchanged")
+            {
+                return Err(CliError::Other(format!(
+                    "{open} has no changed file on the map at that path\n  \
+                     next: `ris map` lists the changed files; give the path as it is written there"
+                )));
+            }
+            let level: ris_core::primitives::RiskLevel = (*level).into();
+            p.run(&Command::JudgeRisk {
+                by: by.clone(),
+                level,
+                path: p.text("path", path)?,
+                why: p.text("why", why)?,
+            })?;
+            let word = ris::map::level_word(level);
+            Ok(Output::of(
+                format!("{path} judged {word} by {by}; `ris map` shows it to the person"),
+                &schema::Audit::Risk(schema::RiskRecorded {
+                    phase: open,
+                    path: path.clone(),
+                    level,
+                    seat: by.0,
+                }),
+            ))
         }
 
         Cmd::Status => Ok(ris::status::render(&p, &p.load()?)),
@@ -1941,6 +2072,17 @@ fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), Cl
     let Actor::Agent(name) = actor else {
         return Ok(());
     };
+    // A risk judgement is the reviewer's: a seat that writes the change
+    // does not grade it.
+    if let (Cmd::Audit { file: Some(_), .. }, Some(role)) = (command, role_of(&name.0))
+        && role != Role::Auditor
+    {
+        return refuse(
+            &name.0,
+            role,
+            "record a risk judgement: an auditor does, as it reviews the phase",
+        );
+    }
     match role_of(&name.0) {
         Some(Role::Auditor) => match command {
             Cmd::Claim { .. } => refuse(&name.0, Role::Auditor, "claim items"),
@@ -1976,7 +2118,11 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         | Cmd::Log { .. }
         | Cmd::Watch { .. }
         | Cmd::Scan { .. }
-        | Cmd::Audit { item: None, .. }
+        | Cmd::Audit {
+            item: None,
+            file: None,
+            ..
+        }
         | Cmd::Send { .. }
         | Cmd::Seat {
             action: SeatCmd::Fault { .. },
@@ -1997,6 +2143,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         Cmd::Decide { .. } => Some("take decisions"),
         Cmd::Release { .. } => Some("release items"),
         Cmd::Audit { item: Some(_), .. } => Some("record reviews"),
+        Cmd::Audit { file: Some(_), .. } => Some("record risk judgements"),
         Cmd::Check { .. } => Some("run checks"),
         _ => Some("change the harness"),
     }
@@ -2286,7 +2433,7 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
 /// exception is a branch with commits of its own behind a change to a
 /// rules file, which is rebased (`rebase_over_rules`). One line per
 /// seat that was behind.
-fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) -> Vec<String> {
+fn bring_up_to_phase(p: &mut Project, l: &ris::project::Loaded, named: &[String]) -> Vec<String> {
     let Some(phase) = ris::status::phase_branch(p, l) else {
         return Vec::new();
     };
@@ -2312,7 +2459,7 @@ fn bring_up_to_phase(p: &Project, l: &ris::project::Loaded, named: &[String]) ->
         if s.ahead.unwrap_or(1) > 0
             && let Some(rules) = rules_changed_since_fork(dir, &phase)
         {
-            lines.push(rebase_over_rules(dir, &s, &phase, behind, &rules));
+            lines.push(rebase_over_rules(p, dir, &s, &phase, behind, &rules));
             continue;
         }
         let held = if s.ahead.unwrap_or(1) > 0 {
@@ -2358,10 +2505,12 @@ fn rules_changed_since_fork(dir: &std::path::Path, phase: &str) -> Option<String
 /// branch that has changed the rules files `rules` since: the one
 /// rebase a seat cannot do for itself. Only when nothing can be lost
 /// and nothing is in the way: the worktree has no uncommitted or
-/// untracked files, the seat's agent is not running in it, and the
-/// commits apply without a conflict. The line says what was done, or
-/// why the seat was left alone.
+/// untracked files and the seat's agent is not running in it. Commits
+/// that conflict with the phase branch outside the rules files are
+/// handed back to the seat (`hand_back_conflict`), which resolves them
+/// itself. The line says what was done, or why the seat was left alone.
 fn rebase_over_rules(
+    p: &mut Project,
     dir: &std::path::Path,
     s: &ris::status::Seat,
     phase: &str,
@@ -2386,11 +2535,19 @@ fn rebase_over_rules(
         ));
     }
     if let RebaseOutlook::Conflict(files) = rebase_outlook(dir, phase) {
-        return left(format!(
-            "its commits conflict with {phase} (in {})\n  \
-             next: `git rebase {phase}` in its worktree and resolve, then `ris up {seat}`",
-            files.join(", ")
-        ));
+        // A conflict in a rules file is one the seat cannot resolve
+        // either: its sandbox refuses the file. That one is the person's.
+        if files
+            .iter()
+            .any(|f| ris::runner::RULES_FILES.contains(&f.as_str()))
+        {
+            return left(format!(
+                "its commits conflict with {phase} in a rules file (in {})\n  \
+                 next: `git rebase {phase}` in its worktree and resolve, then `ris up {seat}`",
+                files.join(", ")
+            ));
+        }
+        return hand_back_conflict(p, dir, s, phase, &files, &left);
     }
     if let Some(why) = git_identity_missing(dir, &format!("the rebase onto {phase}")) {
         return left(format!("{why}, then `ris up {seat}`"));
@@ -2406,6 +2563,107 @@ fn rebase_over_rules(
                 e.lines().next().unwrap_or("no reason given")
             ))
         }
+    }
+}
+
+/// The part of a conflicting rebase over a rules-file change that only
+/// the person's `ris up` can do. The seat's commits are kept on a branch
+/// named for the seat and its head, its worktree is reset to the phase
+/// branch (which writes the rules files its sandbox refuses), and the
+/// seat is sent a handoff naming the cherry-pick that brings its commits
+/// back, so it resolves the conflict in its own worktree, where no rules
+/// file is touched. The worktree is clean and its agent stopped, so the
+/// kept branch holds everything the reset moves past.
+fn hand_back_conflict(
+    p: &mut Project,
+    dir: &std::path::Path,
+    s: &ris::status::Seat,
+    phase: &str,
+    files: &[String],
+    left: &dyn Fn(String) -> String,
+) -> String {
+    let seat = &s.seat;
+    let in_files = files.join(", ");
+    let fallback = |why: String| {
+        left(format!(
+            "its commits conflict with {phase} (in {in_files}), and {why}\n  \
+             next: `git rebase {phase}` in its worktree and resolve, then `ris up {seat}`"
+        ))
+    };
+    let (Ok(head), Ok(fork)) = (
+        git(dir, &["rev-parse", "HEAD"]),
+        git(dir, &["merge-base", "HEAD", phase]),
+    ) else {
+        return fallback("its commits could not be read".to_owned());
+    };
+    let short = |c: &str| c.chars().take(12).collect::<String>();
+    let kept = format!("{seat}-kept-{}", short(&head));
+    // The name carries the head, so a branch already there under it from
+    // an earlier run holds these same commits.
+    let made = git(dir, &["branch", &kept, &head]).is_ok()
+        || git(dir, &["rev-parse", &format!("refs/heads/{kept}")]).ok() == Some(head.clone());
+    if !made {
+        return fallback(format!("the branch {kept} could not be made to keep them"));
+    }
+    if let Err(e) = git(dir, &["reset", "--quiet", "--hard", phase]) {
+        return fallback(format!(
+            "the reset to {phase} failed ({}); its commits are on {kept}",
+            e.lines().next().unwrap_or("no reason given")
+        ));
+    }
+    // The item the commits are for: the seat's claim, or else the Item
+    // trailer of its head commit.
+    let item = s
+        .claim
+        .clone()
+        .or_else(|| {
+            git(
+                dir,
+                &[
+                    "log",
+                    "-1",
+                    "--format=%(trailers:key=Item,valueonly)",
+                    &head,
+                ],
+            )
+            .ok()
+        })
+        .and_then(|i| i.trim().parse::<ItemId>().ok());
+    let merge = match item {
+        Some(i) => format!("`ris merge {i}`"),
+        None => "`ris merge` the item".to_owned(),
+    };
+    let range = format!("{}..{kept}", short(&fork));
+    let body = format!(
+        "ris up moved your worktree to {phase}: your commits conflict with it (in {in_files}), \
+         and it changed a rules file your sandbox cannot write, so you could not rebase. Your \
+         commits are kept on the branch {kept}. Next, in your worktree: `git cherry-pick {range}`, \
+         resolve the conflict in {in_files}, `git cherry-pick --continue`, keep one commit, \
+         then {merge}."
+    );
+    let line = format!(
+        "{seat}: moved to {phase}; its commits conflict with it (in {in_files}) and are kept on \
+         {kept}; the seat cherry-picks them ({range}) and resolves the conflict itself"
+    );
+    let sent = p
+        .load()
+        .map(|l| item.filter(|i| l.state.items.contains_key(i)))
+        .and_then(|about| {
+            let body = p.text("body", &body)?;
+            p.run(&Command::MessageSend {
+                from: Actor::Person,
+                to: AgentName(seat.clone()),
+                kind: MessageKind::Handoff,
+                about,
+                body,
+            })
+        });
+    match sent {
+        Ok(_) => format!("{line}; told in its inbox"),
+        Err(e) => format!(
+            "{line}; the message to it failed ({})\n  next: tell {seat}: {body}",
+            e.to_string().lines().next().unwrap_or("no reason given")
+        ),
     }
 }
 
@@ -3343,39 +3601,5 @@ fn open_phase_branch(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use clap::CommandFactory;
-
-    /// Every command a person or an agent can run, as its subcommand
-    /// path: `ready`, `phase open`.
-    fn leaves(command: &clap::Command, path: &[&str], out: &mut BTreeSet<String>) {
-        for sub in command.get_subcommands() {
-            let mut here = path.to_vec();
-            here.push(sub.get_name());
-            if sub.has_subcommands() {
-                leaves(sub, &here, out);
-            } else {
-                out.insert(here.join(" "));
-            }
-        }
-    }
-
-    /// A command added without a type for its `--json` data has no
-    /// place in the schema; a schema entry for a command that is gone
-    /// describes nothing. Either fails here.
-    #[test]
-    fn the_schema_has_the_data_of_every_command_and_of_no_other() {
-        let mut commands = BTreeSet::new();
-        leaves(&super::Cli::command(), &[], &mut commands);
-        let mut generator = schemars::generate::SchemaSettings::draft2020_12()
-            .for_serialize()
-            .into_generator();
-        let described: BTreeSet<String> = ris::schema::commands(&mut generator)
-            .into_iter()
-            .map(|(name, _)| name.to_owned())
-            .collect();
-        assert_eq!(described, commands);
-    }
-}
+#[path = "tests/main.rs"]
+mod tests;

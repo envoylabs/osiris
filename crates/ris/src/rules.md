@@ -44,6 +44,13 @@ ris inbox                       # messages to you; read between items
   evidence under `.osiris/evidence/`, named in the message. Fix and run
   again.
 - If you cannot finish an item, `ris release I-7` returns it to ready.
+- You work only the open phase's items. `ris ready` shows you nothing
+  else, and `ris claim` refuses an item in the backlog; the person
+  brings one into the phase with `ris item bring-in I-7`.
+- A question that stops you goes into `ris`, never only into your
+  output: raise it as a decision about the item (see Decisions), set
+  the item aside, and take another. Nobody reads a question left in a
+  session's output.
 
 ## Working beside other builders
 
@@ -125,6 +132,14 @@ scan` runs the same scan over the tree before you commit. A test that
 needs a planted secret or path assembles it at runtime from pieces,
 with a comment saying why.
 
+## Tests
+
+Tests live in their own files, never inline in a source file. Where
+the language keeps unit tests beside the code, a test module goes in a
+file under a `tests` directory beside the source it tests, declared
+from the source file by one line, so a source file holds only behaviour
+and its diff shows only behaviour.
+
 ## Messages
 
 Typed and targeted; no broadcasts.
@@ -149,6 +164,22 @@ that should have been substantive. Findings go to the author with
 author disputes is raised as a substantive decision. `ris audit I-n`
 records the review. Merges never wait for it: findings are fixed
 forward.
+
+As it reads the phase's diffs, an auditor records how closely the
+person should read each changed file, for the map (`ris map`):
+
+```
+ris audit --file src/store.rs --risk high --why "writes the store with no lock"
+```
+
+The level is `low`, `medium` or `high`, the reason one line, and the
+path as `ris map` lists it. `ris` already computes a level for every
+changed file from what it can count (the file touches the outside, is
+a contract, the size of its diff, how many files depend on it), and
+the map shows it where no judgement is recorded. Record one where
+reading the change says otherwise, up or down, and for every file the
+person should look at first; recorded again for the same file, the
+later one stands. Only an auditor records one.
 
 ## An advisor's seat
 

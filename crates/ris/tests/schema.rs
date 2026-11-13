@@ -356,6 +356,48 @@ fn every_command_s_real_output_fits_the_committed_schema() {
     let queue = r.ok(wren, &["audit"]);
     assert_eq!(queue["queue"][0]["id"], "I-1", "{queue}");
     r.ok(wren, &["audit", "I-1"]);
+    // A risk judgement is of a file the phase changed. With phase
+    // branches off the work is on the main line itself, which the map
+    // compares with nothing, so the change judged here is made on a
+    // branch beside it and dropped again.
+    r.git(&["switch", "-q", "-c", "side"]);
+    fs::write(
+        r.repo.join("src/lib.rs"),
+        "pub fn read() -> bool {\n    false\n}\n",
+    )
+    .unwrap();
+    r.git(&["commit", "-q", "-a", "-m", "wip"]);
+    r.fails(
+        &r.repo,
+        heron,
+        &[
+            "audit",
+            "--file",
+            "src/lib.rs",
+            "--risk",
+            "high",
+            "--why",
+            "mine",
+        ],
+        "role_forbids",
+    );
+    let judged = r.ok(
+        wren,
+        &[
+            "audit",
+            "--file",
+            "src/lib.rs",
+            "--risk",
+            "high",
+            "--why",
+            "drops the read",
+        ],
+    );
+    assert_eq!(judged["level"], "high", "{judged}");
+    let map = r.ok(None, &["map"]);
+    assert_eq!(map["nodes"][0]["risk"]["judged"]["seat"], "wren", "{map}");
+    r.git(&["switch", "-q", "main"]);
+    r.git(&["branch", "-q", "-D", "side"]);
     r.ok(None, &["summary"]);
     r.ok(None, &["summary", "--all"]);
     r.ok(heron, &["summary"]);
@@ -432,6 +474,12 @@ fn every_command_s_real_output_fits_the_committed_schema() {
     r.ok(None, &["export", r.base.join("export").to_str().unwrap()]);
     r.ok(None, &["log"]);
     r.ok(None, &["watch", "--from", "1", "--once"]);
+
+    // A next phase, and an item from the backlog brought into it.
+    r.ok(None, &["phase", "open", "the next"]);
+    let ready = r.ok(None, &["ready"]);
+    let backlog = ready["ready"][0]["id"].as_str().expect("a backlog item");
+    r.ok(None, &["item", "bring-in", backlog]);
 
     // Nothing was left out: every command the schema has data for was
     // run and validated here.

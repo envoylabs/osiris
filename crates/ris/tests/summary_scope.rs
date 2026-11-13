@@ -109,7 +109,7 @@ fn summary_shows_the_open_phase_and_counts_the_rest() {
     // P-2 with no item yet says so and how to add one.
     ok(&dir, "person", &["phase", "open", "second"]);
     let text = ok(&dir, "person", &["summary"]);
-    assert!(text.starts_with("P-2 open: second\n"), "{text}");
+    assert!(text.contains("\nP-2 open: second\n"), "{text}");
     assert!(text.contains("no items in this phase yet"), "{text}");
 
     // P-2 has its own item; the summary shows only it.
@@ -119,7 +119,10 @@ fn summary_shows_the_open_phase_and_counts_the_rest() {
     assert!(!text.contains("an old question"), "{text}");
     assert!(!text.contains("left over"), "{text}");
     assert!(
-        text.starts_with("P-2 open: second\nitems: 1 ready\n\nI-3  ready  this phase's work\n--\n"),
+        text.split_once('\n')
+            .unwrap()
+            .1
+            .starts_with("P-2 open: second\nitems: 1 ready\n\nI-3  ready  this phase's work\n--\n"),
         "{text}"
     );
     // The footer counts what is left out and names where it is.
@@ -283,7 +286,9 @@ fn a_merged_item_stays_on_the_picture_with_its_link() {
     let text = ok(&dir, "person", &["summary"]);
     assert!(
         text.starts_with(
-            "P-1 open: merged\nitems: 1 claimed, 1 merged\n\n\
+            "1 of 2 items merged; 1 in progress (heron on I-2); 0 not started; \
+             no seat is running: start them with `ris up`\n\
+             P-1 open: merged\nitems: 1 claimed, 1 merged\n\n\
              I-1  merged  first\n\
              └── I-2  claimed (heron)  second\n--\n"
         ),

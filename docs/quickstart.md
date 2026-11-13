@@ -134,12 +134,23 @@ ris item add "a task"                  # held to every check; --check names some
 ris item add "a review" --no-checks    # done on attached evidence instead
 ris import backlog.toml --dry-run      # a backlog file: validate,
 ris import backlog.toml                # then import
+ris item bring-in I-7                  # an unstarted item from the backlog, into this phase
 ```
 
 Every phase gets an item to bring the docs up to date, and `ris phase
 close` waits for it (turn it off with `docs_item = false`). The
 osiris-onboard skill (`skills/osiris-onboard`) drafts the import file
 from an existing project's backlog.
+
+Seats work only the open phase's items. An item added while a phase is
+open is that phase's; one left unmerged when its phase closed is in the
+backlog. A seat's `ris ready` shows the open phase's items and nothing
+else, and `ris claim` refuses a backlog item, naming the command that
+brings it in. Your own `ris ready` lists the open phase's items first
+and the backlog after them, and `ris item bring-in I-n`, which only you
+may run, moves an item nobody has started into the open phase. The item
+keeps the phase it was added in for that phase's report, so a closed
+phase's tally does not change when one of its items moves.
 
 ## 4. Step two: bring it up
 
@@ -189,8 +200,14 @@ One case is rebased instead. A seat can never write a rules file
 whose branch already holds a commit cannot rebase over the change: its
 `ris merge` is refused before its worktree is touched, and names `ris
 up <seat>`. That `ris up` rebases the seat's branch onto the phase
-branch, keeping its commits, provided its worktree is clean, its agent
-has stopped and nothing conflicts; otherwise it says what is in the way.
+branch, keeping its commits, provided its worktree is clean and its
+agent has stopped; otherwise it says what is in the way. When the
+seat's commits conflict with the phase branch outside the rules files,
+`ris up` does the part only it can: it keeps the commits on a branch
+named `<seat>-kept-<commit>`, moves the seat's worktree to the phase
+branch, and sends the seat a handoff naming the `git cherry-pick` that
+brings the commits back, so the seat resolves the conflict in its own
+worktree. A conflict in a rules file itself is left for the person.
 
 An unattended agent may do only what its role allows: reading and
 `ris`; for a writing seat, edits, `git` and the project's check
@@ -221,7 +238,7 @@ tries it again.
 ```sh
 ris summary                            # the phase in one picture: its items and what they wait on
 ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
-ris map --html map.html                # the phase's change set drawn over the source files, as one page
+ris map                                # the phase's change set drawn over the source files, as one page in the browser
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
@@ -235,7 +252,17 @@ records it as `ris decide D-n --other "..."` does. Taking one returns the items 
 aside to ready: a seat still running takes them, and `ris up` starts
 the seats that have stopped.
 
-The summary is one picture of the open phase and nothing else: its
+The summary opens with the phase's state in one line, for a glance:
+that all of its items are merged and it is ready to close with `ris
+phase close`, or how many of the phase's items are merged, how many are in progress and
+with which seats, how many are set aside and how many not started,
+then whatever waits on you with the command for it (open decisions:
+`ris decide`; a seat's setup fault: `ris status`, then `ris up
+<seat>`), and, when items remain and no seat is running, that `ris up`
+starts them. Superseded items are not counted.
+
+Below that line the summary is one picture of the open phase and
+nothing else: its
 goal, its items counted by state, and a drawing of the items, each with
 its state, under what it waits on. An item the phase waits on from an
 earlier phase is drawn too, marked with that phase, and so is every
@@ -270,10 +297,25 @@ the phase changed and the lines added and removed in them. `tests`
 names them, and by default it is every file under a `tests` directory.
 A node is larger the more the phase changed it, so the eye lands first
 on the large changes, and the ring picks out those at the edges of the
-system. `ris map --html map.html` writes one page that
-needs no network (d3 is inlined): hover a file for its path and
-numbers, drag it, scroll to zoom. `ris map` alone lists the changed
-files, and `ris map --json` prints the graph document the page draws
+system. An amber diamond beside a changed file is its risk: hollow for
+medium, filled for high, none for low. `ris` computes the level from
+what it can count (the file touches the outside, is a contract, the
+size of its diff, how many files depend on it), and an auditor seat
+records its own judgement as it reviews, with one line of why
+(`ris audit --file <path> --risk <level> --why "..."`); the judgement
+stands where there is one, and hovering shows both and the reasons.
+`ris map`, run by you at a terminal, writes one page to
+`.osiris/map.html` (which git ignores), replacing the last one, opens
+it in your browser and prints where it is; if the browser does not
+open, it says so and you open the file yourself. The page needs no
+network (d3 is inlined): hover a file for its path and numbers, drag
+it, scroll to zoom, and click it to read its diff for the phase in a
+pane beside the graph (click another file to swap it, Esc or the
+pane's button to close it). `ris map` also lists the changed files
+with their risk, the highest first; that list is all a seat gets, and
+all you get when the output is piped, since nothing is opened then.
+`ris map --html map.html` writes the page to a file you name and opens
+nothing, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the
 phase just closed, and `ris map P-n` an earlier one.
 
@@ -306,8 +348,8 @@ ris phase close                        # merges phase/P-1 into main
 ```
 
 `ris phase close` merges what is merged into the main line and carries
-the rest over: an item not merged stays open and is offered in the next
-phase. The report it prints says how many items the phase planned, how
+the rest over: an item not merged stays open, in the backlog, until you
+bring it into a later phase with `ris item bring-in`. The report it prints says how many items the phase planned, how
 many were merged while it was open, and how many carry over; `ris
 report` shows the same line for the open phase, as it would read if
 closed now.
@@ -323,7 +365,7 @@ is refused before anything is touched and names what to run (`git
 config user.name` and `git config user.email`), and the phase or the
 item stays as it was.
 
-After the close, `ris map` and `ris map --html map.html` show the
+After the close, `ris map` and `ris map --html map.html` still show the
 phase just closed, and `ris report` its report.
 
 `ris show <id>` prints any item, decision, action, phase or message in

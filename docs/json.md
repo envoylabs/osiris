@@ -78,7 +78,19 @@ line of output per envelope, and ends once no seat is running; without
   attached to any of those, whatever phase raised them; `unlinked`
   counts the nodes with no edge, which are listed all the same.
   `carried_over` counts the unmerged `items` and open `decisions` from
-  earlier phases that are left out. `all` says whether `--all` was
+  earlier phases that are left out. `phase_state` is where the open
+  phase stands, `null` with no phase open: `line` (the one line the
+  text output opens with), `items` (the phase's items, superseded ones
+  left out), `merged`, `in_progress` (claimed, or done and not yet
+  merged; each an `item` and the `seat` on it), `set_aside` (the
+  blocked items' ids), `not_started`, `open_decisions` (the phase's
+  open substantive decisions, which wait on the person), `faults` (the
+  seats with a setup fault), `running` (the seats whose agent is
+  running; a run whose process is gone is not counted) and
+  `ready_to_close` (every item merged, and at least one). `merged`,
+  `in_progress`, `set_aside` and `not_started` add up to `items`. It
+  is the open phase's whether or not `--all` is given, though only the
+  default text output shows the line. `all` says whether `--all` was
   given, in which case nothing is left out and the `graph` is the work
   in motion in every phase: open decisions, open actions and unmerged
   items, where only nodes with an edge are listed.
@@ -87,11 +99,27 @@ line of output per envelope, and ends once no seat is running; without
   was open, carried-in items included) and `carried_over` (items, from
   any phase up to it, neither merged nor superseded; for an open phase,
   what would carry over if it closed now).
+- `ris ready`: for a seat, the open phase's items it may claim and no
+  other. For the person, those first and then the backlog: the
+  unmerged items of earlier phases, which no seat may claim until the
+  person brings them in.
+- `ris item bring-in I-n`, the person's only: `item` and the open
+  `phase` it is now in. It writes the event `item_scoped` (with `item`
+  and `phase`). An item's current phase is the phase of the last of
+  its `item_added` and `item_scoped` events; the phase it was added in
+  does not change, and a phase's `tally` counts by that. A claim of an
+  item outside the open phase is refused with
+  `{"not_in_open_phase": {"item", "phase"}}`, and an agent's bring-in
+  with `{"bring_in_is_for_the_person": "I-n"}`.
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
 - `ris audit`: `queue`, the open phase's done and merged items the
   caller has still to review, each with its `id`, `phase`, `goal`,
-  `state` and `checks`; with `--all`, earlier phases' too.
+  `state` and `checks`; with `--all`, earlier phases' too. With an
+  item, the review recorded: `item` and `by`. With `--file <path>
+  --risk <low|medium|high> --why "<one line>"`, an auditor's risk
+  judgement of a file the open phase changed, recorded: `phase`,
+  `path`, `level` and `seat`. The map document carries it (below).
 - `ris status`: `seats`, each with its role, place, branch, claim,
   `paused`, `running` and `activity`: for a running seat with a run
   file, `last` (what it last ran or said, or null), `quiet_seconds`
@@ -120,8 +148,9 @@ line of output per envelope, and ends once no seat is running; without
   its text.
 - `ris watch`: every event as it is appended, including `run_started`
   and `run_stopped` when the runner starts and stops a seat's agent,
-  and `setup_fault` (with `seat`) when a seat reports a fault in its
-  setup.
+  `setup_fault` (with `seat`) when a seat reports a fault in its
+  setup, and `risk_judged` (with `phase`, `seat` and `level`) when an
+  auditor records a risk judgement.
 
 `crates/ris/tests/json_contract.rs` pins the envelope and the top-level
 keys of the most-read commands' `data`.
@@ -188,7 +217,11 @@ document. The document is the contract and holds everything there is
 to draw: `ris map --html <file>` writes a page that embeds the same
 document, as JSON in the element `<script id="map-data"
 type="application/json">`, and draws nothing that is not in it, so any
-other renderer draws the same map from either source. It follows the
+other renderer draws the same map from either source. `ris map` with
+no flags, run by the person at a terminal, writes that page to
+`.osiris/map.html` and opens it in the browser; with `--json`, run by
+a seat, or with output that is not a terminal, nothing is written or
+opened. It follows the
 rule of the rest of format 1: keys are added, never removed, renamed
 or reshaped.
 
@@ -203,11 +236,21 @@ or reshaped.
   "nodes": [
     {"path": "src/store.rs", "language": "rust", "status": "modified",
      "added": 12, "removed": 3, "external": ["filesystem"],
-     "contract": false, "weight": 5.77}
+     "contract": false, "weight": 5.77, "dependents": 4,
+     "risk": {
+       "level": "high",
+       "computed": {"level": "medium", "signals": [
+         {"signal": "outside", "reason": "touches the outside: filesystem"},
+         {"signal": "dependents", "reason": "4 other files depend on it"}]},
+       "judged": {"level": "high", "why": "writes the store with no lock", "seat": "wren"}
+     }}
   ],
   "edges": [
     {"from": "src/store.rs", "to": "src/wire.rs", "kind": "use"}
-  ]
+  ],
+  "diffs": {
+    "src/store.rs": "diff --git a/src/store.rs b/src/store.rs\nindex ...\n--- a/src/store.rs\n+++ b/src/store.rs\n@@ -1,4 +1,5 @@\n use std::fs;\n+use std::io;\n ..."
+  }
 }
 ```
 
@@ -244,6 +287,27 @@ or reshaped.
   scale) and is 2 higher for a file that is external or a contract. A
   renderer may size by it; the exact formula is not part of the
   contract.
+- `dependents` is how many other nodes have an edge to this one: the
+  files that name it, each counted once whatever kinds of line do.
+- `risk` says how closely a changed file should be read, so the person
+  sees where to look first; it is null for an `unchanged` node. It has
+  two layers. `computed` is what `ris` works out with no model: a
+  `level` of `low`, `medium` or `high`, and the `signals` that count
+  toward it, each with its name in `signal` and the same in words, with
+  its numbers, in `reason`. The signals are `outside` (the file is
+  `external`), `contract`, `diff` (the lines added plus removed are 50
+  or more, and count double from 200) and `dependents` (3 or more, and
+  double from 8), in that order; `signals` is empty when none counts.
+  A contract counts double and touching the outside once; two points
+  are `medium` and four `high`, so one mild signal alone stays `low`
+  and `high` takes signals together. The thresholds are not part of
+  the contract; the level, and the reasons given for it, are. `judged`
+  is what an auditor recorded for the file in this phase with
+  `ris audit --file`: its `level`, one line of `why`, and the `seat`;
+  the latest, if more than one was recorded, and null when none was.
+  `risk.level` is the level that stands, and the one to draw: the
+  judgement's where there is one, and the computed one otherwise. A
+  closed phase's map keeps its judgements.
 - `edges` are how the code connects, each from the file that names the
   other, sorted. `kind` is the kind of line that makes the edge. For
   Rust: `mod` (a `mod name;` line, to the module's file) and `use` (a
@@ -258,5 +322,19 @@ or reshaped.
   left off the map in the same terms: all of them (`files`), those the
   phase changed (`changed`), and the lines `added` and `removed` in
   them. A page shows it as one line of text.
+
+- `diffs` holds each changed node's unified diff between `base` and
+  `tip`, by `path`: the text `git diff` writes for that one file, with
+  its file header (`diff --git`, `index`, `---`, `+++`), then each hunk
+  header (`@@ -old,count +new,count @@`) and its lines, marked in the
+  first column as added (`+`), removed (`-`) or context (a space),
+  with three lines of context, the prefixes `a/` and `b/`, and renames
+  not followed. An added file's old side is `/dev/null`, and a deleted
+  file's new side. A node that is `unchanged` has no entry, and
+  neither has a file that is not a node; the object is empty when
+  `base` is null. A binary file's entry has the header and git's one
+  line saying the files differ, and no hunk. Bytes that are not UTF-8
+  are replaced. The page draws a clicked node's entry in a pane beside
+  the graph, so another renderer can draw the same pane.
 
 `crates/ris/tests/map.rs` pins these keys.
