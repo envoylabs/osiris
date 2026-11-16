@@ -135,6 +135,8 @@ ris item add "a review" --no-checks    # done on attached evidence instead
 ris import backlog.toml --dry-run      # a backlog file: validate,
 ris import backlog.toml                # then import
 ris item bring-in I-7                  # an unstarted item from the backlog, into this phase
+ris item add "later" --phase P-2       # planned for a phase not open yet
+ris item phase I-7 P-2                 # the same for an item there already; `none` untags it
 ```
 
 Every phase gets an item to bring the docs up to date, and `ris phase
@@ -142,15 +144,26 @@ close` waits for it (turn it off with `docs_item = false`). The
 osiris-onboard skill (`skills/osiris-onboard`) drafts the import file
 from an existing project's backlog.
 
-Seats work only the open phase's items. An item added while a phase is
-open is that phase's; one left unmerged when its phase closed is in the
-backlog. A seat's `ris ready` shows the open phase's items and nothing
-else, and `ris claim` refuses a backlog item, naming the command that
-brings it in. Your own `ris ready` lists the open phase's items first
-and the backlog after them, and `ris item bring-in I-n`, which only you
-may run, moves an item nobody has started into the open phase. The item
-keeps the phase it was added in for that phase's report, so a closed
-phase's tally does not change when one of its items moves.
+Seats work only the open phase's items. An item's phase is a tag: the
+open phase, a later one by its number, or none, which is the backlog.
+An item added while a phase is open is that phase's unless `--phase`
+says otherwise; one added with no phase open has none; and one left
+unmerged when its phase closes loses its tag. A seat's `ris ready`
+shows the open phase's items and nothing else, and `ris claim` refuses
+any other, naming the command that brings it in. Your own `ris ready`
+lists the open phase's items first and the rest after them.
+
+Planning needs no open phase. `ris item add --phase P-n` and `ris item
+phase I-n <P-n|none>` tag an item nobody has started, and `ris
+summary` with no phase open lists what is tagged for the next one.
+`ris phase open` opens with those items in it and lists them; with
+`--move-on` it moves their tags to the phase after instead. Tagging
+for a later phase is yours and an advisor seat's; a lead, builder or
+auditor adds only to the open phase or to the backlog, and moving an
+item into or out of the open phase (`ris item bring-in`, or `ris item
+phase`) is yours alone. The item keeps the phase it was added in for
+that phase's report, so a phase's tally counts the items added while
+it was open and does not change when one of them is tagged elsewhere.
 
 ## 4. Step two: bring it up
 
@@ -277,7 +290,8 @@ out and names the command that shows it: `ris decide` for the open
 decisions, `ris report` for the report, the decisions taken, failed
 checks and hashes, and `ris summary --all` for the long view of every
 phase (the decision queue, all work in motion, the report and what is
-ready). With no phase open, the summary says so and how to open one.
+ready). With no phase open, the summary says so and how to open one,
+and lists the items tagged for the phase that opens next.
 
 Where the summary draws the phase's items, `ris map` draws what the
 phase did to the code. Its nodes are the repository's source files,
@@ -357,8 +371,10 @@ ris phase close                        # merges phase/P-1 into main
 ```
 
 `ris phase close` merges what is merged into the main line and carries
-the rest over: an item not merged stays open, in the backlog, until you
-bring it into a later phase with `ris item bring-in`. The report it prints says how many items the phase planned, how
+the rest over: an item not merged loses its phase tag and stays open,
+in the backlog, until you tag it for a later phase with `ris item
+phase` or bring it into the open one with `ris item bring-in`. The
+report it prints says how many items the phase planned, how
 many were merged while it was open, and how many carry over; `ris
 report` shows the same line for the open phase, as it would read if
 closed now.

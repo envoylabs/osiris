@@ -238,8 +238,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     )
     .unwrap();
 
-    // Nothing without a phase.
-    sb.refused(None, &["item", "add", "too early"]);
+    // No phase to close before one is open.
+    sb.refused(None, &["phase", "close"]);
     sb.ok(None, &["phase", "open", "first slice"]);
     sb.refused(None, &["phase", "open", "second at once"]);
 

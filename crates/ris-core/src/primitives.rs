@@ -43,12 +43,15 @@ pub enum PhaseState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub id: ItemId,
-    /// The phase it is in now: the one it was added in, or the last one
-    /// the person brought it into.
-    pub phase: PhaseId,
-    /// The phase it was added in, which never changes. A phase's tally
-    /// counts its planned and carried-over items by this.
-    pub added_in: PhaseId,
+    /// Its phase tag: the phase it is in, or is planned for when that
+    /// phase is not open yet, or none, which is the backlog. An item
+    /// left unsettled by a log written before a close cleared tags
+    /// keeps a closed phase here, and is in the backlog as well.
+    pub phase: Option<PhaseId>,
+    /// The phase that was open when it was added, none when no phase
+    /// was; it never changes. A phase's tally counts its planned and
+    /// carried-over items by this.
+    pub added_in: Option<PhaseId>,
     /// The event that added it; its text part holds `goal`.
     pub at: u64,
     /// The checks that must pass for the item to be done, by name.

@@ -45,10 +45,19 @@ fn run(
 
 fn scripted(store: &mut SqliteStore) {
     let mut s = salts();
-    run(store, &Command::PhaseOpen { goal: t("slice") }, &mut s).unwrap();
+    run(
+        store,
+        &Command::PhaseOpen {
+            goal: t("slice"),
+            move_on: false,
+        },
+        &mut s,
+    )
+    .unwrap();
     run(
         store,
         &Command::ItemAdd {
+            tag: ris_core::command::Tag::Open,
             goal: t("first"),
             checks: vec![CheckId("test".into())],
             depends_on: vec![],
@@ -111,10 +120,19 @@ fn concurrent_claimers_from_separate_connections_get_one_winner() {
     {
         let mut store = SqliteStore::open(&path).unwrap();
         let mut s = salts();
-        run(&mut store, &Command::PhaseOpen { goal: t("slice") }, &mut s).unwrap();
+        run(
+            &mut store,
+            &Command::PhaseOpen {
+                goal: t("slice"),
+                move_on: false,
+            },
+            &mut s,
+        )
+        .unwrap();
         run(
             &mut store,
             &Command::ItemAdd {
+                tag: ris_core::command::Tag::Open,
                 goal: t("contested"),
                 checks: vec![],
                 depends_on: vec![],
@@ -291,6 +309,7 @@ fn redacted_text_round_trips_as_null() {
         &state,
         &Command::PhaseOpen {
             goal: t("secretish"),
+            move_on: false,
         },
     )
     .unwrap();
@@ -332,9 +351,13 @@ fn append_path_has_headroom() {
     let started = std::time::Instant::now();
     for i in 0..n {
         let c = if i == 0 {
-            Command::PhaseOpen { goal: t("bench") }
+            Command::PhaseOpen {
+                goal: t("bench"),
+                move_on: false,
+            }
         } else {
             Command::ItemAdd {
+                tag: ris_core::command::Tag::Open,
                 goal: t("an item with a goal of ordinary length, say this long"),
                 checks: vec![CheckId("test".into())],
                 depends_on: vec![],

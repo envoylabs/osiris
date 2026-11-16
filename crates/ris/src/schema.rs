@@ -39,7 +39,9 @@ pub const PATH: &str = "docs/json.schema.json";
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Item {
     pub id: ItemId,
-    pub phase: PhaseId,
+    /// Its phase tag: the phase it is in or is planned for; null when
+    /// it has none, which is the backlog.
+    pub phase: Option<PhaseId>,
     pub goal: String,
     /// `ready`, `claimed`, `blocked`, `done`, `merged` or `superseded`.
     pub state: &'static str,
@@ -282,6 +284,9 @@ pub struct Summary {
     /// The open phase's state in one line and as counts; `null` with
     /// no phase open.
     pub phase_state: Option<PhaseState>,
+    /// With no phase open, the phase the next `ris phase open` opens
+    /// and the items tagged for it; `null` with a phase open.
+    pub next_phase: Option<NextPhase>,
     pub carried_over: CarriedOver,
     /// What running the person's action checks did.
     pub checks: Vec<String>,
@@ -317,6 +322,13 @@ pub struct PhaseState {
 pub struct InProgress {
     pub item: ItemId,
     pub seat: Option<AgentName>,
+}
+
+/// The phase that opens next, and what is tagged for it.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct NextPhase {
+    pub phase: PhaseId,
+    pub items: Vec<Item>,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -428,6 +440,22 @@ pub struct BriefDecision {
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ItemRef {
     pub item: ItemId,
+}
+
+/// `ris item add`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ItemAdded {
+    pub item: ItemId,
+    /// The phase it is tagged for; null when it has none.
+    pub phase: Option<PhaseId>,
+}
+
+/// `ris item phase`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ItemTagged {
+    pub item: ItemId,
+    /// The phase it is now tagged for; null when it has none.
+    pub phase: Option<PhaseId>,
 }
 
 /// `ris item supersede`.
@@ -626,6 +654,11 @@ pub struct PhaseOpened {
     pub docs_item: Option<ItemId>,
     /// What the writing seats would lack to run the checks.
     pub preflight: Vec<crate::preflight::Missing>,
+    /// The items that were tagged for the phase, which it opened with.
+    pub brought_in: Vec<ItemId>,
+    /// The items that were tagged for the phase and whose tags were
+    /// moved on to the phase after it instead.
+    pub moved_on: Vec<ItemId>,
 }
 
 /// `ris phase close`.
@@ -837,7 +870,8 @@ pub fn commands(g: &mut SchemaGenerator) -> Vec<(&'static str, Schema)> {
         ("seat fault", g.subschema_for::<SeatRef>()),
         ("phase open", g.subschema_for::<PhaseOpened>()),
         ("phase close", g.subschema_for::<PhaseClosed>()),
-        ("item add", g.subschema_for::<ItemRef>()),
+        ("item add", g.subschema_for::<ItemAdded>()),
+        ("item phase", g.subschema_for::<ItemTagged>()),
         ("item supersede", g.subschema_for::<Superseded>()),
         ("item bring-in", g.subschema_for::<BroughtIn>()),
         ("ready", g.subschema_for::<Ready>()),

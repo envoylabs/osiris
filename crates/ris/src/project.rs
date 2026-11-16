@@ -65,6 +65,11 @@ pub fn exclude_locally(root: &Path, lines: &[&str]) -> Result<(), CliError> {
     Ok(())
 }
 
+/// What a seat that is not an advisor is refused when it tags an item
+/// for a phase, as [`CliError::RoleForbids`] words it.
+pub const PLANS_PHASES: &str =
+    "plan phases: tagging an item for a phase is the person's and the advisor's";
+
 /// Why the shell could not do what was asked.
 #[derive(Debug)]
 pub enum CliError {
@@ -82,7 +87,8 @@ pub enum CliError {
     /// mean the person, so an agent that loses its seat is refused
     /// rather than given the person's powers. Holds the seat names.
     NoActor(Vec<String>),
-    /// The seat's role does not do this: an auditor reads and never
+    /// The seat's role does not do this: a seat that is not an advisor
+    /// does not plan phases ([`PLANS_PHASES`]); an auditor reads and never
     /// writes to the tree; an advisor adds items, sends messages and
     /// raises decisions for the person, and nothing else. Exit status
     /// 2, like any refusal.
@@ -164,6 +170,12 @@ impl std::fmt::Display for CliError {
                         "a",
                         "check the seat's role in .osiris/config.toml; `ris status` shows it",
                     ),
+                };
+                let next = if *what == PLANS_PHASES {
+                    "raise the plan with the person; `ris item add` with no `--phase` adds to \
+                     the open phase, and `--phase none` to the backlog"
+                } else {
+                    next
                 };
                 write!(
                     f,

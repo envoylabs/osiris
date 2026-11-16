@@ -49,7 +49,12 @@ pub fn brief(l: &Loaded, item: ItemId, role: &str, rules: &Rules) -> (String, sc
         .collect();
     // The open phase: an item carried over from an earlier one is
     // worked under the current goal.
-    let phase = l.state.open_phase().unwrap_or(&l.state.phases[&i.phase]);
+    let phase = l
+        .state
+        .open_phase()
+        .or_else(|| i.phase.and_then(|p| l.state.phases.get(&p)))
+        .or_else(|| l.state.phases.values().last())
+        .expect("an item is claimed in an open phase");
     let phase_goal = l.text(phase.at, "goal");
     let goal = l.text(i.at, "goal");
     let checks: Vec<String> = i.checks.iter().map(ToString::to_string).collect();

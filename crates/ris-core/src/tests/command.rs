@@ -54,8 +54,12 @@ impl Harness {
 
 fn with_phase_and_item() -> Harness {
     let mut h = Harness::new();
-    h.must(Command::PhaseOpen { goal: t("slice") });
+    h.must(Command::PhaseOpen {
+        goal: t("slice"),
+        move_on: false,
+    });
     h.must(Command::ItemAdd {
+        tag: crate::command::Tag::Open,
         goal: t("an item"),
         checks: vec![CheckId("test".into())],
         depends_on: vec![],
@@ -69,6 +73,7 @@ fn item_in(kind: ItemStateKind) -> Harness {
     let item = ItemId(1);
     // I-2 is there to replace I-1 for the Supersede rows.
     h.must(Command::ItemAdd {
+        tag: crate::command::Tag::Open,
         goal: t("a replacement"),
         checks: vec![],
         depends_on: vec![],
@@ -171,6 +176,12 @@ fn item_command(kind: CommandKind) -> Option<Command> {
             item,
             actor: Actor::Person,
         },
+        // I-1 is in the open phase, so this takes its tag away.
+        CommandKind::Tag => Command::Tag {
+            item,
+            phase: None,
+            actor: Actor::Person,
+        },
         CommandKind::RaiseAction => Command::RaiseAction {
             by: Actor::Person,
             what: t("add the builder seat"),
@@ -208,7 +219,10 @@ fn apply_follows_the_item_table() {
             let mut h = item_in(state_kind);
             if command_kind == CommandKind::BringIn {
                 h.must(Command::PhaseClose);
-                h.must(Command::PhaseOpen { goal: t("next") });
+                h.must(Command::PhaseOpen {
+                    goal: t("next"),
+                    move_on: false,
+                });
             }
             let expected = transitions::lookup(transitions::ITEM, state_kind, command_kind);
             let result = h.run(command);
@@ -233,13 +247,17 @@ fn apply_follows_the_item_table() {
     }
 }
 
-/// I-1 added in P-1, then P-1 closed and P-2 opened: I-1 is in the
-/// backlog, and I-2 is P-2's own.
+/// I-1 added in P-1, then P-1 closed and P-2 opened: I-1 lost its tag
+/// at the close and is in the backlog, and I-2 is P-2's own.
 fn backlog_item() -> Harness {
     let mut h = with_phase_and_item();
     h.must(Command::PhaseClose);
-    h.must(Command::PhaseOpen { goal: t("next") });
+    h.must(Command::PhaseOpen {
+        goal: t("next"),
+        move_on: false,
+    });
     h.must(Command::ItemAdd {
+        tag: crate::command::Tag::Open,
         goal: t("the phase's own"),
         checks: vec![],
         depends_on: vec![],
@@ -258,7 +276,7 @@ fn an_agent_claims_only_the_open_phases_items() {
         h.run(claim(ItemId(1))),
         Err(Refusal::NotInOpenPhase {
             item: ItemId(1),
-            phase: PhaseId(1),
+            phase: None,
         })
     );
     h.must(claim(ItemId(2)));
@@ -288,7 +306,7 @@ fn the_person_brings_a_backlog_item_into_the_open_phase() {
         }
     ));
     let i = &h.state.items[&ItemId(1)];
-    assert_eq!((i.phase, i.added_in), (PhaseId(2), PhaseId(1)));
+    assert_eq!((i.phase, i.added_in), (Some(PhaseId(2)), Some(PhaseId(1))));
     assert_eq!(i.state, ItemState::Ready);
     // Once in, it is not brought in twice, and is claimed like the
     // phase's own.
@@ -302,7 +320,10 @@ fn the_person_brings_a_backlog_item_into_the_open_phase() {
     });
     // Started work is not moved.
     h.must(Command::PhaseClose);
-    h.must(Command::PhaseOpen { goal: t("third") });
+    h.must(Command::PhaseOpen {
+        goal: t("third"),
+        move_on: false,
+    });
     assert!(matches!(
         h.run(bring(Actor::Person)),
         Err(Refusal::IllegalItemTransition {
@@ -602,6 +623,7 @@ fn only_the_person_supersedes_and_only_with_a_live_item() {
 fn a_dependency_on_a_superseded_item_waits_on_its_replacement() {
     let mut h = item_in(ItemStateKind::Ready);
     h.must(Command::ItemAdd {
+        tag: crate::command::Tag::Open,
         goal: t("depends on the first"),
         checks: vec![],
         depends_on: vec![ItemId(1)],
@@ -653,7 +675,10 @@ fn the_reverse_index_always_matches_a_scan() {
             ((rng >> 33) % u64::from(n.max(1))) as u32
         };
         let mut h = Harness::new();
-        h.must(Command::PhaseOpen { goal: t("index") });
+        h.must(Command::PhaseOpen {
+            goal: t("index"),
+            move_on: false,
+        });
         for _ in 0..60 {
             let items = h.state.items.len() as u32;
             match next(6) {
@@ -667,6 +692,7 @@ fn the_reverse_index_always_matches_a_scan() {
                     depends_on.sort();
                     depends_on.dedup();
                     h.must(Command::ItemAdd {
+                        tag: crate::command::Tag::Open,
                         goal: t("an item"),
                         checks: vec![],
                         depends_on,
@@ -967,6 +993,7 @@ fn a_run_is_started_and_stopped_by_the_person_once_at_a_time() {
 fn dependencies_must_merge_before_a_claim() {
     let mut h = with_phase_and_item();
     h.must(Command::ItemAdd {
+        tag: crate::command::Tag::Open,
         goal: t("second"),
         checks: vec![],
         depends_on: vec![ItemId(1)],
@@ -1005,17 +1032,15 @@ fn dependencies_must_merge_before_a_claim() {
 fn phases_follow_their_table() {
     let mut h = Harness::new();
     assert_eq!(h.run(Command::PhaseClose), Err(Refusal::NoOpenPhase));
+    h.must(Command::PhaseOpen {
+        goal: t("one"),
+        move_on: false,
+    });
     assert_eq!(
-        h.run(Command::ItemAdd {
-            goal: t("x"),
-            checks: vec![],
-            depends_on: vec![]
+        h.run(Command::PhaseOpen {
+            goal: t("two"),
+            move_on: false
         }),
-        Err(Refusal::NoOpenPhase)
-    );
-    h.must(Command::PhaseOpen { goal: t("one") });
-    assert_eq!(
-        h.run(Command::PhaseOpen { goal: t("two") }),
         Err(Refusal::PhaseAlreadyOpen)
     );
     let head_before_close = h.state.head;
@@ -1025,7 +1050,10 @@ fn phases_follow_their_table() {
     };
     assert_eq!(report, report_hash(&Hash::ZERO, &head_before_close));
     assert_eq!(h.state.last_report, report);
-    h.must(Command::PhaseOpen { goal: t("two") });
+    h.must(Command::PhaseOpen {
+        goal: t("two"),
+        move_on: false,
+    });
     assert_eq!(h.state.open_phase().unwrap().id, PhaseId(2));
     assert!(
         transitions::lookup(
@@ -1035,6 +1063,232 @@ fn phases_follow_their_table() {
         )
         .is_none()
     );
+}
+
+fn add(tag: Tag) -> Command {
+    Command::ItemAdd {
+        tag,
+        goal: t("planned"),
+        checks: vec![],
+        depends_on: vec![],
+    }
+}
+
+fn tag(item: u32, phase: Option<u32>, actor: Actor) -> Command {
+    Command::Tag {
+        item: ItemId(item),
+        phase: phase.map(PhaseId),
+        actor,
+    }
+}
+
+fn phases(h: &Harness, item: u32) -> (Option<PhaseId>, Option<PhaseId>) {
+    let i = &h.state.items[&ItemId(item)];
+    (i.phase, i.added_in)
+}
+
+#[test]
+fn an_item_is_added_with_no_phase_open_and_has_none() {
+    // Before any phase, and between two.
+    let mut h = Harness::new();
+    h.must(add(Tag::Open));
+    assert_eq!(phases(&h, 1), (None, None));
+    assert!(matches!(
+        h.log.last().unwrap().structure,
+        Structure::ItemAdded { phase: None, .. }
+    ));
+    h.must(Command::PhaseOpen {
+        goal: t("one"),
+        move_on: false,
+    });
+    h.must(Command::PhaseClose);
+    h.must(add(Tag::Open));
+    assert_eq!(phases(&h, 2), (None, None));
+    // Neither is in the phase that opens next: nothing tagged them.
+    h.must(Command::PhaseOpen {
+        goal: t("two"),
+        move_on: false,
+    });
+    assert_eq!(phases(&h, 1), (None, None));
+    assert_eq!(
+        h.run(Command::Claim {
+            item: ItemId(1),
+            agent: agent("heron"),
+        }),
+        Err(Refusal::NotInOpenPhase {
+            item: ItemId(1),
+            phase: None,
+        })
+    );
+    assert_eq!(State::fold(&h.log).unwrap(), h.state);
+}
+
+#[test]
+fn an_item_is_added_tagged_for_the_open_phase_a_later_one_or_none() {
+    let mut h = Harness::new();
+    h.must(Command::PhaseOpen {
+        goal: t("one"),
+        move_on: false,
+    });
+    h.must(Command::PhaseClose);
+    h.must(Command::PhaseOpen {
+        goal: t("two"),
+        move_on: false,
+    });
+    // Where it was added is the open phase, whatever the tag.
+    h.must(add(Tag::Phase(PhaseId(2))));
+    assert_eq!(phases(&h, 1), (Some(PhaseId(2)), Some(PhaseId(2))));
+    h.must(add(Tag::Phase(PhaseId(4))));
+    assert_eq!(phases(&h, 2), (Some(PhaseId(4)), Some(PhaseId(2))));
+    h.must(add(Tag::None));
+    assert_eq!(phases(&h, 3), (None, Some(PhaseId(2))));
+    // A closed phase takes no more items.
+    assert_eq!(
+        h.run(add(Tag::Phase(PhaseId(1)))),
+        Err(Refusal::PhaseIsClosed(PhaseId(1)))
+    );
+    // With none open, the phase that was open last is closed too.
+    h.must(Command::PhaseClose);
+    assert_eq!(
+        h.run(add(Tag::Phase(PhaseId(2)))),
+        Err(Refusal::PhaseIsClosed(PhaseId(2)))
+    );
+    h.must(add(Tag::Phase(PhaseId(3))));
+    assert_eq!(phases(&h, 4), (Some(PhaseId(3)), None));
+    assert_eq!(State::fold(&h.log).unwrap(), h.state);
+}
+
+#[test]
+fn an_unstarted_item_is_tagged_and_the_open_phase_is_the_persons() {
+    let mut h = with_phase_and_item();
+    let seat = || Actor::Agent(agent("kestrel"));
+    h.must(add(Tag::None));
+    // Into the open phase, or out of it: the person's only.
+    assert_eq!(
+        h.run(tag(1, Some(2), seat())),
+        Err(Refusal::ScopeIsForThePerson(ItemId(1)))
+    );
+    assert_eq!(
+        h.run(tag(2, Some(1), seat())),
+        Err(Refusal::ScopeIsForThePerson(ItemId(2)))
+    );
+    // Between a later phase and none, a seat may.
+    h.must(tag(2, Some(3), seat()));
+    assert_eq!(phases(&h, 2), (Some(PhaseId(3)), Some(PhaseId(1))));
+    assert_eq!(
+        h.run(tag(2, Some(3), seat())),
+        Err(Refusal::AlreadyTagged {
+            item: ItemId(2),
+            phase: Some(PhaseId(3)),
+        })
+    );
+    h.must(tag(2, None, seat()));
+    assert_eq!(
+        h.run(tag(2, None, Actor::Person)),
+        Err(Refusal::AlreadyTagged {
+            item: ItemId(2),
+            phase: None,
+        })
+    );
+    h.must(tag(1, Some(2), Actor::Person));
+    h.must(tag(1, Some(1), Actor::Person));
+    assert_eq!(
+        h.run(tag(9, None, Actor::Person)),
+        Err(Refusal::UnknownItem(ItemId(9)))
+    );
+    // Started work keeps its tag.
+    h.must(Command::Claim {
+        item: ItemId(1),
+        agent: agent("heron"),
+    });
+    assert!(matches!(
+        h.run(tag(1, None, Actor::Person)),
+        Err(Refusal::IllegalItemTransition {
+            state: "claimed",
+            ..
+        })
+    ));
+    // With no phase open, a seat tags for the next one.
+    h.must(Command::PhaseClose);
+    assert_eq!(
+        h.run(tag(2, Some(1), Actor::Person)),
+        Err(Refusal::PhaseIsClosed(PhaseId(1)))
+    );
+    h.must(tag(2, Some(2), seat()));
+    assert_eq!(State::fold(&h.log).unwrap(), h.state);
+}
+
+#[test]
+fn a_phase_opens_with_the_items_tagged_for_it_or_moves_their_tags_on() {
+    let plan = || {
+        let mut h = Harness::new();
+        h.must(add(Tag::Phase(PhaseId(1))));
+        h.must(add(Tag::Phase(PhaseId(2))));
+        h.must(add(Tag::None));
+        h
+    };
+    let mut h = plan();
+    let before = h.log.len();
+    h.must(Command::PhaseOpen {
+        goal: t("one"),
+        move_on: false,
+    });
+    // Opening writes nothing about the items: the tag already says it.
+    assert_eq!(h.log.len(), before + 1);
+    assert_eq!(phases(&h, 1).0, Some(PhaseId(1)));
+    h.must(Command::Claim {
+        item: ItemId(1),
+        agent: agent("heron"),
+    });
+    assert!(
+        h.run(Command::Claim {
+            item: ItemId(2),
+            agent: agent("wren")
+        })
+        .is_err()
+    );
+
+    let mut h = plan();
+    h.must(Command::PhaseOpen {
+        goal: t("one"),
+        move_on: true,
+    });
+    // I-1 moved on beside I-2; the untagged item is not touched.
+    assert_eq!(phases(&h, 1).0, Some(PhaseId(2)));
+    assert_eq!(phases(&h, 2).0, Some(PhaseId(2)));
+    assert_eq!(phases(&h, 3).0, None);
+    assert_eq!(h.state.tagged(PhaseId(1)).count(), 0);
+    assert_eq!(State::fold(&h.log).unwrap(), h.state);
+}
+
+#[test]
+fn closing_a_phase_clears_the_tag_of_what_has_not_merged() {
+    let mut h = item_in(ItemStateKind::Merged);
+    // I-1 merged; I-2 is ready; I-3 is tagged for a later phase.
+    h.must(add(Tag::Phase(PhaseId(3))));
+    let head_before_close = h.state.head;
+    h.must(Command::PhaseClose);
+    assert_eq!(phases(&h, 1), (Some(PhaseId(1)), Some(PhaseId(1))));
+    assert_eq!(phases(&h, 2), (None, Some(PhaseId(1))));
+    assert_eq!(phases(&h, 3), (Some(PhaseId(3)), Some(PhaseId(1))));
+    // The report is taken over the head before the close, and the
+    // close comes before the events that clear the tags.
+    let PhaseState::Closed { report } = h.state.phases[&PhaseId(1)].state else {
+        panic!("phase should be closed");
+    };
+    assert_eq!(report, report_hash(&Hash::ZERO, &head_before_close));
+    let tail: Vec<&Structure> = h.log.iter().rev().take(2).map(|e| &e.structure).collect();
+    assert!(matches!(
+        tail[..],
+        [
+            Structure::ItemScoped {
+                item: ItemId(2),
+                phase: None
+            },
+            Structure::PhaseClosed { .. }
+        ]
+    ));
+    assert_eq!(State::fold(&h.log).unwrap(), h.state);
 }
 
 #[test]

@@ -77,8 +77,10 @@ line of output per envelope, and ends once no seat is running; without
   that one of them waits on, and the open decisions and actions
   attached to any of those, whatever phase raised them; `unlinked`
   counts the nodes with no edge, which are listed all the same.
-  `carried_over` counts the unmerged `items` and open `decisions` from
-  earlier phases that are left out. `phase_state` is where the open
+  `carried_over` counts the unmerged `items` and open `decisions`
+  outside the open phase that are left out. `next_phase` is `null`
+  with a phase open; with none open it is the `phase` that opens next
+  and the `items` tagged for it. `phase_state` is where the open
   phase stands, `null` with no phase open: `line` (the one line the
   text output opens with), `items` (the phase's items, superseded ones
   left out), `merged`, `in_progress` (claimed, or done and not yet
@@ -100,17 +102,35 @@ line of output per envelope, and ends once no seat is running; without
   any phase up to it, neither merged nor superseded; for an open phase,
   what would carry over if it closed now).
 - `ris ready`: for a seat, the open phase's items it may claim and no
-  other. For the person, those first and then the backlog: the
-  unmerged items of earlier phases, which no seat may claim until the
-  person brings them in.
+  other. For the person, those first and then every other item that
+  could be claimed were it in the phase: the backlog, and what is
+  tagged for later phases.
+- An item's `phase`, wherever an item record appears, is its tag: the
+  phase it is in, a later phase it is planned for, or `null` when it
+  has none, which is the backlog. `ris item add` gives `item` and the
+  `phase` it was tagged for: the open phase, or what `--phase P-n` or
+  `--phase none` named, or `null` with no phase open. `ris item phase
+  I-n <P-n|none>` gives the same two keys for an item nobody has
+  started. The event `item_added` carries the phase open when the item
+  was added, `null` when none was; every later change of tag is an
+  `item_scoped` event (with `item` and `phase`, `null` for none): one
+  for a tag given at `ris item add` that is not the open phase, one
+  for `ris item phase` and `ris item bring-in`, one per item whose tag
+  `ris phase open --move-on` moves to the next phase, and one per
+  unmerged item of a phase when it closes, after its `phase_closed`
+  event. An item's current phase is the phase of the last of its
+  `item_added` and `item_scoped` events; the phase it was added in does
+  not change, and a phase's `tally` counts by that. The refusals:
+  `{"phase_is_closed": "P-n"}` for a tag naming a closed phase,
+  `{"already_tagged": {"item", "phase"}}`,
+  `{"scope_is_for_the_person": "I-n"}` for a seat moving an item into
+  or out of the open phase, and `role_forbids` for a seat that is not
+  an advisor tagging for a phase that is not open.
 - `ris item bring-in I-n`, the person's only: `item` and the open
-  `phase` it is now in. It writes the event `item_scoped` (with `item`
-  and `phase`). An item's current phase is the phase of the last of
-  its `item_added` and `item_scoped` events; the phase it was added in
-  does not change, and a phase's `tally` counts by that. A claim of an
-  item outside the open phase is refused with
-  `{"not_in_open_phase": {"item", "phase"}}`, and an agent's bring-in
-  with `{"bring_in_is_for_the_person": "I-n"}`.
+  `phase` it is now in. A claim of an item outside the open phase is
+  refused with `{"not_in_open_phase": {"item", "phase"}}`, `phase`
+  being `null` when the item has none, and an agent's bring-in with
+  `{"bring_in_is_for_the_person": "I-n"}`.
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
 - `ris audit`: `queue`, the open phase's done and merged items the
@@ -134,7 +154,10 @@ line of output per envelope, and ends once no seat is running; without
   and `ended` (anything else: killed, an error, or a stop while holding
   an item); and `resets`, for `usage_limit`, when the limit resets in
   the tool's own words, or null.
-- `ris phase open`: `phase`, `branch`, `docs_item` and `preflight`, what
+- `ris phase open`: `brought_in`, the items that were tagged for the
+  phase and are in it, or `moved_on`, the same items when `--move-on`
+  moved their tags to the phase after (the other is empty); and
+  `phase`, `branch`, `docs_item` and `preflight`, what
   the writing seats would lack to run the checks, each
   `{"kind": "program", "check", "program"}`, `{"kind": "write", "tool",
   "path"}` or `{"kind": "network", "tool", "host"}`; empty when nothing

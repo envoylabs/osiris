@@ -47,6 +47,11 @@ ris inbox                       # messages to you; read between items
 - You work only the open phase's items. `ris ready` shows you nothing
   else, and `ris claim` refuses an item in the backlog; the person
   brings one into the phase with `ris item bring-in I-7`.
+- `ris item add` puts an item in the open phase, or with
+  `--phase none` in the backlog, which is also where it goes when no
+  phase is open. Tagging an item for a later phase (`--phase P-9`,
+  `ris item phase I-7 P-9`) is planning: the person's and the
+  advisor's, and `ris` refuses any other seat.
 - A question that stops you goes into `ris`, never only into your
   output: raise it as a decision about the item (see Decisions), set
   the item aside, and take another. Nobody reads a question left in a

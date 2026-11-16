@@ -36,8 +36,8 @@ fn ids(ready: &str) -> Vec<&str> {
         .collect()
 }
 
-/// A project with the template's seats, I-1 left in P-1's backlog and I-2
-/// added in the open P-2.
+/// A project with the template's seats, I-1 left unmerged by P-1, so in
+/// the backlog with no phase, and I-2 added in the open P-2.
 fn project(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("ris-ready-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -73,7 +73,10 @@ fn a_seat_sees_and_claims_only_the_open_phases_items() {
     let out = ris(&dir, "heron", &["claim", "I-1"]);
     assert_eq!(out.status.code(), Some(2));
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("I-1 is in P-1, not the open phase"), "{err}");
+    assert!(
+        err.contains("I-1 has no phase, so is not in the open one"),
+        "{err}"
+    );
     assert!(err.contains("ris item bring-in I-1"), "{err}");
 
     // Only the person brings an item in.

@@ -480,6 +480,14 @@ fn every_command_s_real_output_fits_the_committed_schema() {
     let ready = r.ok(None, &["ready"]);
     let backlog = ready["ready"][0]["id"].as_str().expect("a backlog item");
     r.ok(None, &["item", "bring-in", backlog]);
+    // And tagged for a later phase, then for none.
+    r.ok(None, &["item", "phase", backlog, "P-9"]);
+    r.ok(None, &["item", "phase", backlog, "none"]);
+    r.ok(
+        None,
+        &["item", "add", "for a later phase", "--phase", "P-9"],
+    );
+    r.ok(None, &["show", backlog]);
 
     // Nothing was left out: every command the schema has data for was
     // run and validated here.

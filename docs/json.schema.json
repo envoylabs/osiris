@@ -644,6 +644,11 @@
           "type": "string"
         },
         {
+          "const": "Tag",
+          "description": "Tagging an item that has not been started for the open phase, a\nlater phase, or none.",
+          "type": "string"
+        },
+        {
           "const": "Pause",
           "description": "The person pausing seats, or resuming them.",
           "type": "string"
@@ -1605,7 +1610,15 @@
           "$ref": "#/$defs/ItemId"
         },
         "phase": {
-          "$ref": "#/$defs/PhaseId"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its phase tag: the phase it is in or is planned for; null when\nit has none, which is the backlog."
         },
         "state": {
           "description": "`ready`, `claimed`, `blocked`, `done`, `merged` or `superseded`.",
@@ -1643,6 +1656,30 @@
       ],
       "type": "object"
     },
+    "ItemAdded": {
+      "description": "`ris item add`.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The phase it is tagged for; null when it has none."
+        }
+      },
+      "required": [
+        "item",
+        "phase"
+      ],
+      "type": "object"
+    },
     "ItemId": {
       "description": "An item's id, such as I-7.",
       "pattern": "^I-[0-9]+$",
@@ -1657,6 +1694,30 @@
       },
       "required": [
         "item"
+      ],
+      "type": "object"
+    },
+    "ItemTagged": {
+      "description": "`ris item phase`.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The phase it is now tagged for; null when it has none."
+        }
+      },
+      "required": [
+        "item",
+        "phase"
       ],
       "type": "object"
     },
@@ -2051,6 +2112,25 @@
         }
       ]
     },
+    "NextPhase": {
+      "description": "The phase that opens next, and what is tagged for it.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        }
+      },
+      "required": [
+        "phase",
+        "items"
+      ],
+      "type": "object"
+    },
     "Node": {
       "description": "One source file.",
       "properties": {
@@ -2211,6 +2291,13 @@
             "null"
           ]
         },
+        "brought_in": {
+          "description": "The items that were tagged for the phase, which it opened with.",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        },
         "docs_item": {
           "anyOf": [
             {
@@ -2221,6 +2308,13 @@
             }
           ],
           "description": "The item added to bring the docs up to date, if one was."
+        },
+        "moved_on": {
+          "description": "The items that were tagged for the phase and whose tags were\nmoved on to the phase after it instead.",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
         },
         "phase": {
           "$ref": "#/$defs/PhaseId"
@@ -2237,7 +2331,9 @@
         "phase",
         "branch",
         "docs_item",
-        "preflight"
+        "preflight",
+        "brought_in",
+        "moved_on"
       ],
       "type": "object"
     },
@@ -2904,7 +3000,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "An agent claims only the open phase's items; this one is in\nanother phase's backlog.",
+          "description": "An agent claims only the open phase's items; this one is tagged\nfor another phase, or for none (`phase` is then null).",
           "properties": {
             "not_in_open_phase": {
               "properties": {
@@ -2912,7 +3008,14 @@
                   "$ref": "#/$defs/ItemId"
                 },
                 "phase": {
-                  "$ref": "#/$defs/PhaseId"
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PhaseId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -2950,6 +3053,64 @@
           },
           "required": [
             "already_in_open_phase"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An item is tagged for the open phase, a later one or none; this\nphase is closed.",
+          "properties": {
+            "phase_is_closed": {
+              "$ref": "#/$defs/PhaseId"
+            }
+          },
+          "required": [
+            "phase_is_closed"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The item already has this tag (`phase` null: none).",
+          "properties": {
+            "already_tagged": {
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PhaseId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "item",
+                "phase"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "already_tagged"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Moving an item into or out of the open phase is the person's to\ndo: it changes the scope of the work in hand.",
+          "properties": {
+            "scope_is_for_the_person": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "scope_is_for_the_person"
           ],
           "type": "object"
         }
@@ -3433,6 +3594,7 @@
         },
         {
           "additionalProperties": false,
+          "description": "`phase` is the phase open when the item was added, or null when\nnone was: the item then has no phase, which is the backlog.",
           "properties": {
             "checks": {
               "items": {
@@ -3454,7 +3616,14 @@
               "$ref": "#/$defs/ItemId"
             },
             "phase": {
-              "$ref": "#/$defs/PhaseId"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PhaseId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -3468,7 +3637,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "The person moved an unstarted item into a phase, or (with no\nphase) back to the backlog. An item's current phase is the last\nof its `ItemAdded` and its `ItemScoped` events; the phase it was\nadded in does not change.",
+          "description": "An item's phase tag changed: to the open phase, to a later phase\nby number (one not opened yet, which has the item when it\nopens), or to none, which is the backlog. Written when an item\nis tagged, when a phase opens with its tagged items moved on by\none, and when a phase closes, for each of its items left\nunsettled. An item's current phase is the last of its\n`ItemAdded` and its `ItemScoped` events; the phase it was added\nin does not change.",
           "properties": {
             "event": {
               "const": "item_scoped",
@@ -4060,6 +4229,17 @@
         "inbox": {
           "$ref": "#/$defs/Inbox"
         },
+        "next_phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextPhase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "With no phase open, the phase the next `ris phase open` opens\nand the items tagged for it; `null` with a phase open."
+        },
         "phase_state": {
           "anyOf": [
             {
@@ -4085,6 +4265,7 @@
         "ready",
         "all",
         "phase_state",
+        "next_phase",
         "carried_over",
         "checks"
       ],
@@ -4261,10 +4442,13 @@
       "$ref": "#/$defs/Installed"
     },
     "data.item_add": {
-      "$ref": "#/$defs/ItemRef"
+      "$ref": "#/$defs/ItemAdded"
     },
     "data.item_bring-in": {
       "$ref": "#/$defs/BroughtIn"
+    },
+    "data.item_phase": {
+      "$ref": "#/$defs/ItemTagged"
     },
     "data.item_supersede": {
       "$ref": "#/$defs/Superseded"
@@ -4417,6 +4601,9 @@
             },
             {
               "$ref": "#/$defs/data.item_add"
+            },
+            {
+              "$ref": "#/$defs/data.item_phase"
             },
             {
               "$ref": "#/$defs/data.item_supersede"

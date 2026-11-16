@@ -70,7 +70,10 @@ fn closed_phases_export_verify_and_replay() {
     );
     // Another machine can verify the chain and replay the state.
     let v = verify(&log).unwrap();
-    assert_eq!(v.len, 6);
+    // Three events a phase (open, add, close), and between the two the
+    // event that cleared the tag of P-1's unmerged item. The one that
+    // cleared P-2's follows its close, in the phase still open.
+    assert_eq!(v.len, 7);
     let state = State::fold(&log).unwrap();
     assert_eq!(state.items.len(), 2);
     assert_eq!(state.phases.len(), 2);

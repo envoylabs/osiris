@@ -86,7 +86,7 @@ impl Scope {
     pub fn item(self, i: &Item) -> bool {
         match self {
             Self::All => true,
-            Self::Open(p) => Some(i.phase) == p,
+            Self::Open(p) => p.is_some() && i.phase == p,
         }
     }
 
@@ -524,7 +524,7 @@ pub fn ready(l: &Loaded, actor: &Actor) -> Output {
 fn ready_in(l: &Loaded, scope: Scope) -> (String, schema::Ready) {
     let open = l.state.open_phase().map(|p| p.id);
     let mut items: Vec<&Item> = l.state.ready().filter(|i| scope.item(i)).collect();
-    items.sort_by_key(|i| Some(i.phase) != open);
+    items.sort_by_key(|i| open.is_none() || i.phase != open);
     let text = if items.is_empty() {
         "nothing ready".to_owned()
     } else {
@@ -696,7 +696,7 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
         .values()
         .filter(|i| {
             scope.item(i)
-                && (i.phase == phase.id
+                && (i.phase == Some(phase.id)
                     || !matches!(
                         i.state,
                         ItemState::Merged { .. } | ItemState::Superseded { .. }
@@ -893,11 +893,16 @@ pub fn tally(l: &Loaded, phase: PhaseId) -> Tally {
         .count();
     // By the phase each item was added in, which never changes, so a
     // closed phase's tally stays what it was when an item it left is
-    // later brought into another phase.
-    let items = l.state.items.values().filter(|i| i.added_in <= phase);
+    // later tagged for another phase. An item added with no phase open
+    // is planned in none, and counts as carried over by each phase
+    // that closed after it was added, as one added in a phase does.
+    let items = l.state.items.values().filter(|i| match i.added_in {
+        Some(added_in) => added_in <= phase,
+        None => i.at < closed,
+    });
     let (mut planned, mut carried_over) = (0, 0);
     for i in items {
-        planned += usize::from(i.added_in == phase);
+        planned += usize::from(i.added_in == Some(phase));
         carried_over += usize::from(!matches!(
             i.state,
             ItemState::Merged { .. } | ItemState::Superseded { .. }
@@ -969,7 +974,7 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
             .state
             .items
             .values()
-            .filter(|i| i.phase == phase)
+            .filter(|i| i.phase == Some(phase))
             .collect();
         let mut s = format!(
             "{} {}: {}\n",
@@ -1026,10 +1031,13 @@ pub fn show(l: &Loaded, id: &str) -> Result<Output, String> {
 
 fn show_item(l: &Loaded, i: &Item) -> Output {
     let mut s = format!(
-        "{} {}  (phase {})\n  {}\n",
+        "{} {}  ({})\n  {}\n",
         i.id,
         shown_state(l, i),
-        i.phase,
+        match i.phase {
+            Some(phase) => format!("phase {phase}"),
+            None => "no phase".to_owned(),
+        },
         l.text(i.at, "goal")
     );
     s.push_str(&format!(
@@ -1298,10 +1306,26 @@ pub fn summary(
         .open_decisions()
         .filter(|d| !scope.decision(l, d) && !graph.nodes.contains(&Node::Decision(d.id)))
         .count();
-    let carried = if carried_items + carried_decisions > 0 {
+    // With no phase open, what the next one starts with: the items
+    // tagged for it, which the text lists and the count below leaves
+    // out.
+    let next = l.state.open_phase().is_none().then(|| {
+        let phase = l.state.next_phase_id();
+        (phase, l.state.tagged(phase).collect::<Vec<&Item>>())
+    });
+    let listed = next
+        .as_ref()
+        .map_or(0, |(_, items)| if all { 0 } else { items.len() });
+    let carried = if carried_items - listed + carried_decisions > 0 {
         format!(
-            "{carried_items} item(s) and {carried_decisions} open decision(s) from earlier phases are not shown\n  \
-             next: `ris summary --all` shows them; the person brings one in with `ris item bring-in <item>`\n"
+            "{} item(s) and {carried_decisions} open decision(s) outside {} are not shown\n  \
+             next: `ris summary --all` shows them; the person tags one for a phase with `ris item phase <item> <P-n>`\n",
+            carried_items - listed,
+            if next.is_some() {
+                "the next phase"
+            } else {
+                "the open phase"
+            }
         )
     } else {
         String::new()
@@ -1359,9 +1383,25 @@ pub fn summary(
         s.push_str(&style::dim(&foot));
         s
     } else {
-        format!("no phase is open\n  next: open one with `ris phase open \"<goal>\"`\n{carried}")
-            .trim_end()
-            .to_owned()
+        let mut s =
+            String::from("no phase is open\n  next: open one with `ris phase open \"<goal>\"`\n");
+        if let Some((phase, items)) = &next {
+            if items.is_empty() {
+                s.push_str(&format!(
+                    "nothing is tagged for {phase}\n  next: plan it with `ris item add --phase {phase} \"<goal>\"` or `ris item phase <item> {phase}`\n"
+                ));
+            } else {
+                s.push_str(&format!(
+                    "{} item(s) tagged for {phase}, which has them when it opens:\n",
+                    items.len()
+                ));
+                for i in items {
+                    s.push_str(&format!("  {}\n", item_line(l, i)));
+                }
+            }
+        }
+        s.push_str(&carried);
+        s.trim_end().to_owned()
     };
     Output::of(
         with_checks(text, &checks),
@@ -1372,6 +1412,10 @@ pub fn summary(
             ready: rdy,
             all,
             phase_state: state,
+            next_phase: next.map(|(phase, items)| schema::NextPhase {
+                phase,
+                items: items.iter().map(|i| item_json(l, i)).collect(),
+            }),
             carried_over: schema::CarriedOver {
                 items: carried_items,
                 decisions: carried_decisions,
