@@ -392,6 +392,7 @@ pub fn document(
         }
     }
     let changed: Vec<&Node> = nodes.iter().filter(|n| n.status != "unchanged").collect();
+    let ranked = ranked(&nodes);
     crate::schema::Map {
         phase: range.phase,
         base: range.base.clone(),
@@ -409,9 +410,25 @@ pub fn document(
             tests,
         },
         nodes,
+        ranked,
         edges: edges.into_iter().collect(),
         diffs: BTreeMap::new(),
     }
+}
+
+/// The changed files' paths in the order to read them, where to look
+/// first: the highest risk level that stands, then the heaviest, then
+/// by path.
+pub fn ranked(nodes: &[Node]) -> Vec<String> {
+    let mut changed: Vec<&Node> = nodes.iter().filter(|n| n.status != "unchanged").collect();
+    changed.sort_by(|a, b| {
+        let level = |n: &Node| n.risk.as_ref().map(|r| r.level);
+        level(b)
+            .cmp(&level(a))
+            .then(b.weight.total_cmp(&a.weight))
+            .then(a.path.cmp(&b.path))
+    });
+    changed.into_iter().map(|n| n.path.clone()).collect()
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -752,6 +769,9 @@ pub const PAGE_FILE: &str = "map.html";
 pub enum Show<'a> {
     /// Nothing: the text form alone.
     Text,
+    /// Nothing, and the text lists each changed file with its reasons
+    /// (`--list`).
+    List,
     /// Write it to the file named (`--html`).
     Write(&'a Path),
     /// Write it to `file`, which is said as `shown`, and open it in the
@@ -840,26 +860,19 @@ pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
             "where the work left the main line is not known, so no file carries a diff\n",
         );
     }
-    let mut changed: Vec<&serde_json::Value> = doc["nodes"]
+    // Where to look first, in the document's own order.
+    let by_path: BTreeMap<&str, &serde_json::Value> = doc["nodes"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|n| n["status"] != "unchanged")
+        .filter_map(|n| Some((n["path"].as_str()?, n)))
         .collect();
-    // Where to look first: the highest risk, then the heaviest.
-    let rank = |n: &serde_json::Value| match n["risk"]["level"].as_str() {
-        Some("high") => 2,
-        Some("medium") => 1,
-        _ => 0,
-    };
-    changed.sort_by(|a, b| {
-        rank(b).cmp(&rank(a)).then(
-            b["weight"]
-                .as_f64()
-                .partial_cmp(&a["weight"].as_f64())
-                .unwrap_or(std::cmp::Ordering::Equal),
-        )
-    });
+    let changed = doc["ranked"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| by_path.get(p.as_str()?).copied());
+    let listing = matches!(show, Show::List);
     for n in changed {
         let mut marks: Vec<&str> = n["external"]
             .as_array()
@@ -888,17 +901,24 @@ pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
             },
         ));
         let judged = &n["risk"]["judged"];
-        if !judged.is_null() {
+        let computed = &n["risk"]["computed"];
+        if listing {
+            text.push_str(&reasons(judged, computed));
+        } else if !judged.is_null() {
             text.push_str(&format!(
                 "         judged {} by {}: {} (computed: {})\n",
                 judged["level"].as_str().unwrap_or(""),
                 judged["seat"].as_str().unwrap_or(""),
                 judged["why"].as_str().unwrap_or(""),
-                n["risk"]["computed"]["level"].as_str().unwrap_or(""),
+                computed["level"].as_str().unwrap_or(""),
             ));
         }
     }
     match show {
+        Show::List => text.push_str(
+            "  next: `ris map` draws the same files as a graph beside this list, \
+             each with its diff",
+        ),
         Show::Write(path) => {
             std::fs::write(path, page(&doc))?;
             text.push_str(&format!(
@@ -926,6 +946,37 @@ pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
         ),
     }
     Ok(Output::of(text, &map))
+}
+
+/// A changed file's reasons, indented under its row: the judgement and
+/// its why where one is recorded, then the computed level with the
+/// signals that gave it, as the page's pane says them.
+fn reasons(judged: &serde_json::Value, computed: &serde_json::Value) -> String {
+    let mut out = String::new();
+    if !judged.is_null() {
+        out.push_str(&format!(
+            "         judged {} by {}: {}\n",
+            judged["level"].as_str().unwrap_or(""),
+            judged["seat"].as_str().unwrap_or(""),
+            judged["why"].as_str().unwrap_or(""),
+        ));
+    }
+    let signals: Vec<&str> = computed["signals"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s["reason"].as_str())
+        .collect();
+    out.push_str(&format!(
+        "         computed {}: {}\n",
+        computed["level"].as_str().unwrap_or(""),
+        if signals.is_empty() {
+            "no signal counts".to_owned()
+        } else {
+            signals.join("; ")
+        }
+    ));
+    out
 }
 
 /// Rust: `mod` lines, `use` lines and qualified paths, by scanning.

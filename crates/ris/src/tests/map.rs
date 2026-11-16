@@ -270,6 +270,10 @@ fn a_changed_file_carries_its_risk_and_a_judgement_stands_over_the_computed_leve
     assert_eq!(node("src/a.rs").risk, None);
     assert_eq!(node("src/lib.rs").risk, None);
 
+    // Ranked by the level that stands: the judged file leads the
+    // larger change, and unchanged files are not ranked.
+    assert_eq!(map.ranked, ["src/c.rs", "src/wire.rs", "src/old.rs"]);
+
     // As the document spells them.
     let doc = serde_json::to_value(&map).unwrap();
     let c = doc["nodes"]
@@ -295,6 +299,64 @@ fn a_changed_file_carries_its_risk_and_a_judgement_stands_over_the_computed_leve
             }
         })
     );
+}
+
+#[test]
+fn ranked_is_the_level_then_the_weight_then_the_path() {
+    let at = |path: &str, status: &'static str, level: RiskLevel, weight: f64| Node {
+        path: path.to_owned(),
+        language: Some("rust"),
+        status,
+        added: 0,
+        removed: 0,
+        external: Vec::new(),
+        contract: false,
+        weight,
+        dependents: 0,
+        risk: (status != "unchanged").then(|| Risk {
+            level,
+            computed: Computed {
+                level,
+                signals: Vec::new(),
+            },
+            judged: None,
+        }),
+    };
+    let nodes = [
+        at("a.rs", "modified", RiskLevel::Low, 9.0),
+        at("b.rs", "modified", RiskLevel::Medium, 1.0),
+        at("c.rs", "added", RiskLevel::Low, 9.0),
+        at("d.rs", "unchanged", RiskLevel::Low, 0.0),
+        at("e.rs", "deleted", RiskLevel::High, 0.5),
+        at("f.rs", "modified", RiskLevel::Low, 20.0),
+    ];
+    assert_eq!(
+        ranked(&nodes),
+        ["e.rs", "b.rs", "f.rs", "a.rs", "c.rs"],
+        "high, medium, then the low ones heaviest first and a tie by path"
+    );
+}
+
+#[test]
+fn the_page_lists_the_ranked_files_and_opens_on_the_list() {
+    // The list reads the document's own order, and a row opens the
+    // same pane a node does.
+    assert!(PAGE.contains("(doc.ranked || []).forEach"));
+    assert!(PAGE.contains("tr.addEventListener(\"click\", function () { pick(n); })"));
+    assert!(PAGE.contains("node.on(\"click\""));
+    // Its reasons are the pane's, from the same function.
+    assert!(PAGE.contains("riskLines(n).slice(1)"));
+    // The page opens on the list, with the graph the other view.
+    assert!(PAGE.contains("<body class=\"listing\">"));
+    assert!(PAGE.contains("id=\"view-list\" type=\"button\" aria-pressed=\"true\""));
+    assert!(PAGE.contains("id=\"view-graph\" type=\"button\" aria-pressed=\"false\""));
+    // The graph is hidden, not taken out of the layout, so it can be
+    // fitted while the list shows.
+    assert!(PAGE.contains(
+        "body.listing svg, body.listing #legend, body.listing #tip { visibility: hidden; }"
+    ));
+    // The open pane narrows the list as it does the graph.
+    assert!(PAGE.contains("body.paned #list { right: calc(var(--pane) + 12px); }"));
 }
 
 #[test]

@@ -180,15 +180,81 @@
   .diff .hunk .code { color: var(--modified); padding: 2px 16px 2px 0; }
   .diff .note .code { color: var(--faint); font-style: italic; }
   #pane-body p { margin: 0; padding: 14px; color: var(--faint); }
+
+  /* Two views of one document: the list and the graph. */
+  #views { display: flex; gap: 6px; margin-top: 6px; }
+  #views button {
+    font: inherit;
+    color: var(--faint);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 10px;
+    cursor: pointer;
+  }
+  #views button[aria-pressed="true"] {
+    color: var(--modified);
+    border-color: var(--modified);
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.35);
+  }
+  /* In the list view the graph stays laid out, hidden, so it is fitted
+     to the window whenever it is shown. */
+  body.listing svg, body.listing #legend, body.listing #tip { visibility: hidden; }
+  #list {
+    position: fixed;
+    top: 120px; left: 12px; right: 12px; bottom: 12px;
+    display: none;
+    overflow: auto;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  body.listing #list { display: block; }
+  body.paned #list { right: calc(var(--pane) + 12px); }
+  #list table { border-collapse: collapse; width: 100%; }
+  #list th {
+    position: sticky; top: 0;
+    text-align: left;
+    font-weight: 500;
+    color: var(--faint);
+    background: #0b0d1a;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  #list td { padding: 6px 10px; vertical-align: top; border-bottom: 1px solid var(--line); }
+  #list tr.file { cursor: pointer; }
+  #list tr.file:hover, #list tr.file:focus-visible { background: rgba(0, 229, 255, 0.06); outline: none; }
+  #list tr.picked { background: rgba(0, 229, 255, 0.13); }
+  #list .level { white-space: nowrap; }
+  #list .level.high { color: var(--risk); font-weight: 600; }
+  #list .level.medium { color: var(--risk); }
+  #list .level.low { color: var(--faint); }
+  #list .path { color: var(--text); word-break: break-all; }
+  #list .lines { white-space: nowrap; }
+  #list .plus { color: var(--added); }
+  #list .minus { color: var(--deleted); }
+  #list .outside { color: var(--outside); }
+  #list .quiet { color: var(--faint); }
+  #list p { margin: 0; padding: 14px; color: var(--faint); }
 </style>
 </head>
-<body>
+<body class="listing">
 <header>
   <h1 id="title">change set</h1>
   <p id="range"></p>
   <p id="totals"></p>
   <p id="tests"></p>
+  <nav id="views" aria-label="Views of the change set">
+    <button id="view-list" type="button" aria-pressed="true">list</button>
+    <button id="view-graph" type="button" aria-pressed="false">graph</button>
+  </nav>
 </header>
+<section id="list" aria-label="The changed files, highest risk first">
+  <table>
+    <thead><tr><th>risk</th><th>file</th><th>lines</th><th>why</th></tr></thead>
+    <tbody id="list-rows"></tbody>
+  </table>
+</section>
 <svg id="map" role="img" aria-label="The phase's change set drawn over the source files">
   <defs>
     <filter id="glow" x="-150%" y="-150%" width="400%" height="400%">
@@ -556,11 +622,80 @@
     picked = n;
     document.body.classList.toggle("paned", n !== null);
     node.classed("picked", function (m) { return m === n; });
+    listed.forEach(function (tr, m) { tr.classList.toggle("picked", m === n); });
     if (n !== null) { show(n); }
     // Opening and closing change the graph's room, so it is fitted
     // again; swapping one file for another leaves the view as it is.
-    if (wasOpen !== (n !== null)) { room(); fit(); }
+    if (wasOpen !== (n !== null)) { room(); fit(); placeList(); }
   };
+
+  // The list: the changed files in the document's `ranked` order, the
+  // order `ris map --list` prints, each with its level, its numbers and
+  // the reasons for its level. A row opens its diff in the pane, as a
+  // click on its node does. Test files are not nodes, so not rows.
+  var listed = new Map();
+  var listRows = document.getElementById("list-rows");
+  var byPath = new Map(nodes.map(function (n) { return [n.path, n]; }));
+  (doc.ranked || []).forEach(function (path) {
+    var n = byPath.get(path);
+    if (!n) { return; }
+    var tr = document.createElement("tr");
+    tr.className = "file";
+    tr.tabIndex = 0;
+    var cell = function (cls) {
+      var td = document.createElement("td");
+      td.className = cls;
+      tr.appendChild(td);
+      return td;
+    };
+    cell("level " + level(n)).textContent = level(n);
+    var file = cell("");
+    file.appendChild(span("path", n.path));
+    if (n.status !== "modified") { file.appendChild(span("quiet", " (" + n.status + ")")); }
+    var marks = n.external.slice();
+    if (n.contract) { marks.push("contract"); }
+    if (marks.length > 0) { file.appendChild(span("outside", "  [" + marks.join(", ") + "]")); }
+    var counts = cell("lines");
+    counts.appendChild(span("plus", "+" + n.added));
+    counts.appendChild(span("minus", " -" + n.removed));
+    // The level is its own column; the rest of what is said about the
+    // risk is the reasons.
+    var why = cell("why");
+    riskLines(n).slice(1).forEach(function (r) {
+      var div = document.createElement("div");
+      if (r.cls) { div.className = r.cls; }
+      div.textContent = r.text;
+      why.appendChild(div);
+    });
+    tr.addEventListener("click", function () { pick(n); });
+    tr.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") { pick(n); }
+    });
+    listRows.appendChild(tr);
+    listed.set(n, tr);
+  });
+  var list = document.getElementById("list");
+  if (listed.size === 0) {
+    var none = document.createElement("p");
+    none.textContent = "No source file changed in the phase.";
+    list.appendChild(none);
+  }
+  // The list starts below the header, whose height depends on the window.
+  var placeList = function () {
+    list.style.top = (document.querySelector("header").getBoundingClientRect().bottom + 12) + "px";
+  };
+  placeList();
+
+  // The page opens on the list; the graph is the other view.
+  var views = { list: document.getElementById("view-list"), graph: document.getElementById("view-graph") };
+  var showView = function (name) {
+    document.body.classList.toggle("listing", name === "list");
+    Object.keys(views).forEach(function (k) {
+      views[k].setAttribute("aria-pressed", String(k === name));
+    });
+  };
+  views.list.addEventListener("click", function () { showView("list"); });
+  views.graph.addEventListener("click", function () { showView("graph"); });
   // A drag ends without a click, so moving a node does not open it.
   node.on("click", function (event, n) {
     if (!event.defaultPrevented) { pick(n); }
@@ -573,6 +708,7 @@
   window.addEventListener("resize", function () {
     room();
     fit();
+    placeList();
   });
 }());
 </script>

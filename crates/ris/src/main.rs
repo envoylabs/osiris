@@ -208,6 +208,10 @@ enum Cmd {
         /// Write one self-contained page that draws the map here.
         #[arg(long, value_name = "FILE")]
         html: Option<PathBuf>,
+        /// Print the changed files ranked by risk, highest first, each
+        /// with its reasons, and open nothing.
+        #[arg(long, conflicts_with = "html")]
+        list: bool,
     },
     /// Where each seat is: role, worktree, branch, claim, commits ahead
     /// of and behind the phase branch, uncommitted changes.
@@ -1549,13 +1553,15 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 
-        Cmd::Map { phase, html } => {
+        Cmd::Map { phase, html, list } => {
             let l = p.load()?;
             let range = ris::map::range(&p, &l, *phase)?;
             let map = ris::map::build(&p, &l, &range)?;
             let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
             if let Some(file) = html {
                 ris::map::output(map, ris::map::Show::Write(file))
+            } else if *list {
+                ris::map::output(map, ris::map::Show::List)
             } else if ris::map::opens_page(&actor, cli.json, false, terminal) {
                 let file = p.root.join(ris::project::DIR).join(ris::map::PAGE_FILE);
                 ris::map::output(

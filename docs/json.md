@@ -219,9 +219,10 @@ document, as JSON in the element `<script id="map-data"
 type="application/json">`, and draws nothing that is not in it, so any
 other renderer draws the same map from either source. `ris map` with
 no flags, run by the person at a terminal, writes that page to
-`.osiris/map.html` and opens it in the browser; with `--json`, run by
-a seat, or with output that is not a terminal, nothing is written or
-opened. It follows the
+`.osiris/map.html` and opens it in the browser; with `--json` or
+`--list`, run by a seat, or with output that is not a terminal,
+nothing is written or opened. `ris map --list --json` gives the same
+document as `ris map --json`. It follows the
 rule of the rest of format 1: keys are added, never removed, renamed
 or reshaped.
 
@@ -245,6 +246,7 @@ or reshaped.
        "judged": {"level": "high", "why": "writes the store with no lock", "seat": "wren"}
      }}
   ],
+  "ranked": ["src/store.rs"],
   "edges": [
     {"from": "src/store.rs", "to": "src/wire.rs", "kind": "use"}
   ],
@@ -308,6 +310,10 @@ or reshaped.
   `risk.level` is the level that stands, and the one to draw: the
   judgement's where there is one, and the computed one otherwise. A
   closed phase's map keeps its judgements.
+- `ranked` is the path of every changed node, each once, in the order
+  to read them: the highest `risk.level` first, then the greatest
+  `weight`, then by `path`. It is the order `ris map --list` prints
+  and the page lists, so neither ranks the files itself.
 - `edges` are how the code connects, each from the file that names the
   other, sorted. `kind` is the kind of line that makes the edge. For
   Rust: `mod` (a `mod name;` line, to the module's file) and `use` (a

@@ -308,12 +308,17 @@ stands where there is one, and hovering shows both and the reasons.
 `.osiris/map.html` (which git ignores), replacing the last one, opens
 it in your browser and prints where it is; if the browser does not
 open, it says so and you open the file yourself. The page needs no
-network (d3 is inlined): hover a file for its path and numbers, drag
-it, scroll to zoom, and click it to read its diff for the phase in a
-pane beside the graph (click another file to swap it, Esc or the
-pane's button to close it). `ris map` also lists the changed files
-with their risk, the highest first; that list is all a seat gets, and
-all you get when the output is piped, since nothing is opened then.
+network (d3 is inlined) and has two views of the same files, switched
+in its header. It opens on the list: the changed files ranked by risk,
+the highest first, each with its lines added and removed and the
+reasons for its level. The graph is the other view: hover a file for
+its path and numbers, drag it, scroll to zoom. In either, click a file
+to read its diff for the phase in a pane beside it (click another file
+to swap it, Esc or the pane's button to close it). `ris map` also
+lists the changed files with their risk, the highest first; that list
+is all a seat gets, and all you get when the output is piped, since
+nothing is opened then. `ris map --list` prints the same list as the
+page's, with each file's reasons, and opens nothing.
 `ris map --html map.html` writes the page to a file you name and opens
 nothing, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the

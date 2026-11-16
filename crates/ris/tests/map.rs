@@ -186,7 +186,7 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(
         keys(&doc),
         [
-            "base", "diffs", "edges", "nodes", "phase", "tip", "tip_ref", "totals"
+            "base", "diffs", "edges", "nodes", "phase", "ranked", "tip", "tip_ref", "totals"
         ]
     );
     assert_eq!(
@@ -569,6 +569,128 @@ fn an_auditor_s_judgement_of_a_file_stands_on_the_map_over_the_computed_level() 
     ok(&dir, "person", &["phase", "close"]);
     assert_eq!(data(&dir, &["map"])["nodes"], doc["nodes"]);
     refused("wren", &judge, "no phase is open");
+}
+
+/// `ris map --list`: the changed files ranked by risk, highest first,
+/// each with its numbers and reasons, in the document's `ranked` order,
+/// from the same document `--json` gives; it opens nothing.
+#[test]
+fn the_list_ranks_the_changed_files_by_risk_with_their_reasons() {
+    let dir = setup("list");
+    ok(&dir, "person", &["phase", "open", "send frames"]);
+    work(&dir);
+    ok(
+        &dir,
+        "wren",
+        &[
+            "audit",
+            "--file",
+            "src/net.rs",
+            "--risk",
+            "high",
+            "--why",
+            "opens a socket with no timeout",
+        ],
+    );
+    let doc = data(&dir, &["map"]);
+
+    // `ranked` is every changed node, once, the highest level first.
+    let ranked: Vec<&str> = doc["ranked"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
+    let mut changed: Vec<&str> = doc["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["status"] != "unchanged")
+        .map(|n| n["path"].as_str().unwrap())
+        .collect();
+    let mut sorted = ranked.clone();
+    sorted.sort();
+    changed.sort();
+    assert_eq!(sorted, changed, "{doc}");
+    let rank = |p: &str| match node(&doc, p)["risk"]["level"].as_str() {
+        Some("high") => 2,
+        Some("medium") => 1,
+        _ => 0,
+    };
+    assert!(
+        ranked.windows(2).all(|w| rank(w[0]) >= rank(w[1])),
+        "{ranked:?}"
+    );
+    assert_eq!(ranked[..2], ["src/net.rs", "docs/wire.md"]);
+
+    // The text: the totals, then a row a file in that order, each
+    // followed by its reasons.
+    let text = ok(&dir, "person", &["map", "--list"]);
+    assert!(
+        text.starts_with("P-1: 5 of 6 source file(s) changed"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n2 test file(s) left off the map: 2 changed (+5 -0)\n"),
+        "{text}"
+    );
+    assert!(!text.contains("tests/"), "{text}");
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   ") && !l.starts_with("  next:"))
+        .collect();
+    let paths: Vec<&str> = rows
+        .iter()
+        .map(|r| {
+            ranked
+                .iter()
+                .copied()
+                .find(|p| r.contains(&format!(" {p}")))
+                .unwrap_or_else(|| panic!("a ranked path in {r}"))
+        })
+        .collect();
+    assert_eq!(paths, ranked, "{text}");
+    assert!(rows[0].starts_with("  high "), "{text}");
+    assert!(rows[0].contains("+"), "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| *l == rows[0]).unwrap();
+    assert_eq!(
+        lines[at + 1].trim(),
+        "judged high by wren: opens a socket with no timeout"
+    );
+    assert_eq!(
+        lines[at + 2].trim(),
+        "computed low: touches the outside: network"
+    );
+    assert!(
+        text.contains("computed medium: a contract or format"),
+        "{text}"
+    );
+    // A file with no signal still says so.
+    assert!(text.contains("computed low: no signal counts"), "{text}");
+
+    // With --json it is the same document as `ris map`.
+    assert_eq!(data(&dir, &["map", "--list"]), doc);
+    // It writes and opens nothing, and is not a page of its own.
+    assert!(!dir.join(".osiris/map.html").exists());
+    let out = ris(&dir, "person", &["map", "--list", "--html", "x.html"]);
+    assert!(!out.status.success());
+    assert!(!dir.join("x.html").exists());
+
+    // The default text follows the same order.
+    let plain = ok(&dir, "person", &["map"]);
+    let order: Vec<&str> = plain
+        .lines()
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   ") && !l.starts_with("  next:"))
+        .map(|r| {
+            ranked
+                .iter()
+                .copied()
+                .find(|p| r.contains(&format!(" {p}")))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(order, ranked, "{plain}");
 }
 
 #[test]

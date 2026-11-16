@@ -1777,6 +1777,13 @@
             }
           ]
         },
+        "ranked": {
+          "description": "The changed nodes' paths in the order to read them: the highest\nrisk level that stands first, then the heaviest, then by path.\nThe order `ris map --list` prints and the page lists.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "tip": {
           "type": "string"
         },
@@ -1794,6 +1801,7 @@
         "tip_ref",
         "totals",
         "nodes",
+        "ranked",
         "edges",
         "diffs"
       ],

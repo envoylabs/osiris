@@ -715,6 +715,10 @@ pub struct Map {
     pub tip_ref: String,
     pub totals: MapTotals,
     pub nodes: Vec<crate::map::Node>,
+    /// The changed nodes' paths in the order to read them: the highest
+    /// risk level that stands first, then the heaviest, then by path.
+    /// The order `ris map --list` prints and the page lists.
+    pub ranked: Vec<String>,
     pub edges: Vec<crate::map::Edge>,
     /// Each changed node's unified diff between `base` and `tip`, by
     /// path, as `git diff` writes it; empty when `base` is null.
