@@ -1,5 +1,5 @@
 $ ris ready
-[stderr] no .osiris/ in /private<dir> or above
+[stderr] no .osiris/ in <dir> or above
   next: `ris init` in the project root
 [exit 1]
 
@@ -216,7 +216,7 @@ for the person to answer.
 [exit 0]
 
 $ ris init
-[stderr] /private<dir>/.osiris already exists
+[stderr] <dir>/.osiris already exists
 [exit 1]
 
 $ ris item add too early
