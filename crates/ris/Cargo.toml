@@ -35,3 +35,4 @@ tree-sitter-clojure-orchard.workspace = true
 jsonschema.workspace = true
 serde_json.workspace = true
 ris-core.workspace = true
+boa_engine.workspace = true

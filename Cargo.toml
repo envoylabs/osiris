@@ -30,3 +30,5 @@ tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
 tree-sitter-go = "0.25"
 tree-sitter-clojure-orchard = "0.2"
+# Runs the map page's script in a test, with no browser (D-115).
+boa_engine = "0.22"

@@ -2167,3 +2167,7 @@ impl Language for Rust {
 #[cfg(test)]
 #[path = "tests/map.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/map_page.rs"]
+mod page_tests;
