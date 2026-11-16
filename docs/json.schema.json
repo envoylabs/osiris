@@ -453,6 +453,111 @@
       ],
       "type": "object"
     },
+    "CallGraph": {
+      "description": "The calls around the phase's changed functions, for a view of one\nfunction: every changed function and every function one call from\none, in full; the functions one call further, by name only.",
+      "properties": {
+        "functions": {
+          "description": "By path, then first line.",
+          "items": {
+            "$ref": "#/$defs/CallNode"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "functions"
+      ],
+      "type": "object"
+    },
+    "CallNode": {
+      "description": "One function of the call graph.",
+      "properties": {
+        "callers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "calls": {
+          "description": "The functions it calls and those that call it, by id; empty for\na function given by name only.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "changed": {
+          "description": "The lines of it the phase added.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "direct": {
+          "description": "Whether it holds an effect site itself, and their kinds, sorted.",
+          "type": "boolean"
+        },
+        "effects": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "end": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "`path:start`, which `calls` and `callers` name it by.",
+          "type": "string"
+        },
+        "lines": {
+          "description": "Its text at the tip, one entry a line from `start`; null for a\nfunction given by name only.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sites": {
+          "description": "Its effect sites; empty for a function given by name only.",
+          "items": {
+            "$ref": "#/$defs/Site"
+          },
+          "type": "array"
+        },
+        "start": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "path",
+        "name",
+        "start",
+        "end",
+        "direct",
+        "effects",
+        "sites",
+        "changed",
+        "lines",
+        "calls",
+        "callers"
+      ],
+      "type": "object"
+    },
     "Callee": {
       "description": "A function of the repository, by file and name.",
       "properties": {
@@ -1898,6 +2003,10 @@
             "null"
           ]
         },
+        "call_graph": {
+          "$ref": "#/$defs/CallGraph",
+          "description": "The calls around the phase's changed functions, for the page's\nview of one function; empty when no file is read inside."
+        },
         "diffs": {
           "additionalProperties": {
             "type": "string"
@@ -1953,7 +2062,8 @@
         "nodes",
         "ranked",
         "edges",
-        "diffs"
+        "diffs",
+        "call_graph"
       ],
       "type": "object"
     },
@@ -3662,6 +3772,24 @@
       "required": [
         "signal",
         "reason"
+      ],
+      "type": "object"
+    },
+    "Site": {
+      "description": "An effect site in a function: its line and kind.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "line": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "line",
+        "kind"
       ],
       "type": "object"
     },

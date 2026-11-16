@@ -759,6 +759,9 @@ pub struct Map {
     /// Each changed node's unified diff between `base` and `tip`, by
     /// path, as `git diff` writes it; empty when `base` is null.
     pub diffs: std::collections::BTreeMap<String, String>,
+    /// The calls around the phase's changed functions, for the page's
+    /// view of one function; empty when no file is read inside.
+    pub call_graph: crate::map::CallGraph,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]

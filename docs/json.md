@@ -382,6 +382,17 @@ or reshaped.
   lies under one: a list shipped per language, extended per project in
   `[map.effects.<language>]` of `.osiris/config.toml`. A method called
   on a value names no module and is not read.
+- `call_graph` holds the calls around the phase's changed functions,
+  for a view of one function: `functions`, sorted by `path` and then
+  `start`, are every changed function and every function one call from
+  one, in full, and the functions one call further, by name only. Each
+  has an `id` (`path:start`), its `path`, `name`, `start` and `end`,
+  whether it is `direct` and its `effects`, its effect `sites` (`line`
+  and `kind`), the lines of it the phase added (`changed`), its text at
+  `tip` as `lines` (one entry a line from `start`), and the ids of the
+  functions it `calls` and its `callers`. A function given by name only
+  has `lines` null and no sites, calls or callers. Empty when no file is
+  read inside.
 - `ranked` is the path of every changed node, each once, in the order
   to read them: the highest `risk.level` first, then the greatest
   `weight`, then by `path`. It is the order `ris map --list` prints

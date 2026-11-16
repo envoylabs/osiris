@@ -347,7 +347,13 @@ that effect, and one called by such a function feeds it; each is
 listed with the function and effect it reaches. Calls are matched by
 name, so a common method name can flag more than it should. `ris map
 --list` prints a file's marked lines and its one-step functions under
-its reasons, and on the page a file with any expands to show them. What counts is a list of names per language that ships
+its reasons, and on the page a file with any expands to show them.
+Click one of those lines, or the page's calls view, to see one function
+laid out left to right as execution flows: what calls it, the function,
+what it calls, and the effects reached, each a box with its own lines,
+the phase's changes marked and its effect sites labelled. Click a box
+beside it to move there. The page carries the functions one call from
+a changed function in full; one call further, it names them only. What counts is a list of names per language that ships
 with `ris`; add your own (a module of your project that wraps the
 database, say) under `[map.effects.<language>]` in
 `.osiris/config.toml`. Files of other languages stay at file level.

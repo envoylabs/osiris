@@ -186,7 +186,16 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(
         keys(&doc),
         [
-            "base", "diffs", "edges", "nodes", "phase", "ranked", "tip", "tip_ref", "totals"
+            "base",
+            "call_graph",
+            "diffs",
+            "edges",
+            "nodes",
+            "phase",
+            "ranked",
+            "tip",
+            "tip_ref",
+            "totals"
         ]
     );
     assert_eq!(
@@ -646,6 +655,31 @@ fn a_changed_file_s_functions_and_marked_lines_are_on_the_map() {
         json!([{"path": "src/store.rs", "function": "wipe"}])
     );
     assert_eq!(store["functions"][1]["steps"], json!([]));
+    // The call graph around the changed functions: each in full, with
+    // its own lines, the changed ones and its effect sites.
+    let graph = doc["call_graph"]["functions"].as_array().unwrap();
+    let in_graph = |id: &str| {
+        graph
+            .iter()
+            .find(|f| f["id"] == id)
+            .unwrap_or_else(|| panic!("{id} in {graph:?}"))
+    };
+    let wipe = in_graph("src/store.rs:10");
+    assert_eq!(wipe["name"], "wipe");
+    assert_eq!(
+        wipe["lines"][1],
+        "    std::process::Command::new(\"rm\").status().unwrap();"
+    );
+    assert_eq!(wipe["changed"], json!([10, 11, 12, 13]));
+    assert_eq!(
+        wipe["sites"],
+        json!([{"line": 11, "kind": "process"}, {"line": 12, "kind": "database"}])
+    );
+    assert_eq!(wipe["callers"], json!(["src/store.rs:15"]));
+    assert_eq!(
+        in_graph("src/store.rs:15")["calls"],
+        json!(["src/store.rs:10"])
+    );
     assert_eq!(
         store["functions"][2]["risk"]["signals"][0]["signal"],
         "reach"

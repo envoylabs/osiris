@@ -340,6 +340,8 @@ pub fn annotate(map: &mut crate::schema::Map, tree: &Tree, config: &crate::confi
         }
     }
     let graph = Graph::new(&files, &Locals::of(tree, &files), config);
+    let mut changed = Vec::new();
+    let mut added = BTreeMap::new();
     for node in &mut map.nodes {
         if matches!(node.status, "unchanged" | "deleted") {
             continue;
@@ -350,15 +352,22 @@ pub fn annotate(map: &mut crate::schema::Map, tree: &Tree, config: &crate::confi
             continue;
         };
         let reach = |f: &crate::syntax::Function| graph.reach(&node.path, f);
-        let (functions, marks) = inside(
-            parsed,
-            &changes(diff),
-            &config.effects_for(language),
-            &reach,
-        );
+        let lines = changes(diff);
+        let (functions, marks) = inside(parsed, &lines, &config.effects_for(language), &reach);
+        for c in &functions {
+            if let Some(f) = parsed
+                .functions
+                .iter()
+                .find(|f| (f.name.as_str(), f.start, f.end) == (c.name.as_str(), c.start, c.end))
+            {
+                changed.push((node.path.clone(), f.clone()));
+            }
+        }
+        added.insert(node.path.clone(), lines.added);
         node.functions = Some(functions);
         node.marks = Some(marks);
     }
+    map.call_graph = graph.around(&changed, tree, &added);
 }
 
 /// What a repository holds that says whether a call's module is its
@@ -426,12 +435,55 @@ impl Locals {
     }
 }
 
+/// An effect site in a function: its line and kind.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, schemars::JsonSchema)]
+pub struct Site {
+    pub line: u64,
+    pub kind: &'static str,
+}
+
+/// The calls around the phase's changed functions, for a view of one
+/// function: every changed function and every function one call from
+/// one, in full; the functions one call further, by name only.
+#[derive(Clone, Debug, Default, Serialize, schemars::JsonSchema)]
+pub struct CallGraph {
+    /// By path, then first line.
+    pub functions: Vec<CallNode>,
+}
+
+/// One function of the call graph.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct CallNode {
+    /// `path:start`, which `calls` and `callers` name it by.
+    pub id: String,
+    pub path: String,
+    pub name: String,
+    pub start: u64,
+    pub end: u64,
+    /// Whether it holds an effect site itself, and their kinds, sorted.
+    pub direct: bool,
+    pub effects: Vec<&'static str>,
+    /// Its effect sites; empty for a function given by name only.
+    pub sites: Vec<Site>,
+    /// The lines of it the phase added.
+    pub changed: Vec<u64>,
+    /// Its text at the tip, one entry a line from `start`; null for a
+    /// function given by name only.
+    pub lines: Option<Vec<String>>,
+    /// The functions it calls and those that call it, by id; empty for
+    /// a function given by name only.
+    pub calls: Vec<String>,
+    pub callers: Vec<String>,
+}
+
 /// One function of the repository, for the call graph.
 struct Known {
     path: String,
     language: &'static str,
     function: crate::syntax::Function,
     effects: Vec<&'static str>,
+    /// Its effect sites, by line.
+    sites: Vec<Site>,
 }
 
 /// Which function of the repository calls which, as far as names say.
@@ -457,7 +509,7 @@ impl Graph {
         for (path, (language, parsed)) in files {
             let patterns = config.effects_for(language);
             for f in &parsed.functions {
-                let effects: BTreeSet<&'static str> = parsed
+                let sites: BTreeSet<Site> = parsed
                     .references
                     .iter()
                     .filter(|r| f.start <= r.line && r.line <= f.end)
@@ -465,14 +517,16 @@ impl Graph {
                         patterns
                             .iter()
                             .filter(|(p, _)| crate::syntax::matches(p, &r.name))
-                            .map(|(_, k)| *k)
+                            .map(|(_, kind)| Site { line: r.line, kind })
                     })
                     .collect();
+                let effects: BTreeSet<&'static str> = sites.iter().map(|s| s.kind).collect();
                 known.push(Known {
                     path: path.clone(),
                     language,
                     function: f.clone(),
                     effects: effects.into_iter().collect(),
+                    sites: sites.into_iter().collect(),
                 });
             }
         }
@@ -532,14 +586,99 @@ impl Graph {
         }
     }
 
+    /// Where the function `f` of the file at `path` is in the graph.
+    fn index_of(&self, path: &str, f: &crate::syntax::Function) -> Option<usize> {
+        self.known
+            .iter()
+            .position(|k| k.path == path && k.function == *f)
+    }
+
+    /// The call graph around `changed` (functions by path), in full one
+    /// call out and by name one call further: the text of each from
+    /// `tree`, and the lines of it the phase added from `added` (by
+    /// path).
+    pub fn around(
+        &self,
+        changed: &[(String, crate::syntax::Function)],
+        tree: &Tree,
+        added: &BTreeMap<String, BTreeSet<u64>>,
+    ) -> CallGraph {
+        let id = |i: usize| {
+            let k = &self.known[i];
+            format!("{}:{}", k.path, k.function.start)
+        };
+        let neighbours = |i: usize| {
+            self.calls
+                .get(&i)
+                .into_iter()
+                .flatten()
+                .chain(self.callers.get(&i).into_iter().flatten())
+                .copied()
+                .collect::<Vec<usize>>()
+        };
+        let centre: BTreeSet<usize> = changed
+            .iter()
+            .filter_map(|(path, f)| self.index_of(path, f))
+            .collect();
+        let full: BTreeSet<usize> = centre
+            .iter()
+            .flat_map(|i| std::iter::once(*i).chain(neighbours(*i)))
+            .collect();
+        let named: BTreeSet<usize> = full
+            .iter()
+            .flat_map(|i| neighbours(*i))
+            .filter(|i| !full.contains(i))
+            .collect();
+        let mut functions: Vec<CallNode> = full
+            .iter()
+            .chain(&named)
+            .map(|i| {
+                let k = &self.known[*i];
+                let f = &k.function;
+                let whole = full.contains(i);
+                let ids = |of: Option<&BTreeSet<usize>>| -> Vec<String> {
+                    if whole {
+                        of.into_iter().flatten().map(|j| id(*j)).collect()
+                    } else {
+                        Vec::new()
+                    }
+                };
+                CallNode {
+                    id: id(*i),
+                    path: k.path.clone(),
+                    name: f.name.clone(),
+                    start: f.start,
+                    end: f.end,
+                    direct: !k.effects.is_empty(),
+                    effects: k.effects.clone(),
+                    sites: if whole { k.sites.clone() } else { Vec::new() },
+                    changed: added
+                        .get(&k.path)
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .filter(|l| f.start <= *l && *l <= f.end)
+                        .collect(),
+                    lines: whole.then(|| tree.get(&k.path)).flatten().map(|text| {
+                        text.lines()
+                            .skip(f.start.saturating_sub(1) as usize)
+                            .take((f.end + 1).saturating_sub(f.start) as usize)
+                            .map(str::to_owned)
+                            .collect()
+                    }),
+                    calls: ids(self.calls.get(i)),
+                    callers: ids(self.callers.get(i)),
+                }
+            })
+            .collect();
+        functions.sort_by(|a, b| (&a.path, a.start).cmp(&(&b.path, b.start)));
+        CallGraph { functions }
+    }
+
     /// For the function `f` of the file at `path`: the functions it
     /// calls, and its steps to an effect.
     pub fn reach(&self, path: &str, f: &crate::syntax::Function) -> (Vec<Callee>, Vec<Step>) {
-        let Some(at) = self
-            .known
-            .iter()
-            .position(|k| k.path == path && k.function == *f)
-        else {
+        let Some(at) = self.index_of(path, f) else {
             return (Vec::new(), Vec::new());
         };
         let callee = |i: &usize| Callee {
@@ -916,6 +1055,7 @@ pub fn document(
         ranked,
         edges: edges.into_iter().collect(),
         diffs: BTreeMap::new(),
+        call_graph: CallGraph::default(),
     }
 }
 

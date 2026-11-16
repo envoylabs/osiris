@@ -541,6 +541,49 @@ fn a_changed_function_one_step_from_an_effect_triggers_or_feeds_it() {
     assert_eq!(calls, [callee("src/app.rs", "prepare")]);
     assert!(steps.is_empty());
 
+    // Around `prepare`: it and its neighbours in full; their own
+    // neighbours by name only.
+    let added: BTreeMap<String, BTreeSet<u64>> =
+        [("src/app.rs".to_owned(), [9].into_iter().collect())].into();
+    let around = graph.around(
+        &[("src/app.rs".to_owned(), function("src/app.rs", "prepare"))],
+        &tree,
+        &added,
+    );
+    let shape: Vec<(&str, bool, Vec<u64>)> = around
+        .functions
+        .iter()
+        .map(|f| (f.id.as_str(), f.lines.is_some(), f.changed.clone()))
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("src/app.rs:3", true, vec![]),
+            ("src/app.rs:9", true, vec![9]),
+            ("src/app.rs:11", true, vec![]),
+            // Called by run, which is one call out: named only.
+            ("src/net.rs:4", false, vec![]),
+            ("src/store.rs:6", false, vec![]),
+            ("src/store.rs:9", false, vec![]),
+        ]
+    );
+    let prepare = &around.functions[1];
+    assert_eq!(
+        prepare.lines.as_deref(),
+        Some(&["pub fn prepare() {}".to_owned()][..])
+    );
+    // In the order the files and their functions come.
+    assert_eq!(prepare.callers, ["src/app.rs:3", "src/app.rs:11"]);
+    let write = &around.functions[2];
+    assert_eq!(
+        write.sites,
+        [Site {
+            line: 12,
+            kind: "filesystem"
+        }]
+    );
+    assert!(around.functions[3].calls.is_empty() && around.functions[3].sites.is_empty());
+
     // One step adds a point and says why.
     let risk = function_risk(
         &[],
@@ -638,6 +681,17 @@ fn the_page_lists_the_ranked_files_and_opens_on_the_list() {
     assert!(PAGE.contains("var marks = n.marks || [];"));
     assert!(PAGE.contains("event.stopPropagation();\n        detail.hidden = !detail.hidden;"));
     assert!(PAGE.contains("toggle.setAttribute(\"aria-expanded\""));
+    // The calls view: drawn from the document's call graph, opened from
+    // a marked line, a neighbour taking the focus when clicked, its
+    // boxes in the diff pane's rows.
+    assert!(PAGE.contains("id=\"view-calls\" type=\"button\" aria-pressed=\"false\""));
+    assert!(PAGE.contains("var cg = (doc.call_graph && doc.call_graph.functions) || [];"));
+    assert!(PAGE.contains("if (m[\"function\"]) { opens(div, m[\"function\"], m.line); }"));
+    assert!(PAGE.contains("b.addEventListener(\"click\", function () { focus(f.id); });"));
+    assert!(PAGE.contains("body.className = \"diff box-body\";"));
+    for column in ["called by", "function", "calls", "effects reached"] {
+        assert!(PAGE.contains(&format!("column(\"{column}\"")), "{column}");
+    }
     // Expanded, it shows each function one step from an effect too.
     assert!(
         PAGE.contains("f.steps.forEach(function (s) { steps.push({ from: f.name, step: s }); });")

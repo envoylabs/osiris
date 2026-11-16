@@ -247,6 +247,62 @@
   }
   #list .expand:hover, #list .expand:focus-visible { color: var(--modified); outline: none; }
   #list tr.marks td { padding: 2px 10px 8px 36px; font-size: 12px; }
+  #list tr.marks div.go { cursor: pointer; }
+  #list tr.marks div.go:hover, #list tr.marks div.go:focus-visible { color: var(--modified); outline: none; }
+
+  /* The calls view: one function, left to right as execution flows. */
+  body.calling svg, body.calling #legend, body.calling #tip { visibility: hidden; }
+  #calls {
+    position: fixed;
+    top: 120px; left: 12px; right: 12px; bottom: 12px;
+    display: none;
+    overflow: auto;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  body.calling #calls { display: block; }
+  body.paned #calls { right: calc(var(--pane) + 12px); }
+  #calls-note { margin: 0 0 10px; color: var(--faint); }
+  #calls-columns { display: flex; gap: 24px; align-items: flex-start; }
+  #calls .column { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  #calls h2 { margin: 0; font-size: 12px; font-weight: 500; color: var(--faint); }
+  #calls .column + .column h2::before { content: "\2192  "; color: var(--modified); }
+  #calls .box {
+    background: var(--pane-ground);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  #calls .box.focus { border-color: var(--modified); box-shadow: 0 0 14px rgba(0, 229, 255, 0.25); }
+  #calls .box.direct { border-left: 3px solid var(--outside); }
+  #calls .box[tabindex] { cursor: pointer; }
+  #calls .box[tabindex]:hover, #calls .box[tabindex]:focus-visible {
+    border-color: var(--modified);
+    outline: none;
+  }
+  #calls .box-head {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(12, 14, 26, 0.9);
+    word-break: break-all;
+  }
+  #calls .box-name { color: var(--text); font-weight: 600; }
+  #calls .box-body { display: block; max-height: 320px; overflow: auto; font-size: 12px; }
+  #calls .box p { margin: 0; padding: 8px 10px; color: var(--faint); }
+  #calls .quiet { color: var(--faint); }
+  #calls .outside { color: var(--outside); }
+  #calls .site {
+    flex: none;
+    align-self: center;
+    margin: 0 8px;
+    padding: 0 6px;
+    color: var(--outside);
+    border: 1px solid var(--outside);
+    border-radius: 3px;
+    font-size: 11px;
+  }
 </style>
 </head>
 <body class="listing">
@@ -258,6 +314,7 @@
   <nav id="views" aria-label="Views of the change set">
     <button id="view-list" type="button" aria-pressed="true">list</button>
     <button id="view-graph" type="button" aria-pressed="false">graph</button>
+    <button id="view-calls" type="button" aria-pressed="false">calls</button>
   </nav>
 </header>
 <section id="list" aria-label="The changed files, highest risk first">
@@ -265,6 +322,10 @@
     <thead><tr><th>risk</th><th>file</th><th>lines</th><th>why</th></tr></thead>
     <tbody id="list-rows"></tbody>
   </table>
+</section>
+<section id="calls" aria-label="One function, with what calls it and what it calls">
+  <p id="calls-note"></p>
+  <div id="calls-columns"></div>
 </section>
 <svg id="map" role="img" aria-label="The phase's change set drawn over the source files">
   <defs>
@@ -699,12 +760,28 @@
       detail.hidden = true;
       var td = document.createElement("td");
       td.colSpan = 4;
+      // A line in a function opens the calls view on that function.
+      var opens = function (div, name, line) {
+        var f = functionAt(n.path, name, line);
+        if (f === null) { return; }
+        div.className = "go";
+        div.tabIndex = 0;
+        div.title = "Show " + f.name + " with its calls";
+        div.addEventListener("click", function (event) {
+          event.stopPropagation();
+          focus(f.id);
+        });
+        div.addEventListener("keydown", function (event) {
+          if (event.key === "Enter") { event.stopPropagation(); focus(f.id); }
+        });
+      };
       marks.forEach(function (m) {
         var div = document.createElement("div");
         div.appendChild(span("quiet", "line " + m.line + "  "));
         div.appendChild(span("outside", m.kind));
         if (m["function"]) { div.appendChild(span("", " in " + m["function"])); }
         if (m.risk) { div.appendChild(span("level " + m.risk, " (" + m.risk + ")")); }
+        if (m["function"]) { opens(div, m["function"], m.line); }
         td.appendChild(div);
       });
       steps.forEach(function (o) {
@@ -713,6 +790,7 @@
         div.appendChild(span("outside", o.step.effects.join(", ")));
         div.appendChild(span("", " via " + o.step["function"]));
         div.appendChild(span("quiet", "  " + o.step.path));
+        opens(div, o.from, null);
         td.appendChild(div);
       });
       detail.appendChild(td);
@@ -741,22 +819,162 @@
     none.textContent = "No source file changed in the phase.";
     list.appendChild(none);
   }
-  // The list starts below the header, whose height depends on the window.
+  // The calls view: one function laid out left to right as execution
+  // flows: what calls it, the function, what it calls, and the effects
+  // reached. Each box shows the function's own lines, the phase's
+  // changes marked and its effect sites labelled. It is drawn from the
+  // document's `call_graph` alone, which holds the changed functions
+  // and those one call from them in full, and those one call further by
+  // name only.
+  var callsView = document.getElementById("calls");
+  var cg = (doc.call_graph && doc.call_graph.functions) || [];
+  var byId = new Map(cg.map(function (f) { return [f.id, f]; }));
+  var focused = null;
+  // The innermost function of the file at `path` named `name` (any name
+  // when null) that holds `line` (any line when null).
+  var functionAt = function (path, name, line) {
+    var hit = null;
+    cg.forEach(function (f) {
+      var named = name === null || f.name === name;
+      var holds = line === null || (f.start <= line && line <= f.end);
+      if (f.path === path && named && holds && (hit === null || f.start > hit.start)) { hit = f; }
+    });
+    return hit;
+  };
+  var box = function (f, role) {
+    var b = document.createElement("div");
+    b.className = "box " + role + (f.direct ? " direct" : "");
+    var head = document.createElement("div");
+    head.className = "box-head";
+    head.appendChild(span("box-name", f.name));
+    head.appendChild(span("quiet", "  " + f.path + ":" + f.start));
+    if (f.effects.length > 0) { head.appendChild(span("outside", "  " + f.effects.join(", "))); }
+    b.appendChild(head);
+    if (f.lines === null) {
+      var note = document.createElement("p");
+      note.textContent = "Two calls from the phase's changes: the map names it and holds no more.";
+      b.appendChild(note);
+    } else {
+      var changed = new Set(f.changed);
+      var sites = new Map();
+      f.sites.forEach(function (s) { sites.set(s.line, (sites.get(s.line) || []).concat([s.kind])); });
+      var body = document.createElement("div");
+      body.className = "diff box-body";
+      f.lines.forEach(function (text, i) {
+        var at = f.start + i;
+        var r = row(changed.has(at) ? "add" : "ctx", "", at, changed.has(at) ? "+" : "", text);
+        if (sites.has(at)) { r.appendChild(span("site", sites.get(at).join(", "))); }
+        body.appendChild(r);
+      });
+      b.appendChild(body);
+    }
+    // A neighbour takes the focus when clicked.
+    if (role !== "focus") {
+      b.tabIndex = 0;
+      b.title = "Show " + f.name + " with its calls";
+      b.addEventListener("click", function () { focus(f.id); });
+      b.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") { focus(f.id); }
+      });
+    }
+    return b;
+  };
+  var column = function (title, boxes) {
+    var col = document.createElement("div");
+    col.className = "column";
+    var h = document.createElement("h2");
+    h.textContent = title;
+    col.appendChild(h);
+    if (boxes.length === 0) {
+      var none = document.createElement("p");
+      none.className = "quiet";
+      none.textContent = "none the map knows of";
+      col.appendChild(none);
+    }
+    boxes.forEach(function (b) { col.appendChild(b); });
+    return col;
+  };
+  var focus = function (id) {
+    var f = byId.get(id);
+    if (!f) { return; }
+    focused = f;
+    var of = function (ids) {
+      return ids.map(function (i) { return byId.get(i); }).filter(function (g) { return g; });
+    };
+    var callers = of(f.callers), callees = of(f.calls);
+    // The effects reached: the function's own, and those of what it
+    // calls, by kind, each with the functions that hold it.
+    var reached = new Map();
+    [f].concat(callees).forEach(function (g) {
+      g.effects.forEach(function (k) { reached.set(k, (reached.get(k) || []).concat([g.name])); });
+    });
+    var effects = [];
+    reached.forEach(function (via, kind) {
+      var e = document.createElement("div");
+      e.className = "box effect";
+      var head = document.createElement("div");
+      head.className = "box-head";
+      head.appendChild(span("outside", kind));
+      e.appendChild(head);
+      var p = document.createElement("p");
+      p.textContent = "via " + via.join(", ");
+      e.appendChild(p);
+      effects.push(e);
+    });
+    var cols = document.getElementById("calls-columns");
+    cols.textContent = "";
+    cols.appendChild(column("called by", callers.map(function (g) { return box(g, "caller"); })));
+    cols.appendChild(column("function", [box(f, "focus")]));
+    cols.appendChild(column("calls", callees.map(function (g) { return box(g, "callee"); })));
+    cols.appendChild(column("effects reached", effects));
+    document.getElementById("calls-note").textContent =
+      f.name + " in " + f.path + ": click a box beside it to move there.";
+    callsView.scrollTop = 0;
+    showView("calls");
+  };
+
+  // The list and the calls view start below the header, whose height
+  // depends on the window.
   var placeList = function () {
-    list.style.top = (document.querySelector("header").getBoundingClientRect().bottom + 12) + "px";
+    var top = (document.querySelector("header").getBoundingClientRect().bottom + 12) + "px";
+    list.style.top = top;
+    callsView.style.top = top;
   };
   placeList();
 
-  // The page opens on the list; the graph is the other view.
-  var views = { list: document.getElementById("view-list"), graph: document.getElementById("view-graph") };
+  // The page opens on the list; the graph and the calls are the others.
+  var views = {
+    list: document.getElementById("view-list"),
+    graph: document.getElementById("view-graph"),
+    calls: document.getElementById("view-calls")
+  };
   var showView = function (name) {
     document.body.classList.toggle("listing", name === "list");
+    document.body.classList.toggle("calling", name === "calls");
     Object.keys(views).forEach(function (k) {
       views[k].setAttribute("aria-pressed", String(k === name));
     });
   };
   views.list.addEventListener("click", function () { showView("list"); });
   views.graph.addEventListener("click", function () { showView("graph"); });
+  views.calls.addEventListener("click", function () {
+    // With nothing picked yet, the first changed function of the
+    // highest-ranked file that has one.
+    if (focused === null) {
+      var first = null;
+      (doc.ranked || []).some(function (path) {
+        var changedHere = (byPath.get(path) || {}).functions || [];
+        first = changedHere.length > 0
+          ? functionAt(path, changedHere[0].name, changedHere[0].start)
+          : null;
+        return first !== null;
+      });
+      if (first !== null) { focus(first.id); return; }
+      document.getElementById("calls-note").textContent =
+        "No changed function the map reads: pick a marked line in the list.";
+    }
+    showView("calls");
+  });
   // A drag ends without a click, so moving a node does not open it.
   node.on("click", function (event, n) {
     if (!event.defaultPrevented) { pick(n); }
