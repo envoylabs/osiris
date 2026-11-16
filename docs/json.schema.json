@@ -4645,7 +4645,7 @@
       "type": "object"
     },
     "Tally": {
-      "description": "What a phase came to: the items planned in it, the merges made while\nit was open (an item carried in from an earlier phase counts where\nit merged), and the items left unsettled, neither merged nor\nsuperseded, which the next phase inherits.",
+      "description": "What a phase came to: the items it opened with, the items planned\nin it, the merges made while it was open (an item carried in from an\nearlier phase counts where it merged), and the items left unsettled,\nneither merged nor superseded, which the next phase inherits.",
       "properties": {
         "carried_over": {
           "format": "uint",
@@ -4657,13 +4657,21 @@
           "minimum": 0,
           "type": "integer"
         },
+        "opened_with": {
+          "description": "The items tagged for the phase before it opened that it opened\nwith: those `ris phase open` brought in, not those it moved on.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
         "planned": {
+          "description": "The items added while the phase was open.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
         }
       },
       "required": [
+        "opened_with",
         "planned",
         "merged",
         "carried_over"

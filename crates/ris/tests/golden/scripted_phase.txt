@@ -467,6 +467,7 @@ $ ris --json report
     "tally": {
       "carried_over": 4,
       "merged": 0,
+      "opened_with": 0,
       "planned": 4
     }
   },
@@ -601,6 +602,7 @@ $ ris --json report
     "tally": {
       "carried_over": 4,
       "merged": 0,
+      "opened_with": 0,
       "planned": 4
     }
   },
@@ -745,6 +747,7 @@ $ ris --json report
     "tally": {
       "carried_over": 4,
       "merged": 0,
+      "opened_with": 0,
       "planned": 4
     }
   },
@@ -1012,7 +1015,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
-P-1: 4 planned, 2 merged, 2 carry over if closed now
+P-1: opened with 0, 4 planned, 2 merged, 2 carry over if closed now
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -1059,7 +1062,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
-P-1: 4 planned, 2 merged, 2 carried over
+P-1: opened with 0, 4 planned, 2 merged, 2 carried over
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -1240,6 +1243,7 @@ $ ris --json report
     "tally": {
       "carried_over": 2,
       "merged": 2,
+      "opened_with": 0,
       "planned": 4
     }
   },

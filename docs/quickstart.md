@@ -431,10 +431,11 @@ ris phase close                        # merges phase/P-1 into main
 the rest over: an item not merged loses its phase tag and stays open,
 in the backlog, until you tag it for a later phase with `ris item
 phase` or bring it into the open one with `ris item bring-in`. The
-report it prints says how many items the phase planned, how
-many were merged while it was open, and how many carry over; `ris
-report` shows the same line for the open phase, as it would read if
-closed now.
+report it prints says how many items the phase opened with (those
+tagged for it before it opened), how many were added while it was
+open (planned), how many were merged while it was open, and how many
+carry over; `ris report` shows the same line for the open phase, as
+it would read if closed now.
 
 `ris down` kills nothing: each agent stops at its next claim, and
 worktrees and the log are kept. `ris up` after the next `ris phase

@@ -168,6 +168,26 @@ fn planning_happens_with_no_phase_open_and_the_next_phase_opens_with_it() {
     let err = refused(&dir, "heron", &["claim", "I-1"]);
     assert!(err.contains("I-1 has no phase"), "{err}");
 
+    // The tally counts what the phase opened with beside what was
+    // planned in it, and keeps the count when a tag later moves.
+    let tally = |dir: &Path| json(dir, "person", &["report"])["tally"].clone();
+    assert_eq!(tally(&dir)["opened_with"], 2);
+    assert_eq!(tally(&dir)["planned"], 0);
+    ok(&dir, "person", &["item", "add", "found in flight"]);
+    ok(&dir, "person", &["item", "phase", "I-4", "none"]);
+    assert_eq!(
+        (
+            tally(&dir)["opened_with"].clone(),
+            tally(&dir)["planned"].clone()
+        ),
+        (2.into(), 1.into())
+    );
+    let report = ok(&dir, "person", &["report"]);
+    assert!(
+        report.contains("P-1: opened with 2, 1 planned, 0 merged,"),
+        "{report}"
+    );
+
     // The log holds together and replays.
     ok(&dir, "person", &["verify"]);
 }
@@ -222,7 +242,7 @@ fn the_open_phases_scope_is_the_persons_and_a_closed_phase_takes_nothing() {
     // Its tally still counts what was added while it was open.
     let report = ok(&dir, "person", &["report"]);
     assert!(
-        report.contains("P-1: 3 planned, 0 merged, 3 carried over"),
+        report.contains("P-1: opened with 0, 3 planned, 0 merged, 3 carried over"),
         "{report}"
     );
 
@@ -245,5 +265,8 @@ fn the_open_phases_scope_is_the_persons_and_a_closed_phase_takes_nothing() {
     );
     assert_eq!(phase_of(&dir, "I-2"), "P-3");
     assert_eq!(ok(&dir, "heron", &["ready"]).trim(), "nothing ready");
+    // What it moved on, it did not open with.
+    let v = json(&dir, "person", &["report"]);
+    assert_eq!(v["tally"]["opened_with"], 0, "{v}");
     ok(&dir, "person", &["verify"]);
 }

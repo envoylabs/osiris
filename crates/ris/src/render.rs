@@ -736,8 +736,9 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
     let open = matches!(phase.state, PhaseState::Open);
     let t = tally(l, phase.id);
     s.push_str(&format!(
-        "{}: {} planned, {} merged, {} {}\n",
+        "{}: opened with {}, {} planned, {} merged, {} {}\n",
         phase.id,
+        t.opened_with,
         t.planned,
         t.merged,
         t.carried_over,
@@ -861,12 +862,16 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
     )
 }
 
-/// What a phase came to: the items planned in it, the merges made while
-/// it was open (an item carried in from an earlier phase counts where
-/// it merged), and the items left unsettled, neither merged nor
-/// superseded, which the next phase inherits.
+/// What a phase came to: the items it opened with, the items planned
+/// in it, the merges made while it was open (an item carried in from an
+/// earlier phase counts where it merged), and the items left unsettled,
+/// neither merged nor superseded, which the next phase inherits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Tally {
+    /// The items tagged for the phase before it opened that it opened
+    /// with: those `ris phase open` brought in, not those it moved on.
+    pub opened_with: usize,
+    /// The items added while the phase was open.
     pub planned: usize,
     pub merged: usize,
     pub carried_over: usize,
@@ -909,10 +914,38 @@ pub fn tally(l: &Loaded, phase: PhaseId) -> Tally {
         ));
     }
     Tally {
+        opened_with: opened_with(l, phase),
         planned,
         merged,
         carried_over,
     }
+}
+
+/// How many items `phase` opened with: those tagged for it, and not
+/// superseded, in the state just before its `PhaseOpened` event, which
+/// is what `ris phase open` reads, less those whose tag the open moved
+/// on to the next phase. The open writes those moves straight after
+/// its `PhaseOpened` event, so they are the run of `ItemScoped` events
+/// there that move a tagged item to the next phase. Zero for a phase
+/// not opened.
+fn opened_with(l: &Loaded, phase: PhaseId) -> usize {
+    use ris_core::event::Structure;
+    let Some(opened) = l.state.phases.get(&phase).map(|p| p.at) else {
+        return 0;
+    };
+    let at = l.log.partition_point(|e| e.seq < opened);
+    let Ok(before) = ris_core::state::State::fold(&l.log[..at]) else {
+        return 0;
+    };
+    let mut tagged: std::collections::BTreeSet<_> = before.tagged(phase).map(|i| i.id).collect();
+    let next = Some(PhaseId(phase.0.saturating_add(1)));
+    for e in l.log.iter().skip(at + 1) {
+        match &e.structure {
+            Structure::ItemScoped { item, phase: to } if *to == next && tagged.remove(item) => {}
+            _ => break,
+        }
+    }
+    tagged.len()
 }
 
 /// The report hash of the phase closed before `phase`, or zero.

@@ -97,7 +97,9 @@ line of output per envelope, and ends once no seat is running; without
   in motion in every phase: open decisions, open actions and unmerged
   items, where only nodes with an edge are listed.
 - `ris report` (and `phase` in `ris phase close`'s data): `tally`,
-  the phase's `planned` items, the `merged` count (merges made while it
+  the items the phase `opened_with` (those tagged for it before it
+  opened that `ris phase open` brought in, not those it moved on), the
+  phase's `planned` items (added while it was open), the `merged` count (merges made while it
   was open, carried-in items included) and `carried_over` (items, from
   any phase up to it, neither merged nor superseded; for an open phase,
   what would carry over if it closed now).
