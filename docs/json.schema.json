@@ -3481,16 +3481,42 @@
       ]
     },
     "Rules": {
-      "description": "`ris rules`.",
-      "properties": {
-        "rules": {
-          "type": "string"
+      "anyOf": [
+        {
+          "properties": {
+            "rules": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "rules"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "changed": {
+              "description": "Whether the file changed.",
+              "type": "boolean"
+            },
+            "rendered": {
+              "description": "The rules file rendered.",
+              "type": "string"
+            },
+            "source": {
+              "description": "The project's own part, as the command named it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "rendered",
+            "changed"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "rules"
       ],
-      "type": "object"
+      "description": "`ris rules`: the rules, or with `--render` what was rendered."
     },
     "Salt": {
       "description": "An event's salt: 32 lowercase hex characters.",

@@ -165,6 +165,11 @@ line of output per envelope, and ends once no seat is running; without
   same findings, as a `config` error, before it starts any seat.
 - `ris show A-n`: a person action, with `blocks`, `informs`, `state`
   and, when it has one, its `check`.
+- `ris rules`: `rules`, the agents' rules as text. With `--render
+  <project part> --to <rules file>`, the person's only, it writes the
+  rules file (those rules, then the project's part) and gives `source`
+  and `rendered`, the two paths as given, and `changed`, whether the
+  file differed from what was there.
 - `ris decide` with no decision: `queue`, the open substantive
   decisions oldest first, whatever phase raised them, each entry the
   `data` that `ris eli5 D-n` gives (`decision`, and `explanation` or

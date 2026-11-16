@@ -83,9 +83,19 @@ enum Cmd {
         follow: bool,
     },
     /// Print the agents' rules (what OSIRIS.md holds). Not listed in
-    /// help: named wherever it is needed.
+    /// help: named wherever it is needed. With `--render`, write a
+    /// rules file instead: these rules, then the project's own part.
     #[command(hide = true)]
-    Rules,
+    Rules {
+        /// The project's own part of the rules, a file in the
+        /// repository, by its relative path. The person's only: a seat
+        /// never writes its own rules.
+        #[arg(long, requires = "to")]
+        render: Option<PathBuf>,
+        /// The rules file to render into, by its relative path.
+        #[arg(long, requires = "render")]
+        to: Option<PathBuf>,
+    },
     /// Add an agent seat to .osiris/config.toml (the person's), or
     /// report a fault in your own seat's setup (`ris seat fault`).
     Seat {
@@ -710,10 +720,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             },
         ));
     }
-    if let Cmd::Rules = cli.command {
+    if let Cmd::Rules { render: None, .. } = cli.command {
         return Ok(Output::of(
             ris::project::RULES.trim_end(),
-            &schema::Rules {
+            &schema::Rules::Text {
                 rules: ris::project::RULES.to_owned(),
             },
         ));
@@ -739,7 +749,38 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     }
 
     match &cli.command {
-        Cmd::Init { .. } | Cmd::Rules | Cmd::Schema => unreachable!(),
+        Cmd::Init { .. } | Cmd::Schema => unreachable!(),
+
+        Cmd::Rules { render, to } => {
+            let (Some(source), Some(to)) = (render, to) else {
+                unreachable!("without --render the rules are printed above")
+            };
+            // A seat never writes its own rules: the person renders
+            // them, and reads the change before committing it.
+            if actor != Actor::Person {
+                return Err(CliError::Other(
+                    "refused: only the person renders a rules file; a seat never writes its own rules\n  \
+                     next: merge the change to the rules or to the project's part, and leave the rendering to the person"
+                        .into(),
+                ));
+            }
+            let changed = ris::rules_file::write(&cwd, source, to)?;
+            let (source, to) = (ris::rules_file::named(source)?, ris::rules_file::named(to)?);
+            Ok(Output::of(
+                if changed {
+                    format!(
+                        "rendered {to} from the rules and {source}\n  next: read the change with `git diff {to}` and commit it"
+                    )
+                } else {
+                    format!("{to} is already what the rules and {source} render")
+                },
+                &schema::Rules::Rendered {
+                    source,
+                    rendered: to,
+                    changed,
+                },
+            ))
+        }
 
         Cmd::Worktree { seat } => {
             let path = make_worktree(&p, seat)?;
@@ -2277,7 +2318,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         | Cmd::Status
         | Cmd::Verify
         | Cmd::Eli5 { .. }
-        | Cmd::Rules
+        | Cmd::Rules { render: None, .. }
         | Cmd::Logs { .. }
         | Cmd::Log { .. }
         | Cmd::Watch { .. }

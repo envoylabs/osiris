@@ -38,6 +38,22 @@ ris init --local
 listed in `.git/info/exclude`, which git never commits, and the rules
 the agents read go in `.osiris/OSIRIS.md`. `git status` is unchanged.
 
+A repository that commits its agents' rules file, with rules of its own
+beside those `ris` gives every project, keeps its own part in a file
+and renders the rules file from the two:
+
+```sh
+ris rules --render docs/project-rules.md --to AGENTS.md
+```
+
+The file is the rules `ris rules` prints, then the project's part as
+written, under a first line naming the command. Only you run it, since
+a seat never writes its own rules: a seat merges a change to the
+project's part (or, in the osiris repository, to the rules themselves),
+and you render and commit the file. The osiris repository's own
+`AGENTS.md` is kept this way, and a test fails when it is not what the
+command renders.
+
 ## 2. Declare the harness
 
 `.osiris/config.toml` is the one file you write. It stays on this

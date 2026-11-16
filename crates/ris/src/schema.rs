@@ -558,10 +558,21 @@ pub struct Init {
     pub local: bool,
 }
 
-/// `ris rules`.
+/// `ris rules`: the rules, or with `--render` what was rendered.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
-pub struct Rules {
-    pub rules: String,
+#[serde(untagged)]
+pub enum Rules {
+    Text {
+        rules: String,
+    },
+    Rendered {
+        /// The project's own part, as the command named it.
+        source: String,
+        /// The rules file rendered.
+        rendered: String,
+        /// Whether the file changed.
+        changed: bool,
+    },
 }
 
 /// `ris worktree`.
