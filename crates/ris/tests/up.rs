@@ -634,6 +634,11 @@ fn up_clears_a_run_whose_process_is_gone_and_starts_it_again() {
     rig.until("rook's run names its process", |_| {
         fs::read_to_string(&lock).is_ok_and(|s| !s.trim().is_empty())
     });
+    // The lock names the process before it starts the agent: wait for
+    // the agent's first line, so the kill leaves an agent behind.
+    rig.until("rook's agent has started", |r| {
+        r.ok(None, &["logs", "rook"]).contains("hello from rook")
+    });
     let pid = fs::read_to_string(&lock).unwrap().trim().to_owned();
     assert!(
         Command::new("kill")
