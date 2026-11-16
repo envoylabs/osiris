@@ -340,6 +340,53 @@ pub fn last_activity(text: &str, width: usize) -> Option<String> {
     })
 }
 
+/// How a finished run ended, from the agent tool's last result record
+/// in its output.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunEnd {
+    /// No result record: the run was cut off before the tool reported
+    /// (killed, or the tool failed to start), or the program is not
+    /// one that writes them.
+    NoResult,
+    /// The tool stopped on its usage limit; `resets` is when the limit
+    /// resets, in the tool's own words, when it said.
+    UsageLimit { resets: Option<String> },
+    /// The tool reported an error of another kind.
+    Error,
+    /// The tool finished the run normally.
+    Finished,
+}
+
+/// How a run ended, from its whole output `text`: the last record
+/// whose `type` is `result`. A usage limit is an error result whose
+/// text says the limit was hit, as Claude Code writes it ("You've hit
+/// your 5-hour limit · resets 3:20am (UTC)"); the reset time
+/// is the text after "resets".
+pub fn run_end(text: &str) -> RunEnd {
+    let Some(result) = text.lines().rev().find_map(|line| {
+        let v = serde_json::from_str::<serde_json::Value>(line).ok()?;
+        (v["type"] == "result").then_some(v)
+    }) else {
+        return RunEnd::NoResult;
+    };
+    if result["is_error"] != true {
+        return RunEnd::Finished;
+    }
+    let said = result["result"].as_str().unwrap_or("");
+    let lower = said.to_lowercase();
+    if lower.contains("usage limit") || (lower.contains("hit your") && lower.contains("limit")) {
+        let resets = ["resets ", "Resets "]
+            .iter()
+            .find_map(|word| said.find(word).map(|at| at + word.len()))
+            .map(|from| said[from..].trim().trim_end_matches('.'))
+            .filter(|r| !r.is_empty())
+            .map(str::to_owned);
+        RunEnd::UsageLimit { resets }
+    } else {
+        RunEnd::Error
+    }
+}
+
 /// Where a seat's git data lives: the repository's common git
 /// directory, and the seat's own entry under its `worktrees/` when the
 /// seat works in a linked worktree (`None` in the main checkout).

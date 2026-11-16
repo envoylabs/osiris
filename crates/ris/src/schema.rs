@@ -658,6 +658,9 @@ pub struct SeatStatus {
     pub running: bool,
     pub activity: Option<crate::status::Activity>,
     pub faults: Vec<String>,
+    /// For a seat not running that has run: why it stopped. Null while
+    /// it runs and before its first run.
+    pub stopped: Option<crate::status::Stopped>,
 }
 
 /// `ris scan`, clean. A hit is the `leak` error instead.

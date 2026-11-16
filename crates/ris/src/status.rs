@@ -59,6 +59,8 @@ pub struct Seat {
     /// run started, oldest first: what the person fixes in the
     /// configuration before the next `ris up`.
     pub faults: Vec<String>,
+    /// For a seat not running that has run: why it stopped.
+    pub stopped: Option<Stopped>,
 }
 
 /// What a running seat last did, read from its run's output file.
@@ -71,6 +73,61 @@ pub struct Activity {
     pub quiet_seconds: u64,
     /// Quiet for longer than `[runner] quiet_after_seconds`.
     pub stuck: bool,
+}
+
+/// Why a seat that is not running stopped, read from how its latest
+/// run ended and from the log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct Stopped {
+    /// `usage_limit`, `setup_fault`, `paused`, `nothing_left` or
+    /// `ended`.
+    pub reason: &'static str,
+    /// For `usage_limit`: when the limit resets, in the agent tool's
+    /// own words; null when it did not say, and for any other reason.
+    pub resets: Option<String>,
+}
+
+/// Why a seat stopped, the first that holds: the agent tool's usage
+/// limit, which its last result says; a setup fault the seat reported
+/// in that run; a pause by the person; a run that finished normally
+/// holding no item, which is how a seat stops once nothing is left for
+/// it to claim; and otherwise `ended` (killed, an error, or a stop while
+/// still holding an item).
+pub fn stopped(end: crate::runner::RunEnd, faulted: bool, paused: bool, holds: bool) -> Stopped {
+    use crate::runner::RunEnd;
+    let (reason, resets) = match end {
+        RunEnd::UsageLimit { resets } => ("usage_limit", resets),
+        _ if faulted => ("setup_fault", None),
+        _ if paused => ("paused", None),
+        RunEnd::Finished if !holds => ("nothing_left", None),
+        _ => ("ended", None),
+    };
+    Stopped { reason, resets }
+}
+
+/// A stop's reason in a few words, as the status line says it.
+pub fn stopped_words(s: &Stopped) -> String {
+    match (s.reason, &s.resets) {
+        ("usage_limit", Some(at)) => format!("usage limit, resets {at}"),
+        ("usage_limit", None) => "usage limit".into(),
+        ("setup_fault", _) => "setup fault".into(),
+        ("paused", _) => "paused by the person".into(),
+        ("nothing_left", _) => "nothing left to claim".into(),
+        _ => "ended".into(),
+    }
+}
+
+/// A seat's stop, from its latest run file in `runs`; `None` when it
+/// has never run or the file cannot be read.
+fn stop_of(runs: &Path, seat: &str, faulted: bool, paused: bool, holds: bool) -> Option<Stopped> {
+    let path = crate::runner::latest_run(runs, seat)?;
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(stopped(
+        crate::runner::run_end(&text),
+        faulted,
+        paused,
+        holds,
+    ))
 }
 
 /// How long a seat's last activity line may be on screen.
@@ -197,6 +254,20 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
             let uncommitted = worktree
                 .as_deref()
                 .and_then(|w| git(w, &["status", "--porcelain"]).map(|s| s.lines().count() as u32));
+            let faults: Vec<String> = l
+                .state
+                .faults
+                .get(&AgentName(name.clone()))
+                .into_iter()
+                .flatten()
+                .map(|at| l.text(*at, "what").to_owned())
+                .collect();
+            let paused = l.state.paused.contains(&AgentName(name.clone()));
+            let stopped = if running {
+                None
+            } else {
+                stop_of(&runs, name, !faults.is_empty(), paused, claim.is_some())
+            };
             Seat {
                 seat: name.clone(),
                 role: cfg.role,
@@ -206,19 +277,13 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 ahead,
                 behind,
                 uncommitted,
-                paused: l.state.paused.contains(&AgentName(name.clone())),
+                paused,
                 running,
                 activity: running
                     .then(|| activity(&runs, name, p.config.runner.quiet_after_seconds, now))
                     .flatten(),
-                faults: l
-                    .state
-                    .faults
-                    .get(&AgentName(name.clone()))
-                    .into_iter()
-                    .flatten()
-                    .map(|at| l.text(*at, "what").to_owned())
-                    .collect(),
+                faults,
+                stopped,
             }
         })
         .collect()
@@ -262,6 +327,9 @@ fn seat_lines(s: &Seat, place: &str) -> String {
     }
     if s.paused {
         line.push_str("  paused");
+    }
+    if let Some(st) = &s.stopped {
+        line.push_str(&format!("  stopped: {}", stopped_words(st)));
     }
     if let Some(a) = &s.activity {
         if a.stuck {
@@ -316,6 +384,7 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
             running: s.running,
             activity: s.activity.clone(),
             faults: s.faults.clone(),
+            stopped: s.stopped.clone(),
         })
         .collect();
     Output::of(text, &crate::schema::Status { seats: rows })

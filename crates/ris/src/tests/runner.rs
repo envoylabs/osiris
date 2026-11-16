@@ -4,6 +4,54 @@ fn checks() -> ChecksConfig {
     ChecksConfig::parse("[checks.test]\ncommand = \"cargo test\"\n").unwrap()
 }
 
+/// A result record as Claude Code writes it, with only the keys read.
+fn result(is_error: bool, said: &str) -> String {
+    serde_json::json!({
+        "type": "result",
+        "subtype": "success",
+        "is_error": is_error,
+        "result": said,
+    })
+    .to_string()
+}
+
+#[test]
+fn a_run_s_end_is_read_from_its_last_result_record() {
+    let start = r#"{"type":"system","subtype":"init"}"#;
+    // The usage limit, with when it resets in the tool's own words.
+    let limit = result(true, "You've hit your 5-hour limit · resets 3:20am (UTC)");
+    assert_eq!(
+        run_end(&format!("{start}\n{limit}\n")),
+        RunEnd::UsageLimit {
+            resets: Some("3:20am (UTC)".into())
+        }
+    );
+    // Said without a time, it is still the limit.
+    assert_eq!(
+        run_end(&result(true, "Usage limit reached.")),
+        RunEnd::UsageLimit { resets: None }
+    );
+    assert_eq!(run_end(&result(true, "API Error: 500")), RunEnd::Error);
+    // A finished run, though its text mentions a limit.
+    assert_eq!(
+        run_end(&result(
+            false,
+            "I stopped: you've hit your limit of patience"
+        )),
+        RunEnd::Finished
+    );
+    // The last result counts; output after it that is not JSON is
+    // passed over.
+    let done = result(false, "nothing left");
+    assert_eq!(
+        run_end(&format!("{limit}\n{done}\nplain text\n")),
+        RunEnd::Finished
+    );
+    // Cut off before any result, or a program that writes none.
+    assert_eq!(run_end(&format!("{start}\n")), RunEnd::NoResult);
+    assert_eq!(run_end("hello from rook\n"), RunEnd::NoResult);
+}
+
 #[test]
 fn an_auditor_cannot_edit_and_a_builder_can_run_its_checks() {
     let a = allowlist(Role::Auditor, &checks(), &[]);

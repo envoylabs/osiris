@@ -3198,6 +3198,17 @@
         "seat": {
           "type": "string"
         },
+        "stopped": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Stopped"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a seat not running that has run: why it stopped. Null while\nit runs and before its first run."
+        },
         "uncommitted": {
           "format": "uint32",
           "minimum": 0,
@@ -3225,7 +3236,8 @@
         "paused",
         "running",
         "activity",
-        "faults"
+        "faults",
+        "stopped"
       ],
       "type": "object"
     },
@@ -3353,6 +3365,27 @@
       },
       "required": [
         "seats"
+      ],
+      "type": "object"
+    },
+    "Stopped": {
+      "description": "Why a seat that is not running stopped, read from how its latest\nrun ended and from the log.",
+      "properties": {
+        "reason": {
+          "description": "`usage_limit`, `setup_fault`, `paused`, `nothing_left` or\n`ended`.",
+          "type": "string"
+        },
+        "resets": {
+          "description": "For `usage_limit`: when the limit resets, in the agent tool's\nown words; null when it did not say, and for any other reason.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reason",
+        "resets"
       ],
       "type": "object"
     },

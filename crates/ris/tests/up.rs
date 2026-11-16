@@ -786,6 +786,91 @@ fn up_and_down_leave_an_attended_seat_alone() {
     assert!(!seats_of(&rig, "run_started").contains(&rook));
 }
 
+/// Each seat ends its run its own way: rook on the agent tool's usage
+/// limit, heron having finished with nothing held, wren cut off with no
+/// result record. A result record is one line of the tool's stream
+/// JSON, with only the keys read.
+const ENDING_AGENT: &str = "#!/bin/sh\ncase \"$RIS_AGENT\" in\n\
+    rook) echo '{\"type\":\"result\",\"is_error\":true,\"result\":\"You have hit your 5-hour limit - resets 3:20am (UTC)\"}' ;;\n\
+    heron) echo '{\"type\":\"result\",\"is_error\":false,\"result\":\"nothing left\"}' ;;\n\
+    esac\nexit 0\n";
+
+/// `ris status` says why a seat that is not running stopped, read from
+/// how its last run ended, and `--json` carries it.
+#[test]
+fn status_says_why_each_stopped_seat_stopped() {
+    let rig = Rig::new("stopped", ENDING_AGENT);
+    let status = |r: &Rig| -> Value {
+        serde_json::from_slice(&r.ris(None, &["--json", "status"]).stdout).unwrap()
+    };
+    // Before any run, nothing is said.
+    let seats = status(&rig)["data"]["seats"].clone();
+    assert!(
+        seats
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["stopped"].is_null()),
+        "{seats}"
+    );
+    rig.ok(None, &["up"]);
+    rig.until("every seat's run has ended", |r| {
+        let v = status(r);
+        v["data"]["seats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["running"] == false && !s["stopped"].is_null())
+    });
+    let v = status(&rig);
+    common::validate_output(&["status"], &serde_json::to_string(&v).unwrap());
+    let stopped = |name: &str| {
+        v["data"]["seats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["seat"] == name)
+            .unwrap()["stopped"]
+            .clone()
+    };
+    assert_eq!(
+        stopped("rook"),
+        serde_json::json!({"reason": "usage_limit", "resets": "3:20am (UTC)"})
+    );
+    assert_eq!(
+        stopped("heron"),
+        serde_json::json!({"reason": "nothing_left", "resets": null})
+    );
+    assert_eq!(
+        stopped("wren"),
+        serde_json::json!({"reason": "ended", "resets": null})
+    );
+    let text = rig.ok(None, &["status"]);
+    let line = |name: &str| {
+        text.lines()
+            .find(|l| l.starts_with(name))
+            .unwrap_or_else(|| panic!("{name} in:\n{text}"))
+            .to_owned()
+    };
+    assert!(
+        line("rook").ends_with("stopped: usage limit, resets 3:20am (UTC)"),
+        "{text}"
+    );
+    assert!(
+        line("heron").ends_with("stopped: nothing left to claim"),
+        "{text}"
+    );
+    assert!(line("wren").ends_with("stopped: ended"), "{text}");
+
+    // Paused by the person, a seat whose run finished says so.
+    rig.ok(None, &["seat", "pause", "heron"]);
+    assert!(
+        rig.ok(None, &["status"])
+            .lines()
+            .any(|l| l.starts_with("heron") && l.ends_with("stopped: paused by the person")),
+    );
+}
+
 /// Watching the seats: `ris logs` with no seat prints every seat's
 /// output with its seat in front, and followed it streams them all
 /// until none is running; `ris status` shows what each running seat

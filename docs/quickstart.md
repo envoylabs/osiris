@@ -187,7 +187,11 @@ do, it says so.
 For each running seat, `ris status` shows what its agent last ran or
 said and how long ago its output last changed. A seat quiet for longer
 than `[runner] quiet_after_seconds` is marked possibly stuck; `ris logs
-<seat>` shows where it stopped.
+<seat>` shows where it stopped. For a seat that has run and is not
+running, it says why it stopped, beside the seat: nothing left to
+claim, paused by the person, a setup fault, the agent tool's usage
+limit (with the time it resets, when the tool says), or ended for any
+other ending, read from how its last run ended.
 
 A worktree is brought up to the phase branch only when that loses
 nothing: its branch has no commits of its own, its seat holds no claimed

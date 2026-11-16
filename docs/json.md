@@ -126,7 +126,14 @@ line of output per envelope, and ends once no seat is running; without
   since its output last changed, and `stuck` (quiet for longer than
   `[runner] quiet_after_seconds`); null otherwise; and `faults`, the
   setup faults the seat reported with `ris seat fault` since its latest
-  run started, oldest first.
+  run started, oldest first; and `stopped`, for a seat not running that
+  has run, why it stopped (null otherwise): `reason`, the first of
+  `usage_limit` (the agent tool's last result says it hit its usage
+  limit), `setup_fault` (it reported one in that run), `paused` (by the
+  person), `nothing_left` (its run finished normally holding no item)
+  and `ended` (anything else: killed, an error, or a stop while holding
+  an item); and `resets`, for `usage_limit`, when the limit resets in
+  the tool's own words, or null.
 - `ris phase open`: `phase`, `branch`, `docs_item` and `preflight`, what
   the writing seats would lack to run the checks, each
   `{"kind": "program", "check", "program"}`, `{"kind": "write", "tool",
