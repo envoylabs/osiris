@@ -140,6 +140,12 @@ file under a `tests` directory beside the source it tests, declared
 from the source file by one line, so a source file holds only behaviour
 and its diff shows only behaviour.
 
+A test never depends on the machine it runs on: no path, clock speed,
+system tool or configuration that differs between systems. A test that
+needs one sets it up itself: it makes its own directory and names it
+in its canonical form, waits for a condition and never for a fixed
+time, and writes the configuration it reads.
+
 ## Messages
 
 Typed and targeted; no broadcasts.
