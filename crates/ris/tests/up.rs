@@ -7,9 +7,11 @@
 mod common;
 
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -126,10 +128,61 @@ impl Drop for Rig {
     }
 }
 
+/// A running `ris` whose output is read line by line as it comes, so a
+/// test can wait until it has printed something.
+struct Follower {
+    child: std::process::Child,
+    lines: mpsc::Receiver<String>,
+    out: String,
+}
+
+impl Follower {
+    fn new(mut child: std::process::Child) -> Self {
+        let stdout = child.stdout.take().unwrap();
+        let (tx, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                if tx.send(line.unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            child,
+            lines,
+            out: String::new(),
+        }
+    }
+
+    /// Read output until `f` holds of all of it, or fail after a while.
+    fn until(&mut self, what: &str, f: impl Fn(&str) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !f(&self.out) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.lines.recv_timeout(left) {
+                Ok(line) => {
+                    self.out.push_str(&line);
+                    self.out.push('\n');
+                }
+                Err(_) => panic!("timed out: {what}; printed:\n{}", self.out),
+            }
+        }
+    }
+
+    /// Everything it printed, once it has exited.
+    fn finish(mut self) -> String {
+        self.out.extend(self.lines.iter().map(|l| l + "\n"));
+        self.child.wait().unwrap();
+        self.out
+    }
+}
+
 /// The fake agent prints who it is and waits until a file appears, so
-/// the test decides when each agent stops.
+/// the test decides when each agent stops. As it exits it leaves a
+/// file saying so, which a test can wait for.
 const WAITING_AGENT: &str = "#!/bin/sh\nprintf 'hello from %s\\n' \"$RIS_AGENT\"\n\
-    while [ ! -f \"$RIS_ROOT/.osiris/stop-$RIS_AGENT\" ]; do sleep 0.05; done\nexit 0\n";
+    while [ ! -f \"$RIS_ROOT/.osiris/stop-$RIS_AGENT\" ]; do sleep 0.05; done\n\
+    : > \"$RIS_ROOT/.osiris/gone-$RIS_AGENT\"\nexit 0\n";
 
 /// `worktrees` in the configuration places a builder's worktree; one
 /// inside the main checkout leaves that checkout clean.
@@ -592,9 +645,11 @@ fn up_clears_a_run_whose_process_is_gone_and_starts_it_again() {
     // Its agent is left behind; let it go too, then clear the way for
     // the next one.
     let stop = rig.repo.join(".osiris/stop-rook");
+    let gone = rig.repo.join(".osiris/gone-rook");
     fs::write(&stop, "").unwrap();
-    std::thread::sleep(Duration::from_millis(500));
+    rig.until("rook's left-behind agent exits", |_| gone.exists());
     fs::remove_file(&stop).unwrap();
+    fs::remove_file(&gone).unwrap();
     assert_eq!(
         rook_runs(&rig, "run_stopped"),
         0,
@@ -780,9 +835,12 @@ fn every_seat_is_watched_in_one_stream_and_a_quiet_one_is_marked() {
         c.replace("[runner]\n", "[runner]\nquiet_after_seconds = 0\n"),
     )
     .unwrap();
-    std::thread::sleep(Duration::from_millis(20));
-    let rook = seat(&status(&rig), "rook");
-    assert_eq!(rook["activity"]["stuck"], true, "{rook}");
+    // Stuck is quiet for longer than zero seconds, measured from the run
+    // file's modification time, whose resolution differs between file
+    // systems: wait until it shows.
+    rig.until("rook is marked stuck", |r| {
+        seat(&status(r), "rook")["activity"]["stuck"] == true
+    });
     let text = rig.ok(None, &["status"]);
     assert!(text.contains("possibly stuck: quiet"), "{text}");
 
@@ -805,15 +863,24 @@ fn every_seat_is_watched_in_one_stream_and_a_quiet_one_is_marked() {
             .spawn()
             .unwrap()
     };
-    let text = follow(&["logs", "-f"]);
-    let json = follow(&["--json", "logs", "--follow"]);
-    std::thread::sleep(Duration::from_millis(300));
+    let mut text = Follower::new(follow(&["logs", "-f"]));
+    let mut json = Follower::new(follow(&["--json", "logs", "--follow"]));
+    // Both followers are reading before the seats stop: each has printed
+    // every seat's line.
+    text.until("the text follower prints every seat", |out| {
+        prefixed.iter().all(|p| out.lines().any(|l| l == *p))
+    });
+    json.until("the json follower prints every seat", |out| {
+        ["heron", "rook", "wren"]
+            .iter()
+            .all(|s| out.contains(&format!("\"seat\":\"{s}\"")))
+    });
     rig.stop_all();
-    let text = String::from_utf8(text.wait_with_output().unwrap().stdout).unwrap();
+    let text = text.finish();
     for p in prefixed {
         assert!(text.lines().any(|l| l == p), "{p} in:\n{text}");
     }
-    let json = String::from_utf8(json.wait_with_output().unwrap().stdout).unwrap();
+    let json = json.finish();
     // Each followed line is an envelope of the committed schema.
     common::validate_output(&["logs", "--follow"], &json);
     let seats: Vec<String> = json
