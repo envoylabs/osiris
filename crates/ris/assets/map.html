@@ -236,6 +236,17 @@
   #list .outside { color: var(--outside); }
   #list .quiet { color: var(--faint); }
   #list p { margin: 0; padding: 14px; color: var(--faint); }
+  #list .expand {
+    font: inherit;
+    font-size: 12px;
+    color: var(--faint);
+    background: transparent;
+    border: 0;
+    padding: 2px 0;
+    cursor: pointer;
+  }
+  #list .expand:hover, #list .expand:focus-visible { color: var(--modified); outline: none; }
+  #list tr.marks td { padding: 2px 10px 8px 36px; font-size: 12px; }
 </style>
 </head>
 <body class="listing">
@@ -673,6 +684,40 @@
     });
     listRows.appendChild(tr);
     listed.set(n, tr);
+    // Expanded, a file shows its marked lines: each line that touches
+    // the outside, the function it sits in and that function's level.
+    var marks = n.marks || [];
+    if (marks.length > 0) {
+      var detail = document.createElement("tr");
+      detail.className = "marks";
+      detail.hidden = true;
+      var td = document.createElement("td");
+      td.colSpan = 4;
+      marks.forEach(function (m) {
+        var div = document.createElement("div");
+        div.appendChild(span("quiet", "line " + m.line + "  "));
+        div.appendChild(span("outside", m.kind));
+        if (m["function"]) { div.appendChild(span("", " in " + m["function"])); }
+        if (m.risk) { div.appendChild(span("level " + m.risk, " (" + m.risk + ")")); }
+        td.appendChild(div);
+      });
+      detail.appendChild(td);
+      listRows.appendChild(detail);
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "expand";
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.textContent = "▸ " + marks.length + " marked";
+      toggle.addEventListener("click", function (event) {
+        // Expanding is not picking: the pane stays as it is.
+        event.stopPropagation();
+        detail.hidden = !detail.hidden;
+        toggle.setAttribute("aria-expanded", String(!detail.hidden));
+        toggle.textContent = (detail.hidden ? "▸ " : "▾ ") + marks.length + " marked";
+      });
+      file.appendChild(document.createElement("br"));
+      file.appendChild(toggle);
+    }
   });
   var list = document.getElementById("list");
   if (listed.size === 0) {

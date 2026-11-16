@@ -274,7 +274,16 @@ or reshaped.
          {"signal": "outside", "reason": "touches the outside: filesystem"},
          {"signal": "dependents", "reason": "4 other files depend on it"}]},
        "judged": {"level": "high", "why": "writes the store with no lock", "seat": "wren"}
-     }}
+     },
+     "functions": [
+       {"name": "Store::save", "start": 40, "end": 58, "added": 6, "removed": 1,
+        "effects": ["filesystem"], "direct": true,
+        "risk": {"level": "low", "signals": [
+          {"signal": "outside", "reason": "touches the outside: filesystem"}]}}
+     ],
+     "marks": [
+       {"line": 47, "kind": "filesystem", "function": "Store::save", "risk": "low"}
+     ]}
   ],
   "ranked": ["src/store.rs"],
   "edges": [
@@ -340,6 +349,29 @@ or reshaped.
   `risk.level` is the level that stands, and the one to draw: the
   judgement's where there is one, and the computed one otherwise. A
   closed phase's map keeps its judgements.
+- `functions` and `marks` look inside a changed file of Rust,
+  TypeScript, Go or Clojure, read from its syntax tree at `tip` and
+  its diff; they are null for any other language, an unchanged or
+  deleted file, and when `base` is null. `functions` are the
+  functions the phase changed (a line added in one, or removed from
+  it), in the order they start: `name` as a reader finds it (a method
+  with its type in front), `start` and `end` lines at `tip`, the lines
+  `added` in it and `removed` from it, the kinds of `effects` on its
+  lines, whether it is `direct` (holds an effect site itself), and its
+  `risk`, computed from the same signals as a file's (its effects and
+  the size of its change) as `level` and `signals`. `marks` are the
+  lines that touch the outside (an effect site), on a line the phase
+  changed or in a function it changed, by line: `line` at `tip`,
+  `kind` (`database`, `filesystem`, `network` or `process`), the
+  innermost `function` it sits in, and `risk`, that function's level,
+  which is the line's (null outside any function, where the file's
+  stands). A file's own `risk` does not change with them. An effect
+  site is a name the code uses, its imports and aliases resolved
+  (`std::fs::read`, `fs.readFile`, `os.ReadFile`,
+  `clojure.java.io/file`), that is one of the language's patterns or
+  lies under one: a list shipped per language, extended per project in
+  `[map.effects.<language>]` of `.osiris/config.toml`. A method called
+  on a value names no module and is not read.
 - `ranked` is the path of every changed node, each once, in the order
   to read them: the highest `risk.level` first, then the greatest
   `weight`, then by `path`. It is the order `ris map --list` prints

@@ -15,6 +15,11 @@
 //! is the first: `mod` lines, `use` lines and qualified paths, read by
 //! scanning the text. A file of a language with no scanner is still a
 //! node, with its diff and no edges.
+//!
+//! Inside a changed file of Rust, TypeScript, Go or Clojure, the
+//! functions the phase changed and the lines that touch the outside are
+//! read from its syntax tree ([`crate::syntax`]) and its diff, by
+//! [`annotate`]; a file of any other language stays at file level.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
@@ -56,6 +61,9 @@ const SOURCE: &[(&str, &str)] = &[
     ("sh", "shell"),
     ("sql", "sql"),
     ("proto", "protobuf"),
+    ("clj", "clojure"),
+    ("cljs", "clojure"),
+    ("cljc", "clojure"),
 ];
 
 /// The language a path's extension names, if it is source code. A
@@ -126,6 +134,183 @@ pub struct Node {
     /// How closely its change should be read; null for a file the phase
     /// did not change.
     pub risk: Option<Risk>,
+    /// The functions the phase changed, in the order they start; null
+    /// unless the file is changed, still there, has a diff, and is of a
+    /// language the map reads inside (`syntax::SUPPORTED`).
+    pub functions: Option<Vec<ChangedFunction>>,
+    /// The lines that touch the outside, on a line the phase changed or
+    /// in a function it changed, by line; null when `functions` is.
+    pub marks: Option<Vec<Mark>>,
+}
+
+/// One function the phase changed.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct ChangedFunction {
+    /// As a reader finds it; a method has its type in front.
+    pub name: String,
+    /// Its first and last line at the tip, counting from 1.
+    pub start: u64,
+    pub end: u64,
+    /// The lines the phase added in it, and removed from it.
+    pub added: u64,
+    pub removed: u64,
+    /// The kinds of effect on its lines, changed or not; sorted.
+    pub effects: Vec<&'static str>,
+    /// Whether it holds an effect site itself.
+    pub direct: bool,
+    /// Its level, from the same signals as a file's: its effects and
+    /// the size of its change.
+    pub risk: Computed,
+}
+
+/// A line that touches the outside.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct Mark {
+    /// At the tip, counting from 1.
+    pub line: u64,
+    /// `database`, `filesystem`, `network` or `process`.
+    pub kind: &'static str,
+    /// The innermost function it sits in; null outside any.
+    pub function: Option<String>,
+    /// That function's level, which is the line's; null outside any
+    /// function, where the file's level stands.
+    pub risk: Option<RiskLevel>,
+}
+
+/// What a file's unified diff changed, in the tip's line numbers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Changes {
+    /// The lines it added.
+    pub added: BTreeSet<u64>,
+    /// For each run of removed lines, the tip's line it sat before, and
+    /// how many it removed there.
+    pub removed: BTreeMap<u64, u64>,
+}
+
+/// The lines a unified diff (as `git diff` writes it) added and where
+/// it removed lines, read from its hunks.
+pub fn changes(diff: &str) -> Changes {
+    let mut out = Changes::default();
+    let mut now: Option<u64> = None;
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("@@ ") {
+            // `@@ -old[,n] +new[,n] @@`
+            now = rest
+                .split_whitespace()
+                .find_map(|part| part.strip_prefix('+'))
+                .and_then(|n| n.split(',').next())
+                .and_then(|n| n.parse().ok());
+            continue;
+        }
+        let Some(at) = now.as_mut() else {
+            continue;
+        };
+        match line.chars().next() {
+            Some('+') => {
+                out.added.insert(*at);
+                *at += 1;
+            }
+            Some('-') => *out.removed.entry(*at).or_default() += 1,
+            Some('\\') => {}
+            _ => *at += 1,
+        }
+    }
+    out
+}
+
+/// The functions `parsed` holds that `changes` touched, and the effect
+/// sites on a changed line or in a changed function, by the `patterns`
+/// of the file's language.
+pub fn inside(
+    parsed: &crate::syntax::Parsed,
+    changes: &Changes,
+    patterns: &[(String, &'static str)],
+) -> (Vec<ChangedFunction>, Vec<Mark>) {
+    let mut sites: BTreeSet<(u64, &'static str)> = BTreeSet::new();
+    for r in &parsed.references {
+        for (pattern, kind) in patterns {
+            if crate::syntax::matches(pattern, &r.name) {
+                sites.insert((r.line, kind));
+            }
+        }
+    }
+    let within = |f: &crate::syntax::Function, line: u64| f.start <= line && line <= f.end;
+    let mut functions = Vec::new();
+    for f in &parsed.functions {
+        let added = changes.added.iter().filter(|l| within(f, **l)).count() as u64;
+        let removed: u64 = changes
+            .removed
+            .iter()
+            .filter(|(l, _)| within(f, **l))
+            .map(|(_, n)| n)
+            .sum();
+        if added + removed == 0 {
+            continue;
+        }
+        let effects: Vec<&'static str> = sites
+            .iter()
+            .filter(|(l, _)| within(f, *l))
+            .map(|(_, k)| *k)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        functions.push(ChangedFunction {
+            name: f.name.clone(),
+            start: f.start,
+            end: f.end,
+            added,
+            removed,
+            direct: !effects.is_empty(),
+            risk: computed_risk(&effects, false, added + removed, 0),
+            effects,
+        });
+    }
+    let marks = sites
+        .iter()
+        .filter_map(|(line, kind)| {
+            // The innermost function holding it: the latest to start.
+            let holder = parsed
+                .functions
+                .iter()
+                .filter(|f| within(f, *line))
+                .max_by_key(|f| (f.start, std::cmp::Reverse(f.end)));
+            let changed = holder.and_then(|h| {
+                functions.iter().find(|c| {
+                    (c.name.as_str(), c.start, c.end) == (h.name.as_str(), h.start, h.end)
+                })
+            });
+            (changes.added.contains(line) || changed.is_some()).then(|| Mark {
+                line: *line,
+                kind,
+                function: holder.map(|h| h.name.clone()),
+                risk: changed.map(|c| c.risk.level),
+            })
+        })
+        .collect();
+    (functions, marks)
+}
+
+/// Fill in each changed file's `functions` and `marks`, from its text
+/// at the tip in `tree` and its diff in the document.
+pub fn annotate(map: &mut crate::schema::Map, tree: &Tree, config: &crate::config::MapConfig) {
+    for node in &mut map.nodes {
+        if matches!(node.status, "unchanged" | "deleted") {
+            continue;
+        }
+        let (Some(language), Some(text), Some(diff)) = (
+            node.language,
+            tree.get(&node.path),
+            map.diffs.get(&node.path),
+        ) else {
+            continue;
+        };
+        let Some(parsed) = crate::syntax::parse(language, &node.path, text) else {
+            continue;
+        };
+        let (functions, marks) = inside(&parsed, &changes(diff), &config.effects_for(language));
+        node.functions = Some(functions);
+        node.marks = Some(marks);
+    }
 }
 
 /// How closely one changed file should be read: where to look first.
@@ -354,6 +539,8 @@ pub fn document(
                 contract,
                 dependents: 0,
                 risk: None,
+                functions: None,
+                marks: None,
             }
         })
         .collect();
@@ -625,7 +812,7 @@ pub fn judgements(l: &Loaded, phase: Option<PhaseId>) -> BTreeMap<String, Judged
 /// The graph document for `range`, read from git, with each changed
 /// file's diff.
 pub fn build(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::Map, CliError> {
-    let mut map = survey(p, l, range)?;
+    let (mut map, tree) = read(p, l, range)?;
     if let Some(base) = &range.base {
         for node in map.nodes.iter().filter(|n| n.status != "unchanged") {
             map.diffs.insert(
@@ -634,12 +821,18 @@ pub fn build(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::Ma
             );
         }
     }
+    annotate(&mut map, &tree, &p.config.map);
     Ok(map)
 }
 
 /// The graph document for `range` without its diffs: the nodes, the
 /// edges and the totals.
 pub fn survey(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::Map, CliError> {
+    Ok(read(p, l, range)?.0)
+}
+
+/// [`survey`], with the files it read at the tip.
+fn read(p: &Project, l: &Loaded, range: &Range) -> Result<(crate::schema::Map, Tree), CliError> {
     let dir = &p.work;
     let listed =
         git(dir, &["ls-tree", "-r", "-z", "--name-only", &range.tip]).map_err(CliError::Other)?;
@@ -699,14 +892,15 @@ pub fn survey(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::M
             }
         }
     }
-    Ok(document(
+    let map = document(
         range,
         &paths,
         &tree,
         &diff,
         &p.config.map,
         &judgements(l, range.phase),
-    ))
+    );
+    Ok((map, tree))
 }
 
 /// One file's unified diff between two commits, as git writes it: the
@@ -932,6 +1126,7 @@ pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
         let computed = &n["risk"]["computed"];
         if listing {
             text.push_str(&reasons(judged, computed));
+            text.push_str(&marked_lines(&n["marks"]));
         } else if !judged.is_null() {
             text.push_str(&format!(
                 "         judged {} by {}: {} (computed: {})\n",
@@ -976,6 +1171,28 @@ pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
     Ok(Output::of(text, &map))
 }
 
+/// A changed file's marked lines, indented under its reasons: each line
+/// that touches the outside, the function it sits in and that
+/// function's level, which is the line's.
+fn marked_lines(marks: &serde_json::Value) -> String {
+    let mut out = String::new();
+    for m in marks.as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "         line {}: {}",
+            m["line"],
+            m["kind"].as_str().unwrap_or("")
+        ));
+        if let Some(f) = m["function"].as_str() {
+            out.push_str(&format!(" in {f}"));
+        }
+        if let Some(level) = m["risk"].as_str() {
+            out.push_str(&format!(" ({level})"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// A changed file's reasons, indented under its row: the judgement and
 /// its why where one is recorded, then the computed level with the
 /// signals that gave it, as the page's pane says them.
@@ -1018,8 +1235,9 @@ const RUST_OUTSIDE_WHOLE: &[(&[&str], &str)] = &[
     (&["tokio", "process"], "process"),
 ];
 
-/// Path prefixes that mean a Rust file touches the outside.
-const RUST_OUTSIDE: &[(&[&str], &str)] = &[
+/// Path prefixes that mean a Rust file touches the outside; joined by
+/// `::`, the shipped effect patterns for Rust inside a file.
+pub(crate) const RUST_OUTSIDE: &[(&[&str], &str)] = &[
     (&["std", "process", "Command"], "process"),
     (&["std", "process", "Child"], "process"),
     (&["std", "process", "Stdio"], "process"),

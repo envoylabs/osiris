@@ -20,3 +20,4 @@ pub mod runner;
 pub mod schema;
 pub mod status;
 pub mod style;
+pub mod syntax;

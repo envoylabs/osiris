@@ -196,7 +196,9 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
             "contract",
             "dependents",
             "external",
+            "functions",
             "language",
+            "marks",
             "path",
             "removed",
             "risk",
@@ -569,6 +571,114 @@ fn an_auditor_s_judgement_of_a_file_stands_on_the_map_over_the_computed_level() 
     ok(&dir, "person", &["phase", "close"]);
     assert_eq!(data(&dir, &["map"])["nodes"], doc["nodes"]);
     refused("wren", &judge, "no phase is open");
+}
+
+/// Inside a changed file of a language the map reads, its changed
+/// functions and the lines that touch the outside, by the shipped
+/// patterns and the project's own; any other language stays at file
+/// level.
+#[test]
+fn a_changed_file_s_functions_and_marked_lines_are_on_the_map() {
+    let dir = setup("functions");
+    let config = dir.join(".osiris/config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config).unwrap() + "\n[map.effects.rust]\ndatabase = [\"crate::db\"]\n",
+    )
+    .unwrap();
+    ok(&dir, "person", &["phase", "open", "inside files"]);
+    git(&dir, &["switch", "-q", "phase/P-1"]);
+    write(
+        &dir,
+        "src/store.rs",
+        "use std::fs;\n\nuse crate::wire::Frame;\n\npub fn save(_: Frame) {\n    \
+         let _ = fs::read(\"frames\");\n    fs::write(\"frames\", b\"\").unwrap();\n}\n\n\
+         pub fn wipe() {\n    std::process::Command::new(\"rm\").status().unwrap();\n    \
+         crate::db::put();\n}\n",
+    );
+    write(
+        &dir,
+        "cmd/fetch.go",
+        "package main\n\nimport \"net/http\"\n\nfunc fetch() {\n\thttp.Get(\"x\")\n}\n",
+    );
+    write(
+        &dir,
+        "src/app/core.clj",
+        "(ns app.core\n  (:require [clojure.java.io :as io]))\n\n(defn load [p]\n  (slurp (io/file p)))\n",
+    );
+    write(
+        &dir,
+        "tools/x.py",
+        "import os\n\ndef f():\n    os.remove(\"x\")\n",
+    );
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "-m", "feat: inside files"]);
+    git(&dir, &["switch", "-q", "main"]);
+
+    let doc = data(&dir, &["map"]);
+    let store = node(&doc, "src/store.rs");
+    let functions: Vec<(&str, u64, u64)> = store["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["name"].as_str().unwrap(),
+                f["start"].as_u64().unwrap(),
+                f["end"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(functions, [("save", 5, 8), ("wipe", 10, 13)], "{store}");
+    assert_eq!(
+        store["functions"][1]["effects"],
+        json!(["database", "process"])
+    );
+    assert_eq!(store["functions"][1]["direct"], true);
+    assert_eq!(
+        store["marks"],
+        json!([
+            // Unchanged, but in a function the phase changed.
+            {"line": 6, "kind": "filesystem", "function": "save", "risk": "low"},
+            {"line": 7, "kind": "filesystem", "function": "save", "risk": "low"},
+            {"line": 11, "kind": "process", "function": "wipe", "risk": "low"},
+            // The project's own pattern.
+            {"line": 12, "kind": "database", "function": "wipe", "risk": "low"}
+        ])
+    );
+    // The file's own risk is as it was.
+    assert_eq!(store["risk"]["computed"]["signals"][0]["signal"], "outside");
+    assert_eq!(
+        node(&doc, "cmd/fetch.go")["marks"],
+        json!([{"line": 6, "kind": "network", "function": "fetch", "risk": "low"}])
+    );
+    assert_eq!(
+        node(&doc, "src/app/core.clj")["marks"],
+        json!([{"line": 5, "kind": "filesystem", "function": "load", "risk": "low"}])
+    );
+    // Python stays at file level; an unchanged file has nothing inside.
+    assert!(node(&doc, "tools/x.py")["functions"].is_null());
+    assert!(node(&doc, "tools/x.py")["marks"].is_null());
+    assert!(node(&doc, "src/wire.rs")["functions"].is_null());
+
+    // The list shows a file's marked lines under its reasons.
+    let text = ok(&dir, "person", &["map", "--list"]);
+    assert!(
+        text.contains("\n         line 12: database in wipe (low)\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n         line 6: network in fetch (low)\n"),
+        "{text}"
+    );
+    // The page carries them, being the same document.
+    let page = dir.join("map.html");
+    ok(&dir, "person", &["map", "--html", page.to_str().unwrap()]);
+    assert!(
+        fs::read_to_string(&page)
+            .unwrap()
+            .contains("\"function\":\"wipe\"")
+    );
 }
 
 /// `ris map --list`: the changed files ranked by risk, highest first,

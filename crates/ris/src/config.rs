@@ -96,6 +96,13 @@ pub struct MapConfig {
     /// A file a contracts pattern names stays on the map.
     #[serde(default = "default_map_tests")]
     pub tests: Vec<String>,
+    /// Effect patterns beside the shipped ones, by language and then by
+    /// kind (`database`, `filesystem`, `network` or `process`): a name
+    /// the code uses that is a pattern, or lies under one, is a line
+    /// that touches the outside (`[map.effects.rust] database =
+    /// ["crate::db"]`).
+    #[serde(default)]
+    pub effects: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
 impl Default for MapConfig {
@@ -103,7 +110,22 @@ impl Default for MapConfig {
         MapConfig {
             contracts: Vec::new(),
             tests: default_map_tests(),
+            effects: BTreeMap::new(),
         }
+    }
+}
+
+impl MapConfig {
+    /// Every effect pattern for `language`, the shipped ones first, each
+    /// with its kind.
+    pub fn effects_for(&self, language: &str) -> Vec<(String, &'static str)> {
+        let mut out = crate::syntax::default_effects(language);
+        for (kind, patterns) in self.effects.get(language).into_iter().flatten() {
+            if let Some(kind) = crate::syntax::KINDS.iter().find(|k| *k == kind) {
+                out.extend(patterns.iter().map(|p| (p.clone(), *kind)));
+            }
+        }
+        out
     }
 }
 
@@ -288,6 +310,23 @@ impl Config {
                 "config.toml: `worktrees` must contain {seat}, so no two seats share a path".into(),
             );
         }
+        for (language, kinds) in &c.map.effects {
+            if !crate::syntax::SUPPORTED.contains(&language.as_str()) {
+                return Err(format!(
+                    "config.toml: [map.effects.{language}]: the map reads inside {} files only",
+                    crate::syntax::SUPPORTED.join(", ")
+                ));
+            }
+            if let Some(kind) = kinds
+                .keys()
+                .find(|k| !crate::syntax::KINDS.contains(&k.as_str()))
+            {
+                return Err(format!(
+                    "config.toml: [map.effects.{language}] {kind}: the kinds are {}",
+                    crate::syntax::KINDS.join(", ")
+                ));
+            }
+        }
         Ok(c)
     }
 
@@ -433,6 +472,14 @@ preflight = true
 # [map]
 # contracts = [\"docs/api.md\", \"src/wire/**\", \"**/*.proto\"]
 # tests = [\"**/tests/**\"]
+#
+# Inside Rust, TypeScript, Go and Clojure files the map marks each line
+# that touches a database, the filesystem, the network or a process,
+# by the names the code uses (std::fs::read, fs.readFile, os.ReadFile,
+# clojure.java.io/file). It ships a list per language; add your own
+# names, or the prefixes they lie under, by language and kind.
+# [map.effects.rust]
+# database = [\"crate::db\"]
 
 # Agent seats. A name is a durable pseudonym for a seat, never a real
 # person's name. Set RIS_AGENT=<name> in an agent's environment,

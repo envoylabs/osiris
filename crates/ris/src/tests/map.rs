@@ -106,6 +106,7 @@ fn test_files_are_counted_and_left_off_unless_a_contract_names_them() {
     let config = crate::config::MapConfig {
         contracts: vec!["tests/*.proto".to_owned()],
         tests: vec!["**/tests/**".to_owned(), "**/*_test.rs".to_owned()],
+        effects: BTreeMap::new(),
     };
     let map = document(&range, &paths, &t, &diff, &config, &BTreeMap::new());
     assert_eq!(paths_of(&map), ["src/lib.rs", "tests/schema.proto"]);
@@ -321,6 +322,8 @@ fn ranked_is_the_level_then_the_weight_then_the_path() {
             },
             judged: None,
         }),
+        functions: None,
+        marks: None,
     };
     let nodes = [
         at("a.rs", "modified", RiskLevel::Low, 9.0),
@@ -335,6 +338,134 @@ fn ranked_is_the_level_then_the_weight_then_the_path() {
         ["e.rs", "b.rs", "f.rs", "a.rs", "c.rs"],
         "high, medium, then the low ones heaviest first and a tie by path"
     );
+}
+
+#[test]
+fn a_diff_s_changes_are_read_in_the_tip_s_line_numbers() {
+    let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+index 1..2 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,4 +1,5 @@
+ fn a() {
+-    one();
++    two();
++    three();
+ }
+@@ -10,3 +11,2 @@ fn b() {
+ x
+-y
+-z
+\\ No newline at end of file
+";
+    let c = changes(diff);
+    assert_eq!(c.added, [2, 3].into_iter().collect());
+    // One line removed before tip line 2, two before tip line 12.
+    assert_eq!(c.removed, [(2, 1), (12, 2)].into_iter().collect());
+    // A new file: every line added.
+    let c = changes("--- /dev/null\n+++ b/n.rs\n@@ -0,0 +1,2 @@\n+a\n+b\n");
+    assert_eq!(c.added, [1, 2].into_iter().collect());
+    assert!(c.removed.is_empty());
+    assert_eq!(changes(""), Changes::default());
+}
+
+#[test]
+fn only_changed_functions_are_kept_and_a_mark_takes_its_function_s_level() {
+    use crate::syntax::{Function, Parsed, Reference};
+    let f = |name: &str, start, end| Function {
+        name: name.to_owned(),
+        start,
+        end,
+    };
+    let r = |line, name: &str| Reference {
+        line,
+        name: name.to_owned(),
+    };
+    let parsed = Parsed {
+        functions: vec![
+            f("save", 1, 10),
+            f("save::inner", 4, 6),
+            f("load", 12, 20),
+            f("idle", 22, 30),
+        ],
+        references: vec![
+            r(2, "std::fs::write"),
+            r(5, "std::net::TcpStream::connect"),
+            r(14, "std::fs::read"),
+            r(24, "std::fs::read"),
+            r(31, "std::fs::remove_file"),
+        ],
+    };
+    let changes = Changes {
+        // In `inner`, so in `save` too; and a top-level line.
+        added: [5, 31].into_iter().collect(),
+        // Lines removed from `load`.
+        removed: [(15, 60)].into_iter().collect(),
+    };
+    let patterns = crate::syntax::default_effects("rust");
+    let (functions, marks) = inside(&parsed, &changes, &patterns);
+    let summary: Vec<(&str, u64, u64, Vec<&str>, bool)> = functions
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                c.added,
+                c.removed,
+                c.effects.clone(),
+                c.direct,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("save", 1, 0, vec!["filesystem", "network"], true),
+            ("save::inner", 1, 0, vec!["network"], true),
+            ("load", 0, 60, vec!["filesystem"], true),
+        ],
+        "idle is not changed"
+    );
+    // A large change that touches the outside is medium.
+    assert_eq!(functions[2].risk.level, RiskLevel::Medium);
+    assert_eq!(functions[0].risk.level, RiskLevel::Low);
+    let marks: Vec<(u64, &str, Option<&str>, Option<RiskLevel>)> = marks
+        .iter()
+        .map(|m| (m.line, m.kind, m.function.as_deref(), m.risk))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            // In a changed function, though the line is not changed.
+            (2, "filesystem", Some("save"), Some(RiskLevel::Low)),
+            // The innermost function holds it.
+            (5, "network", Some("save::inner"), Some(RiskLevel::Low)),
+            (14, "filesystem", Some("load"), Some(RiskLevel::Medium)),
+            // A changed line outside any function.
+            (31, "filesystem", None, None),
+        ],
+        "line 24, in the unchanged idle, is not marked"
+    );
+}
+
+#[test]
+fn a_project_s_patterns_add_to_the_shipped_ones() {
+    let config = crate::config::Config::parse(
+        "[map.effects.rust]\ndatabase = [\"crate::db\"]\n\n[agents.heron]\nrole = \"lead\"\n",
+    )
+    .unwrap();
+    let patterns = config.map.effects_for("rust");
+    assert!(patterns.contains(&("crate::db".to_owned(), "database")));
+    assert!(patterns.contains(&("std::fs".to_owned(), "filesystem")));
+    // A language the map does not read inside, or a kind it does not
+    // know, is refused.
+    for bad in [
+        "[map.effects.python]\nprocess = [\"os.system\"]\n",
+        "[map.effects.rust]\nclock = [\"std::time\"]\n",
+    ] {
+        let err = crate::config::Config::parse(bad).unwrap_err();
+        assert!(err.contains("[map.effects."), "{err}");
+    }
 }
 
 #[test]
@@ -355,6 +486,11 @@ fn the_page_lists_the_ranked_files_and_opens_on_the_list() {
     assert!(PAGE.contains(
         "body.listing svg, body.listing #legend, body.listing #tip { visibility: hidden; }"
     ));
+    // A file with marked lines expands to show them, without picking
+    // it: the pane stays as it is.
+    assert!(PAGE.contains("var marks = n.marks || [];"));
+    assert!(PAGE.contains("event.stopPropagation();\n        detail.hidden = !detail.hidden;"));
+    assert!(PAGE.contains("toggle.setAttribute(\"aria-expanded\""));
     // The open pane narrows the list as it does the graph.
     assert!(PAGE.contains("body.paned #list { right: calc(var(--pane) + 12px); }"));
 }

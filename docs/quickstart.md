@@ -337,6 +337,16 @@ lists the changed files with their risk, the highest first; that list
 is all a seat gets, and all you get when the output is piped, since
 nothing is opened then. `ris map --list` prints the same list as the
 page's, with each file's reasons, and opens nothing.
+
+Inside a changed Rust, TypeScript, Go or Clojure file the map also
+finds the functions the phase changed and marks each line that touches
+a database, the filesystem, the network or a process, with the function
+it sits in and that function's level. `ris map --list` prints a file's
+marked lines under its reasons, and on the page a file with any expands
+to show them. What counts is a list of names per language that ships
+with `ris`; add your own (a module of your project that wraps the
+database, say) under `[map.effects.<language>]` in
+`.osiris/config.toml`. Files of other languages stay at file level.
 `ris map --html map.html` writes the page to a file you name and opens
 nothing, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the

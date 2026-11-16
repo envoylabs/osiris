@@ -531,6 +531,63 @@
         }
       ]
     },
+    "ChangedFunction": {
+      "description": "One function the phase changed.",
+      "properties": {
+        "added": {
+          "description": "The lines the phase added in it, and removed from it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "direct": {
+          "description": "Whether it holds an effect site itself.",
+          "type": "boolean"
+        },
+        "effects": {
+          "description": "The kinds of effect on its lines, changed or not; sorted.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "end": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "As a reader finds it; a method has its type in front.",
+          "type": "string"
+        },
+        "removed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "risk": {
+          "$ref": "#/$defs/Computed",
+          "description": "Its level, from the same signals as a file's: its effects and\nthe size of its change."
+        },
+        "start": {
+          "description": "Its first and last line at the tip, counting from 1.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "start",
+        "end",
+        "added",
+        "removed",
+        "effects",
+        "direct",
+        "risk"
+      ],
+      "type": "object"
+    },
     "CheckId": {
       "description": "A check's name, as declared in the project's checks file.",
       "type": "string"
@@ -1942,6 +1999,46 @@
       ],
       "type": "object"
     },
+    "Mark": {
+      "description": "A line that touches the outside.",
+      "properties": {
+        "function": {
+          "description": "The innermost function it sits in; null outside any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`database`, `filesystem`, `network` or `process`.",
+          "type": "string"
+        },
+        "line": {
+          "description": "At the tip, counting from 1.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "risk": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "That function's level, which is the line's; null outside any\nfunction, where the file's level stands."
+        }
+      },
+      "required": [
+        "line",
+        "kind",
+        "function",
+        "risk"
+      ],
+      "type": "object"
+    },
     "Merged": {
       "description": "`ris merge`.",
       "properties": {
@@ -2157,10 +2254,30 @@
           },
           "type": "array"
         },
+        "functions": {
+          "description": "The functions the phase changed, in the order they start; null\nunless the file is changed, still there, has a diff, and is of a\nlanguage the map reads inside (`syntax::SUPPORTED`).",
+          "items": {
+            "$ref": "#/$defs/ChangedFunction"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "language": {
           "description": "The language its extension names; null for a contract file that\nis not source code.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "marks": {
+          "description": "The lines that touch the outside, on a line the phase changed or\nin a function it changed, by line; null when `functions` is.",
+          "items": {
+            "$ref": "#/$defs/Mark"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
@@ -2204,7 +2321,9 @@
         "contract",
         "weight",
         "dependents",
-        "risk"
+        "risk",
+        "functions",
+        "marks"
       ],
       "type": "object"
     },
