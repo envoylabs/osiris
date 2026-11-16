@@ -95,6 +95,11 @@ enum Cmd {
         /// The rules file to render into, by its relative path.
         #[arg(long, requires = "render")]
         to: Option<PathBuf>,
+        /// Write nothing: say whether the rules file is what the rules
+        /// and the project's part render, and exit 3 when it is not.
+        /// Anyone may run it.
+        #[arg(long, requires = "render")]
+        check: bool,
     },
     /// Add an agent seat to .osiris/config.toml (the person's), or
     /// report a fault in your own seat's setup (`ris seat fault`).
@@ -751,16 +756,38 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     match &cli.command {
         Cmd::Init { .. } | Cmd::Schema => unreachable!(),
 
-        Cmd::Rules { render, to } => {
+        Cmd::Rules { render, to, check } => {
             let (Some(source), Some(to)) = (render, to) else {
                 unreachable!("without --render the rules are printed above")
             };
+            if *check {
+                let stale = ris::rules_file::stale(&cwd, source, to)?;
+                let (source, to) = (ris::rules_file::named(source)?, ris::rules_file::named(to)?);
+                if let Some(why) = stale {
+                    return Err(CliError::CheckFailed {
+                        lines: vec![
+                            why,
+                            format!(
+                                "  next: the person runs `ris rules --render {source} --to {to}` and commits the result"
+                            ),
+                        ],
+                    });
+                }
+                return Ok(Output::of(
+                    format!("{to} is what the rules and {source} render"),
+                    &schema::Rules::Checked {
+                        source,
+                        checked: to,
+                        current: true,
+                    },
+                ));
+            }
             // A seat never writes its own rules: the person renders
             // them, and reads the change before committing it.
             if actor != Actor::Person {
                 return Err(CliError::Other(
                     "refused: only the person renders a rules file; a seat never writes its own rules\n  \
-                     next: merge the change to the rules or to the project's part, and leave the rendering to the person"
+                     next: merge the change to the rules or to the project's part; `ris phase close` renders the file into the closing merge"
                         .into(),
                 ));
             }
@@ -2319,6 +2346,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         | Cmd::Verify
         | Cmd::Eli5 { .. }
         | Cmd::Rules { render: None, .. }
+        | Cmd::Rules { check: true, .. }
         | Cmd::Logs { .. }
         | Cmd::Log { .. }
         | Cmd::Watch { .. }
@@ -3712,9 +3740,13 @@ fn closing_merge(
             let _ = git(&p.root, &["switch", "--quiet", &here]);
         }
     };
+    // Where the main line stands before the merge. The merge commit is
+    // amended when a rules file is rendered into it, so the way back
+    // is to this commit by name.
+    let before = git(&p.root, &["rev-parse", "HEAD"]).map_err(CliError::Other)?;
     let undo = |p: &Project| {
         let _ = git(&p.root, &["merge", "--abort"]);
-        let _ = git(&p.root, &["reset", "--quiet", "--hard", "ORIG_HEAD"]);
+        let _ = git(&p.root, &["reset", "--quiet", "--hard", &before]);
         back(p);
     };
     let message = format!("chore: close {phase}: {goal}");
@@ -3730,6 +3762,20 @@ fn closing_merge(
             e.lines().next().unwrap_or("merge failed")
         )));
     }
+    // A rendered rules file is rendered again into the merge, so a
+    // change the phase made to the rules or to the project's part
+    // reaches the file the seats read with no step of its own, and the
+    // main line never takes a rules file that is not current.
+    let rendered = match render_rules_into_merge(&p.root) {
+        Ok(rendered) => rendered,
+        Err(e) => {
+            undo(p);
+            return Err(CliError::Other(format!(
+                "refused: the rules file could not be rendered into the closing merge ({e}); \
+                 the merge was undone and the phase stays open"
+            )));
+        }
+    };
     // The full checks on the merged result, in the main worktree.
     let mut failed = Vec::new();
     let names: Vec<String> = p.checks.checks.keys().cloned().collect();
@@ -3757,13 +3803,34 @@ fn closing_merge(
         false
     };
     Ok(format!(
-        "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}{}",
+        "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}{}{}",
         if deleted {
             format!("; {branch} deleted")
         } else {
             String::new()
-        }
+        },
+        rendered
+            .iter()
+            .map(|(to, source)| format!(
+                "\nclosing merge: rendered {to} from the rules and {source}, which the phase changed; the merge carries it"
+            ))
+            .collect::<String>()
     ))
+}
+
+/// Render again each rendered rules file in the merged tree at `root`,
+/// and amend the merge commit with those that changed. Returns each
+/// file that changed, with its source.
+fn render_rules_into_merge(root: &std::path::Path) -> Result<Vec<(String, String)>, String> {
+    let rendered = ris::rules_file::rerender(root).map_err(|e| e.to_string())?;
+    if rendered.is_empty() {
+        return Ok(rendered);
+    }
+    let mut add = vec!["add", "--"];
+    add.extend(rendered.iter().map(|(to, _)| to.as_str()));
+    git(root, &add)?;
+    git(root, &["commit", "--quiet", "--amend", "--no-edit"])?;
+    Ok(rendered)
 }
 
 fn phase_branch_name(phase: ris_core::ids::PhaseId) -> String {

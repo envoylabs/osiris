@@ -1,5 +1,6 @@
 # The standing checks from .osiris/checks.toml, plus the exit scan over
-# the tree. The toolchain comes from rust-toolchain.toml, which rustup
+# the tree and, on the main line, the check that the rules file is
+# current. The toolchain comes from rust-toolchain.toml, which rustup
 # (preinstalled on GitHub's runners) reads, so CI and a local run use the
 # same compiler, clippy and rustfmt.
 #
@@ -48,3 +49,12 @@ jobs:
         run: |
           ./target/debug/ris init --local
           ./target/debug/ris scan
+
+      - name: rules file
+        # The main line's rules file is what the rules and the project's
+        # part render, by the ris built from this tree, which holds the
+        # rules. Only there: a phase's branch may hold the file behind
+        # its sources until `ris phase close` renders it into the
+        # closing merge, so no seat's change to the rules waits on it.
+        if: github.ref == 'refs/heads/main'
+        run: ./target/debug/ris rules --render docs/project-rules.md --to AGENTS.md --check

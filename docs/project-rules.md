@@ -7,9 +7,10 @@ Working model and Confidentiality sections for background, but never
 take work from it.
 
 What follows is this repository's own, beside the rules above. The file
-the seats read is rendered from both by the person (`ris rules
---render`); to change a rule, change the rules in `crates/ris/src/rules.md`
-or this file, and merge that.
+the seats read is rendered from both when a phase closes (`ris phase
+close` renders it into the closing merge); to change a rule, change the
+rules in `crates/ris/src/rules.md` or this file, and merge that. Leave
+the rendered file as it is: no check of yours reads it.
 
 ## The seats and the harness
 

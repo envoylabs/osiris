@@ -573,6 +573,15 @@ pub enum Rules {
         /// Whether the file changed.
         changed: bool,
     },
+    /// With `--check`: nothing was written. A file that is not current
+    /// is the error `check_failed`, so `current` is true here.
+    Checked {
+        /// The project's own part, as the command named it.
+        source: String,
+        /// The rules file checked.
+        checked: String,
+        current: bool,
+    },
 }
 
 /// `ris worktree`.

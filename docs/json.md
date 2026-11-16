@@ -169,7 +169,10 @@ line of output per envelope, and ends once no seat is running; without
   <project part> --to <rules file>`, the person's only, it writes the
   rules file (those rules, then the project's part) and gives `source`
   and `rendered`, the two paths as given, and `changed`, whether the
-  file differed from what was there.
+  file differed from what was there. With `--check` added, anyone's, it
+  writes nothing and gives `source`, `checked` (the rules file) and
+  `current`, which is true: a file that is not what the two render is
+  the error `check_failed`, exit status 3.
 - `ris decide` with no decision: `queue`, the open substantive
   decisions oldest first, whatever phase raised them, each entry the
   `data` that `ris eli5 D-n` gives (`decision`, and `explanation` or

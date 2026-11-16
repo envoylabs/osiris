@@ -48,11 +48,29 @@ ris rules --render docs/project-rules.md --to AGENTS.md
 
 The file is the rules `ris rules` prints, then the project's part as
 written, under a first line naming the command. Only you run it, since
-a seat never writes its own rules: a seat merges a change to the
-project's part (or, in the osiris repository, to the rules themselves),
-and you render and commit the file. The osiris repository's own
-`AGENTS.md` is kept this way, and a test fails when it is not what the
-command renders.
+a seat never writes its own rules, and you run it once: after that the
+file is kept current for you. A seat merges a change to the project's
+part (or, in the osiris repository, to the rules themselves) and
+leaves the rules file alone, and `ris phase close` renders the file
+again into the closing merge when it is no longer what the two render,
+and says so in a line of its own. It finds the file by that first
+line, so nothing is configured, and it renders only where it makes the
+merge: with `merge_on_close = false`, or with the phase's work already
+on the main line, you render and commit the file yourself.
+
+Until the phase closes, the phase branch may hold a rules file that is
+behind its sources: no check a seat runs reads it, so a change to the
+rules never waits for you. To hold the main line to it, run the check
+there:
+
+```sh
+ris rules --render docs/project-rules.md --to AGENTS.md --check
+```
+
+It writes nothing, anyone may run it, and it exits 3 with the first
+line that differs when the file is not what the command would render.
+The osiris repository's own `AGENTS.md` is kept this way, and its CI
+runs the check on the main line.
 
 ## 2. Declare the harness
 
@@ -419,7 +437,9 @@ closed now.
 worktrees and the log are kept. `ris up` after the next `ris phase
 open` brings everything back.
 
-`ris` makes commits of its own: the closing merge, the rebase inside a
+`ris` makes commits of its own: the closing merge (which carries the
+rules file rendered again, when the phase changed what it is rendered
+from), the rebase inside a
 seat's `ris merge`, and the rebase `ris up` does over a change to the
 rules file. Each needs a git identity. Where git has none, the command
 is refused before anything is touched and names what to run (`git

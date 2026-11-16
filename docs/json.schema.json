@@ -3514,6 +3514,28 @@
             "changed"
           ],
           "type": "object"
+        },
+        {
+          "description": "With `--check`: nothing was written. A file that is not current\nis the error `check_failed`, so `current` is true here.",
+          "properties": {
+            "checked": {
+              "description": "The rules file checked.",
+              "type": "string"
+            },
+            "current": {
+              "type": "boolean"
+            },
+            "source": {
+              "description": "The project's own part, as the command named it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "checked",
+            "current"
+          ],
+          "type": "object"
         }
       ],
       "description": "`ris rules`: the rules, or with `--render` what was rendered."
