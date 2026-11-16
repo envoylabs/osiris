@@ -396,6 +396,7 @@ fn only_changed_functions_are_kept_and_a_mark_takes_its_function_s_level() {
             r(24, "std::fs::read"),
             r(31, "std::fs::remove_file"),
         ],
+        ..Parsed::default()
     };
     let changes = Changes {
         // In `inner`, so in `save` too; and a top-level line.
@@ -404,7 +405,7 @@ fn only_changed_functions_are_kept_and_a_mark_takes_its_function_s_level() {
         removed: [(15, 60)].into_iter().collect(),
     };
     let patterns = crate::syntax::default_effects("rust");
-    let (functions, marks) = inside(&parsed, &changes, &patterns);
+    let (functions, marks) = inside(&parsed, &changes, &patterns, &|_| (Vec::new(), Vec::new()));
     let summary: Vec<(&str, u64, u64, Vec<&str>, bool)> = functions
         .iter()
         .map(|c| {
@@ -446,6 +447,152 @@ fn only_changed_functions_are_kept_and_a_mark_takes_its_function_s_level() {
         ],
         "line 24, in the unchanged idle, is not marked"
     );
+}
+
+#[test]
+fn a_changed_function_one_step_from_an_effect_triggers_or_feeds_it() {
+    let tree = tree(&[
+        ("Cargo.toml", "[package]\nname = \"fixture\"\n"),
+        (
+            "src/net.rs",
+            "pub fn send() {\n    std::net::TcpStream::connect(\"x\").unwrap();\n}\n\
+             pub fn save() {\n    std::fs::write(\"y\", b\"\").unwrap();\n}\n\
+             pub fn to_string() {\n    std::fs::read(\"z\").unwrap();\n}\n",
+        ),
+        (
+            "src/store.rs",
+            "use crate::net::send;\n\npub struct Store;\n\nimpl Store {\n    \
+             pub fn save(&self) {\n        send();\n    }\n    \
+             pub fn new() -> Self {\n        Store\n    }\n}\n",
+        ),
+        (
+            "src/app.rs",
+            "use crate::store::Store;\n\npub fn run() {\n    let s = Store::new();\n    \
+             s.save();\n    prepare();\n}\n\npub fn prepare() {}\n\n\
+             pub fn write() {\n    std::fs::write(\"w\", b\"\").unwrap();\n    prepare();\n    \
+             serde_json::to_string();\n}\n",
+        ),
+    ]);
+    let mut files = BTreeMap::new();
+    for (path, text) in &tree {
+        if let Some(p) = crate::syntax::parse("rust", path, text).filter(|_| path.ends_with(".rs"))
+        {
+            files.insert(path.clone(), ("rust", p));
+        }
+    }
+    let locals = Locals::of(&tree, &files);
+    assert!(locals.rust_packages.contains("fixture"));
+    let graph = Graph::new(&files, &locals, &crate::config::MapConfig::default());
+    let function = |path: &str, name: &str| {
+        files[path]
+            .1
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .unwrap()
+            .clone()
+    };
+    let callee = |path: &str, function: &str| Callee {
+        path: path.to_owned(),
+        function: function.to_owned(),
+    };
+    let step = |direction, path: &str, function: &str, effects: &[&'static str]| Step {
+        direction,
+        path: path.to_owned(),
+        function: function.to_owned(),
+        effects: effects.to_vec(),
+    };
+
+    // It calls a direct function through a `use` line: it triggers.
+    let (calls, steps) = graph.reach("src/store.rs", &function("src/store.rs", "Store::save"));
+    assert_eq!(calls, [callee("src/net.rs", "send")]);
+    assert_eq!(
+        steps,
+        [step("triggers", "src/net.rs", "send", &["network"])]
+    );
+
+    // A method on a value could be either `save`: it counts for each,
+    // and the direct one makes a step.
+    let (calls, steps) = graph.reach("src/app.rs", &function("src/app.rs", "run"));
+    assert_eq!(
+        calls,
+        [
+            callee("src/app.rs", "prepare"),
+            callee("src/net.rs", "save"),
+            callee("src/store.rs", "Store::new"),
+            callee("src/store.rs", "Store::save"),
+        ]
+    );
+    assert_eq!(
+        steps,
+        [step("triggers", "src/net.rs", "save", &["filesystem"])]
+    );
+
+    // A direct function calls it: it feeds the effect.
+    let (_, steps) = graph.reach("src/app.rs", &function("src/app.rs", "prepare"));
+    assert_eq!(
+        steps,
+        [step("feeds", "src/app.rs", "write", &["filesystem"])]
+    );
+
+    // A call into another crate is not the repository's, though a
+    // function of the same name is.
+    let (calls, steps) = graph.reach("src/app.rs", &function("src/app.rs", "write"));
+    assert_eq!(calls, [callee("src/app.rs", "prepare")]);
+    assert!(steps.is_empty());
+
+    // One step adds a point and says why.
+    let risk = function_risk(
+        &[],
+        1,
+        &[step("triggers", "src/net.rs", "send", &["network"])],
+    );
+    assert_eq!(risk.level, RiskLevel::Low);
+    assert_eq!(risk.signals[0].signal, "reach");
+    assert_eq!(
+        risk.signals[0].reason,
+        "one step from an effect: triggers network via send"
+    );
+    let risk = function_risk(
+        &["filesystem"],
+        1,
+        &[step("feeds", "a.rs", "w", &["network"])],
+    );
+    assert_eq!(
+        risk.level,
+        RiskLevel::Medium,
+        "touching the outside and one step"
+    );
+}
+
+#[test]
+fn whether_a_call_s_module_is_the_repository_s_own() {
+    let locals = Locals {
+        rust_packages: ["fixture".to_owned()].into_iter().collect(),
+        go_dirs: ["store".to_owned()].into_iter().collect(),
+        clojure_namespaces: ["app.store".to_owned()].into_iter().collect(),
+    };
+    for (language, module, local) in [
+        ("rust", None, true),
+        ("rust", Some("crate::store"), true),
+        ("rust", Some("super"), true),
+        ("rust", Some("fixture::wire"), true),
+        ("rust", Some("std::fs"), false),
+        ("rust", Some("serde_json"), false),
+        ("typescript", Some("./store"), true),
+        ("typescript", Some("@/lib/store"), true),
+        ("typescript", Some("fs"), false),
+        ("go", Some("example.com/app/store"), true),
+        ("go", Some("net/http"), false),
+        ("clojure", Some("app.store"), true),
+        ("clojure", Some("clojure.string"), false),
+    ] {
+        assert_eq!(
+            locals.is_local(language, module),
+            local,
+            "{language} {module:?}"
+        );
+    }
 }
 
 #[test]
@@ -491,6 +638,10 @@ fn the_page_lists_the_ranked_files_and_opens_on_the_list() {
     assert!(PAGE.contains("var marks = n.marks || [];"));
     assert!(PAGE.contains("event.stopPropagation();\n        detail.hidden = !detail.hidden;"));
     assert!(PAGE.contains("toggle.setAttribute(\"aria-expanded\""));
+    // Expanded, it shows each function one step from an effect too.
+    assert!(
+        PAGE.contains("f.steps.forEach(function (s) { steps.push({ from: f.name, step: s }); });")
+    );
     // The open pane narrows the list as it does the graph.
     assert!(PAGE.contains("body.paned #list { right: calc(var(--pane) + 12px); }"));
 }

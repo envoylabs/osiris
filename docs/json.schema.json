@@ -453,6 +453,22 @@
       ],
       "type": "object"
     },
+    "Callee": {
+      "description": "A function of the repository, by file and name.",
+      "properties": {
+        "function": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "function"
+      ],
+      "type": "object"
+    },
     "CarriedOver": {
       "properties": {
         "decisions": {
@@ -540,6 +556,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "calls": {
+          "description": "The functions of the repository it calls, as far as names say:\na call that could mean more than one function names each.",
+          "items": {
+            "$ref": "#/$defs/Callee"
+          },
+          "type": "array"
+        },
         "direct": {
           "description": "Whether it holds an effect site itself.",
           "type": "boolean"
@@ -567,13 +590,20 @@
         },
         "risk": {
           "$ref": "#/$defs/Computed",
-          "description": "Its level, from the same signals as a file's: its effects and\nthe size of its change."
+          "description": "Its level, from the same signals as a file's (its effects and\nthe size of its change), and one more for being one step from an\neffect."
         },
         "start": {
           "description": "Its first and last line at the tip, counting from 1.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "steps": {
+          "description": "One step from an effect: each direct function it calls (it\ntriggers the effect) and each that calls it (it feeds the\neffect).",
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -584,6 +614,8 @@
         "removed",
         "effects",
         "direct",
+        "calls",
+        "steps",
         "risk"
       ],
       "type": "object"
@@ -3623,7 +3655,7 @@
           "type": "string"
         },
         "signal": {
-          "description": "`outside`, `contract`, `diff` or `dependents`.",
+          "description": "`outside`, `contract`, `diff` or `dependents`; for a function,\nalso `reach`.",
           "type": "string"
         }
       },
@@ -3645,6 +3677,36 @@
       },
       "required": [
         "seats"
+      ],
+      "type": "object"
+    },
+    "Step": {
+      "description": "A changed function one step from an effect.",
+      "properties": {
+        "direction": {
+          "description": "`triggers`: it calls the direct function; `feeds`: the direct\nfunction calls it.",
+          "type": "string"
+        },
+        "effects": {
+          "description": "The kinds of effect that function holds; sorted.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "function": {
+          "type": "string"
+        },
+        "path": {
+          "description": "The direct function, by file and name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "direction",
+        "path",
+        "function",
+        "effects"
       ],
       "type": "object"
     },

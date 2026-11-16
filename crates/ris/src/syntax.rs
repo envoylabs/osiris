@@ -35,6 +35,19 @@ pub struct Reference {
     pub name: String,
 }
 
+/// A call, as far as the text says what it calls: the callee's own
+/// name (`load`, or with its type in front where the call names one:
+/// `Store::new`), and the module the file's imports say it comes from
+/// (`crate::store`, `./store`, a Go import path, a Clojure namespace),
+/// or `None` when they say nothing: a name of the file's own, or a
+/// method called on a value.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Call {
+    pub line: u64,
+    pub name: String,
+    pub module: Option<String>,
+}
+
 /// What a file's parse gives.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Parsed {
@@ -42,6 +55,15 @@ pub struct Parsed {
     pub functions: Vec<Function>,
     /// By line, then name, each once.
     pub references: Vec<Reference>,
+    /// By line, each once.
+    pub calls: Vec<Call>,
+    /// The namespace a Clojure file declares in its `ns` form.
+    pub namespace: Option<String>,
+}
+
+/// The separator between a type and its method in `language`'s names.
+pub fn method_separator(language: &str) -> &'static str {
+    if language == "rust" { "::" } else { "." }
 }
 
 /// The languages read inside their files; any other stays at file
@@ -78,7 +100,14 @@ pub fn parse(language: &str, path: &str, text: &str) -> Option<Parsed> {
         .sort_by(|a, b| (a.start, a.end, &a.name).cmp(&(b.start, b.end, &b.name)));
     out.references.sort();
     out.references.dedup();
+    out.calls.sort();
+    out.calls.dedup();
     Some(out)
+}
+
+/// Whether a name starts as a type does: with a capital letter.
+fn is_type(segment: &str) -> bool {
+    segment.chars().next().is_some_and(char::is_uppercase)
 }
 
 /// Whether `name` is `pattern` or lies under it: the pattern followed by
@@ -314,6 +343,18 @@ fn rust(root: Node, src: &[u8], out: &mut Parsed) {
                     });
                 }
             }
+            "call_expression" => {
+                if let Some(mut callee) = n.child_by_field_name("function") {
+                    if callee.kind() == "generic_function"
+                        && let Some(inner) = callee.child_by_field_name("function")
+                    {
+                        callee = inner;
+                    }
+                    if let Some(call) = rust_call(callee, src, &aliases) {
+                        out.calls.push(call);
+                    }
+                }
+            }
             "scoped_identifier" | "scoped_type_identifier" => {
                 // The whole path once; the shorter paths inside it are
                 // not visited.
@@ -369,6 +410,58 @@ fn rust(root: Node, src: &[u8], out: &mut Parsed) {
         }
         true
     });
+}
+
+/// What a Rust call's callee says it calls.
+fn rust_call(callee: Node, src: &[u8], aliases: &BTreeMap<String, String>) -> Option<Call> {
+    let line = first_line(callee);
+    match callee.kind() {
+        // `load(..)`, perhaps brought in by a `use` line.
+        "identifier" => {
+            let name = text(callee, src);
+            let module = aliases
+                .get(name)
+                .and_then(|full| full.rsplit_once("::"))
+                .map(|(m, _)| m.to_owned());
+            Some(Call {
+                line,
+                name: name.to_owned(),
+                module,
+            })
+        }
+        // `x.save(..)`: a method on a value.
+        "field_expression" => Some(Call {
+            line,
+            name: text(callee.child_by_field_name("field")?, src).to_owned(),
+            module: None,
+        }),
+        // `crate::store::load(..)`, `Store::new(..)`.
+        "scoped_identifier" => {
+            let path: String = text(callee, src).split_whitespace().collect();
+            let mut full = resolve(&path, "::", aliases);
+            // `Self` is the type of the `impl` it is written in.
+            if let Some(rest) = full.strip_prefix("Self::")
+                && let Some(ty) =
+                    enclosing(callee, &["impl_item"]).and_then(|i| i.child_by_field_name("type"))
+            {
+                full = format!("{}::{rest}", bare_type(text(ty, src)));
+            }
+            let segments: Vec<&str> = full.split("::").collect();
+            let (name, module) = match segments.as_slice() {
+                [.., ty, f] if is_type(ty) => {
+                    (format!("{ty}::{f}"), &segments[..segments.len() - 2])
+                }
+                [.., f] => ((*f).to_owned(), &segments[..segments.len() - 1]),
+                [] => return None,
+            };
+            Some(Call {
+                line,
+                name,
+                module: (!module.is_empty()).then(|| module.join("::")),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn join_rust(prefix: &str, s: &str) -> String {
@@ -449,7 +542,9 @@ fn member_chain(n: Node, src: &[u8]) -> Option<Vec<String>> {
 }
 
 fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
-    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
+    // Each imported name: the module, and the member it names (none for
+    // a default or namespace import, or a `require`).
+    let mut imports: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
     walk(root, &mut |n| {
         match n.kind() {
             "import_statement" => {
@@ -460,20 +555,12 @@ fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
                 walk(n, &mut |c| {
                     match c.kind() {
                         // `import fs from "fs"`: the default export.
-                        "import_clause" => {
-                            let mut cursor = c.walk();
-                            for d in c.named_children(&mut cursor) {
-                                if d.kind() == "identifier" {
-                                    aliases.insert(text(d, src).to_owned(), module.clone());
-                                }
-                            }
-                        }
                         // `import * as fs from "fs"`.
-                        "namespace_import" => {
+                        "import_clause" | "namespace_import" => {
                             let mut cursor = c.walk();
                             for d in c.named_children(&mut cursor) {
                                 if d.kind() == "identifier" {
-                                    aliases.insert(text(d, src).to_owned(), module.clone());
+                                    imports.insert(text(d, src).to_owned(), (module.clone(), None));
                                 }
                             }
                         }
@@ -481,9 +568,9 @@ fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
                         "import_specifier" => {
                             if let Some(name) = c.child_by_field_name("name") {
                                 let local = c.child_by_field_name("alias").unwrap_or(name);
-                                aliases.insert(
+                                imports.insert(
                                     text(local, src).to_owned(),
-                                    format!("{module}.{}", text(name, src)),
+                                    (module.clone(), Some(text(name, src).to_owned())),
                                 );
                             }
                         }
@@ -507,13 +594,27 @@ fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
                     && let Some(first) = args.named_child(0)
                     && first.kind() == "string"
                 {
-                    aliases.insert(text(name, src).to_owned(), module_name(text(first, src)));
+                    imports.insert(
+                        text(name, src).to_owned(),
+                        (module_name(text(first, src)), None),
+                    );
                 }
                 true
             }
             _ => true,
         }
     });
+    // What each imported name stands for, as a reference names it.
+    let aliases: BTreeMap<String, String> = imports
+        .iter()
+        .map(|(local, (module, member))| {
+            let full = match member {
+                Some(m) => format!("{module}.{m}"),
+                None => module.clone(),
+            };
+            (local.clone(), full)
+        })
+        .collect();
     walk(root, &mut |n| {
         match n.kind() {
             "import_statement" => return false,
@@ -553,6 +654,40 @@ fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
                         name: text(name, src).to_owned(),
                         start: first_line(n),
                         end: last_line(n),
+                    });
+                }
+            }
+            "call_expression" => {
+                let callee = n.child_by_field_name("function");
+                let call = match callee.map(|c| (c, c.kind())) {
+                    // `load(..)`: the file's own, or imported.
+                    Some((c, "identifier")) => {
+                        let local = text(c, src);
+                        Some(match imports.get(local) {
+                            Some((module, member)) => (
+                                member.clone().unwrap_or_else(|| local.to_owned()),
+                                Some(module.clone()),
+                            ),
+                            None => (local.to_owned(), None),
+                        })
+                    }
+                    // `store.save(..)`, `this.save(..)`: the module when
+                    // the object is an imported name.
+                    Some((c, "member_expression")) => c.child_by_field_name("property").map(|p| {
+                        let module = c
+                            .child_by_field_name("object")
+                            .filter(|o| o.kind() == "identifier")
+                            .and_then(|o| imports.get(text(o, src)))
+                            .map(|(m, _)| m.clone());
+                        (text(p, src).to_owned(), module)
+                    }),
+                    _ => None,
+                };
+                if let Some((name, module)) = call {
+                    out.calls.push(Call {
+                        line: first_line(n),
+                        name,
+                        module,
                     });
                 }
             }
@@ -659,6 +794,32 @@ fn go(root: Node, src: &[u8], out: &mut Parsed) {
                     });
                 }
             }
+            "call_expression" => {
+                let call = match n.child_by_field_name("function") {
+                    // `load(..)`: the package's own.
+                    Some(f) if f.kind() == "identifier" => Some((text(f, src).to_owned(), None)),
+                    // `store.Load(..)` through an import, or `s.Save(..)`
+                    // on a value.
+                    Some(f) if f.kind() == "selector_expression" => {
+                        f.child_by_field_name("field").map(|field| {
+                            let module = f
+                                .child_by_field_name("operand")
+                                .filter(|o| o.kind() == "identifier")
+                                .and_then(|o| aliases.get(text(o, src)))
+                                .cloned();
+                            (text(field, src).to_owned(), module)
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some((name, module)) = call {
+                    out.calls.push(Call {
+                        line: first_line(n),
+                        name,
+                        module,
+                    });
+                }
+            }
             // `pkg.Name` as a value, and as a type.
             "selector_expression" | "qualified_type" => {
                 let (operand, field) = if n.kind() == "qualified_type" {
@@ -750,6 +911,7 @@ fn clojure(root: Node, src: &[u8], out: &mut Parsed) {
         if n.kind() == "list_lit"
             && values(n).first().and_then(|h| symbol(*h, src)).as_deref() == Some("ns")
         {
+            out.namespace = values(n).get(1).and_then(|s| symbol(*s, src));
             clojure_requires(n, src, &mut aliases);
             return false;
         }
@@ -775,6 +937,27 @@ fn clojure(root: Node, src: &[u8], out: &mut Parsed) {
                 }
             }
             _ => {}
+        }
+        // The call: `ns/f`, a referred `f`, or the file's own `f`.
+        let (called, module) = match head.split_once('/') {
+            Some((ns, f)) if !ns.is_empty() && !f.is_empty() => (
+                f.to_owned(),
+                Some(aliases.get(ns).map_or(ns, String::as_str).to_owned()),
+            ),
+            _ => match aliases.get(&head).and_then(|full| full.split_once('/')) {
+                Some((ns, f)) => (f.to_owned(), Some(ns.to_owned())),
+                None => (head.clone(), None),
+            },
+        };
+        if !matches!(
+            head.as_str(),
+            "defn" | "defn-" | "defmacro" | "defmethod" | "def" | "fn" | "let" | "if" | "do"
+        ) {
+            out.calls.push(Call {
+                line: forms.first().map_or(first_line(n), |h| first_line(*h)),
+                name: called,
+                module,
+            });
         }
         let name = match head.split_once('/') {
             Some((ns, name)) if !ns.is_empty() && !name.is_empty() => {

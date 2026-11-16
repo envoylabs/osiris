@@ -357,9 +357,19 @@ or reshaped.
   it), in the order they start: `name` as a reader finds it (a method
   with its type in front), `start` and `end` lines at `tip`, the lines
   `added` in it and `removed` from it, the kinds of `effects` on its
-  lines, whether it is `direct` (holds an effect site itself), and its
-  `risk`, computed from the same signals as a file's (its effects and
-  the size of its change) as `level` and `signals`. `marks` are the
+  lines, whether it is `direct` (holds an effect site itself), the
+  functions of the repository it `calls` (`path` and `function`), its
+  `steps` one step from an effect, and its `risk`, computed from the
+  same signals as a file's (its effects and the size of its change),
+  with one point more and the signal `reach` when it has a step, as
+  `level` and `signals`. A step is a direct function it calls
+  (`direction` `triggers`) or one that calls it (`feeds`), with that
+  function's `path`, `function` and `effects`. Calls are resolved by
+  name over every file on the map of those languages: a call into a
+  module the repository does not hold (a standard library, a package,
+  another crate) is left out, a name with a type in front means that
+  method, and a bare name (a method called on a value, say) means every
+  function and method so named, so the hint errs toward flagging. `marks` are the
   lines that touch the outside (an effect site), on a line the phase
   changed or in a function it changed, by line: `line` at `tip`,
   `kind` (`database`, `filesystem`, `network` or `process`), the

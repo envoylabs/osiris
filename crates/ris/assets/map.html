@@ -686,8 +686,14 @@
     listed.set(n, tr);
     // Expanded, a file shows its marked lines: each line that touches
     // the outside, the function it sits in and that function's level.
+    // Below them, each changed function one step from an effect: the
+    // direction, the effect and the function it reaches.
     var marks = n.marks || [];
-    if (marks.length > 0) {
+    var steps = [];
+    (n.functions || []).forEach(function (f) {
+      f.steps.forEach(function (s) { steps.push({ from: f.name, step: s }); });
+    });
+    if (marks.length + steps.length > 0) {
       var detail = document.createElement("tr");
       detail.className = "marks";
       detail.hidden = true;
@@ -701,19 +707,29 @@
         if (m.risk) { div.appendChild(span("level " + m.risk, " (" + m.risk + ")")); }
         td.appendChild(div);
       });
+      steps.forEach(function (o) {
+        var div = document.createElement("div");
+        div.appendChild(span("", o.from + " " + o.step.direction + " "));
+        div.appendChild(span("outside", o.step.effects.join(", ")));
+        div.appendChild(span("", " via " + o.step["function"]));
+        div.appendChild(span("quiet", "  " + o.step.path));
+        td.appendChild(div);
+      });
       detail.appendChild(td);
       listRows.appendChild(detail);
       var toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "expand";
       toggle.setAttribute("aria-expanded", "false");
-      toggle.textContent = "▸ " + marks.length + " marked";
+      var label = marks.length + " marked" +
+        (steps.length > 0 ? ", " + steps.length + " one step away" : "");
+      toggle.textContent = "▸ " + label;
       toggle.addEventListener("click", function (event) {
         // Expanding is not picking: the pane stays as it is.
         event.stopPropagation();
         detail.hidden = !detail.hidden;
         toggle.setAttribute("aria-expanded", String(!detail.hidden));
-        toggle.textContent = (detail.hidden ? "▸ " : "▾ ") + marks.length + " marked";
+        toggle.textContent = (detail.hidden ? "▸ " : "▾ ") + label;
       });
       file.appendChild(document.createElement("br"));
       file.appendChild(toggle);

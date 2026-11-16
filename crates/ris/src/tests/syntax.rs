@@ -236,6 +236,85 @@ fn clojure_functions_and_references_resolve_through_requires() {
     );
 }
 
+fn calls(p: &Parsed) -> Vec<(u64, &str, Option<&str>)> {
+    p.calls
+        .iter()
+        .map(|c| (c.line, c.name.as_str(), c.module.as_deref()))
+        .collect()
+}
+
+#[test]
+fn a_call_names_its_callee_and_the_module_imports_say_it_is_from() {
+    let rust = parse(
+        "rust",
+        "src/app.rs",
+        "use crate::store::{load, Store};\n\
+         impl Store {\n    fn fresh() -> Self { Self::new() }\n}\n\
+         fn run(s: Store) {\n    load();\n    Store::open();\n    s.save();\n    \
+         crate::net::send::<u8>();\n    helper();\n}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        calls(&rust),
+        [
+            // `Self` is the impl's own type: no import says more.
+            (3, "Store::new", None),
+            (6, "load", Some("crate::store")),
+            (7, "Store::open", Some("crate::store")),
+            (8, "save", None),
+            (9, "send", Some("crate::net")),
+            (10, "helper", None),
+        ]
+    );
+    let ts = parse(
+        "typescript",
+        "src/app.ts",
+        "import { load as get } from \"./store\";\nimport * as fs from \"fs\";\n\
+         function run() {\n  get();\n  fs.readFileSync(\"x\");\n  this.save();\n  helper();\n}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        calls(&ts),
+        [
+            (4, "load", Some("./store")),
+            (5, "readFileSync", Some("fs")),
+            (6, "save", None),
+            (7, "helper", None),
+        ]
+    );
+    let go = parse(
+        "go",
+        "cmd/app.go",
+        "package main\n\nimport \"example.com/app/store\"\n\n\
+         func run(s store.Store) {\n\tstore.Load()\n\ts.Save()\n\thelper()\n}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        calls(&go),
+        [
+            (6, "Load", Some("example.com/app/store")),
+            (7, "Save", None),
+            (8, "helper", None),
+        ]
+    );
+    let clj = parse(
+        "clojure",
+        "src/app/core.clj",
+        "(ns app.core\n  (:require [app.store :as store :refer [load]]))\n\n\
+         (defn run []\n  (store/save)\n  (load)\n  (helper))\n",
+    )
+    .unwrap();
+    assert_eq!(clj.namespace.as_deref(), Some("app.core"));
+    assert_eq!(
+        calls(&clj),
+        [
+            (5, "save", Some("app.store")),
+            (6, "load", Some("app.store")),
+            (7, "helper", None),
+        ]
+    );
+}
+
 #[test]
 fn a_language_not_read_inside_files_gives_nothing() {
     assert_eq!(parse("python", "x.py", "import os\n"), None);

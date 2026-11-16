@@ -594,7 +594,7 @@ fn a_changed_file_s_functions_and_marked_lines_are_on_the_map() {
         "use std::fs;\n\nuse crate::wire::Frame;\n\npub fn save(_: Frame) {\n    \
          let _ = fs::read(\"frames\");\n    fs::write(\"frames\", b\"\").unwrap();\n}\n\n\
          pub fn wipe() {\n    std::process::Command::new(\"rm\").status().unwrap();\n    \
-         crate::db::put();\n}\n",
+         crate::db::put();\n}\n\npub fn tidy() {\n    wipe();\n}\n",
     );
     write(
         &dir,
@@ -629,7 +629,27 @@ fn a_changed_file_s_functions_and_marked_lines_are_on_the_map() {
             )
         })
         .collect();
-    assert_eq!(functions, [("save", 5, 8), ("wipe", 10, 13)], "{store}");
+    assert_eq!(
+        functions,
+        [("save", 5, 8), ("wipe", 10, 13), ("tidy", 15, 17)],
+        "{store}"
+    );
+    // One step from an effect: tidy calls wipe, which is direct, and
+    // wipe is fed by nothing.
+    assert_eq!(
+        store["functions"][2]["steps"],
+        json!([{"direction": "triggers", "path": "src/store.rs", "function": "wipe",
+                "effects": ["database", "process"]}])
+    );
+    assert_eq!(
+        store["functions"][2]["calls"],
+        json!([{"path": "src/store.rs", "function": "wipe"}])
+    );
+    assert_eq!(store["functions"][1]["steps"], json!([]));
+    assert_eq!(
+        store["functions"][2]["risk"]["signals"][0]["signal"],
+        "reach"
+    );
     assert_eq!(
         store["functions"][1]["effects"],
         json!(["database", "process"])
@@ -665,6 +685,10 @@ fn a_changed_file_s_functions_and_marked_lines_are_on_the_map() {
     let text = ok(&dir, "person", &["map", "--list"]);
     assert!(
         text.contains("\n         line 12: database in wipe (low)\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n         tidy triggers database, process via wipe (src/store.rs)\n"),
         "{text}"
     );
     assert!(

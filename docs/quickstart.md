@@ -341,9 +341,13 @@ page's, with each file's reasons, and opens nothing.
 Inside a changed Rust, TypeScript, Go or Clojure file the map also
 finds the functions the phase changed and marks each line that touches
 a database, the filesystem, the network or a process, with the function
-it sits in and that function's level. `ris map --list` prints a file's
-marked lines under its reasons, and on the page a file with any expands
-to show them. What counts is a list of names per language that ships
+it sits in and that function's level. It also follows calls one step:
+a changed function that calls a function touching the outside triggers
+that effect, and one called by such a function feeds it; each is
+listed with the function and effect it reaches. Calls are matched by
+name, so a common method name can flag more than it should. `ris map
+--list` prints a file's marked lines and its one-step functions under
+its reasons, and on the page a file with any expands to show them. What counts is a list of names per language that ships
 with `ris`; add your own (a module of your project that wraps the
 database, say) under `[map.effects.<language>]` in
 `.osiris/config.toml`. Files of other languages stay at file level.

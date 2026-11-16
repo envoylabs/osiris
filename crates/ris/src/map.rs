@@ -158,9 +158,37 @@ pub struct ChangedFunction {
     pub effects: Vec<&'static str>,
     /// Whether it holds an effect site itself.
     pub direct: bool,
-    /// Its level, from the same signals as a file's: its effects and
-    /// the size of its change.
+    /// The functions of the repository it calls, as far as names say:
+    /// a call that could mean more than one function names each.
+    pub calls: Vec<Callee>,
+    /// One step from an effect: each direct function it calls (it
+    /// triggers the effect) and each that calls it (it feeds the
+    /// effect).
+    pub steps: Vec<Step>,
+    /// Its level, from the same signals as a file's (its effects and
+    /// the size of its change), and one more for being one step from an
+    /// effect.
     pub risk: Computed,
+}
+
+/// A function of the repository, by file and name.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, schemars::JsonSchema)]
+pub struct Callee {
+    pub path: String,
+    pub function: String,
+}
+
+/// A changed function one step from an effect.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, schemars::JsonSchema)]
+pub struct Step {
+    /// `triggers`: it calls the direct function; `feeds`: the direct
+    /// function calls it.
+    pub direction: &'static str,
+    /// The direct function, by file and name.
+    pub path: String,
+    pub function: String,
+    /// The kinds of effect that function holds; sorted.
+    pub effects: Vec<&'static str>,
 }
 
 /// A line that touches the outside.
@@ -218,6 +246,10 @@ pub fn changes(diff: &str) -> Changes {
     out
 }
 
+/// For a function of the file: the functions it calls, and its steps
+/// to an effect ([`Graph::reach`]).
+pub type Reach<'a> = dyn Fn(&crate::syntax::Function) -> (Vec<Callee>, Vec<Step>) + 'a;
+
 /// The functions `parsed` holds that `changes` touched, and the effect
 /// sites on a changed line or in a changed function, by the `patterns`
 /// of the file's language.
@@ -225,6 +257,7 @@ pub fn inside(
     parsed: &crate::syntax::Parsed,
     changes: &Changes,
     patterns: &[(String, &'static str)],
+    reach: &Reach<'_>,
 ) -> (Vec<ChangedFunction>, Vec<Mark>) {
     let mut sites: BTreeSet<(u64, &'static str)> = BTreeSet::new();
     for r in &parsed.references {
@@ -254,6 +287,7 @@ pub fn inside(
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+        let (calls, steps) = reach(f);
         functions.push(ChangedFunction {
             name: f.name.clone(),
             start: f.start,
@@ -261,8 +295,10 @@ pub fn inside(
             added,
             removed,
             direct: !effects.is_empty(),
-            risk: computed_risk(&effects, false, added + removed, 0),
+            risk: function_risk(&effects, added + removed, &steps),
             effects,
+            calls,
+            steps,
         });
     }
     let marks = sites
@@ -291,25 +327,257 @@ pub fn inside(
 }
 
 /// Fill in each changed file's `functions` and `marks`, from its text
-/// at the tip in `tree` and its diff in the document.
+/// at the tip in `tree` and its diff in the document. Every file on the
+/// map of a language read inside is parsed, so that calls between
+/// functions are known across the repository.
 pub fn annotate(map: &mut crate::schema::Map, tree: &Tree, config: &crate::config::MapConfig) {
+    let mut files: BTreeMap<String, (&'static str, crate::syntax::Parsed)> = BTreeMap::new();
+    for node in map.nodes.iter().filter(|n| n.status != "deleted") {
+        if let (Some(language), Some(text)) = (node.language, tree.get(&node.path))
+            && let Some(parsed) = crate::syntax::parse(language, &node.path, text)
+        {
+            files.insert(node.path.clone(), (language, parsed));
+        }
+    }
+    let graph = Graph::new(&files, &Locals::of(tree, &files), config);
     for node in &mut map.nodes {
         if matches!(node.status, "unchanged" | "deleted") {
             continue;
         }
-        let (Some(language), Some(text), Some(diff)) = (
-            node.language,
-            tree.get(&node.path),
-            map.diffs.get(&node.path),
-        ) else {
+        let (Some((language, parsed)), Some(diff)) =
+            (files.get(&node.path), map.diffs.get(&node.path))
+        else {
             continue;
         };
-        let Some(parsed) = crate::syntax::parse(language, &node.path, text) else {
-            continue;
-        };
-        let (functions, marks) = inside(&parsed, &changes(diff), &config.effects_for(language));
+        let reach = |f: &crate::syntax::Function| graph.reach(&node.path, f);
+        let (functions, marks) = inside(
+            parsed,
+            &changes(diff),
+            &config.effects_for(language),
+            &reach,
+        );
         node.functions = Some(functions);
         node.marks = Some(marks);
+    }
+}
+
+/// What a repository holds that says whether a call's module is its
+/// own: its Rust packages, the directories of its Go files, and the
+/// namespaces its Clojure files declare. A TypeScript module is the
+/// repository's own when imported by a relative path.
+#[derive(Debug, Default)]
+pub struct Locals {
+    pub rust_packages: BTreeSet<String>,
+    pub go_dirs: BTreeSet<String>,
+    pub clojure_namespaces: BTreeSet<String>,
+}
+
+impl Locals {
+    pub fn of(
+        tree: &Tree,
+        files: &BTreeMap<String, (&'static str, crate::syntax::Parsed)>,
+    ) -> Self {
+        let mut out = Locals {
+            // A package's name as code names it, with `_` for `-`.
+            rust_packages: Rust::packages(tree)
+                .into_keys()
+                .map(|n| n.replace('-', "_"))
+                .collect(),
+            ..Locals::default()
+        };
+        for (path, (language, parsed)) in files {
+            match *language {
+                "go" => {
+                    out.go_dirs.insert(parent(path).to_owned());
+                }
+                "clojure" => out.clojure_namespaces.extend(parsed.namespace.clone()),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Whether a call from `language` into `module` stays in the
+    /// repository. No module is the file's own name, or a method on a
+    /// value, which may be any of the repository's.
+    pub fn is_local(&self, language: &str, module: Option<&str>) -> bool {
+        let Some(module) = module else {
+            return true;
+        };
+        match language {
+            "rust" => {
+                let root = module.split("::").next().unwrap_or(module);
+                matches!(root, "crate" | "self" | "super" | "Self")
+                    || self.rust_packages.contains(root)
+            }
+            "typescript" => {
+                module.starts_with('.')
+                    || module.starts_with('/')
+                    || module.starts_with("@/")
+                    || module.starts_with("~/")
+            }
+            "go" => self
+                .go_dirs
+                .iter()
+                .any(|d| !d.is_empty() && (module == d || module.ends_with(&format!("/{d}")))),
+            "clojure" => self.clojure_namespaces.contains(module),
+            _ => false,
+        }
+    }
+}
+
+/// One function of the repository, for the call graph.
+struct Known {
+    path: String,
+    language: &'static str,
+    function: crate::syntax::Function,
+    effects: Vec<&'static str>,
+}
+
+/// Which function of the repository calls which, as far as names say.
+pub struct Graph {
+    known: Vec<Known>,
+    /// By caller, the functions it calls; by callee, those that call it.
+    calls: BTreeMap<usize, BTreeSet<usize>>,
+    callers: BTreeMap<usize, BTreeSet<usize>>,
+}
+
+impl Graph {
+    /// The graph over `files`, each call resolved by name to every
+    /// function of the same language it could mean: a name with a type
+    /// in front to that method, a bare name to every function or method
+    /// so named. A call into a module that is not the repository's own
+    /// (`locals`) is left out.
+    pub fn new(
+        files: &BTreeMap<String, (&'static str, crate::syntax::Parsed)>,
+        locals: &Locals,
+        config: &crate::config::MapConfig,
+    ) -> Self {
+        let mut known = Vec::new();
+        for (path, (language, parsed)) in files {
+            let patterns = config.effects_for(language);
+            for f in &parsed.functions {
+                let effects: BTreeSet<&'static str> = parsed
+                    .references
+                    .iter()
+                    .filter(|r| f.start <= r.line && r.line <= f.end)
+                    .flat_map(|r| {
+                        patterns
+                            .iter()
+                            .filter(|(p, _)| crate::syntax::matches(p, &r.name))
+                            .map(|(_, k)| *k)
+                    })
+                    .collect();
+                known.push(Known {
+                    path: path.clone(),
+                    language,
+                    function: f.clone(),
+                    effects: effects.into_iter().collect(),
+                });
+            }
+        }
+        // Each function under its own name and under its last segment.
+        let mut by_name: BTreeMap<(&str, &str), Vec<usize>> = BTreeMap::new();
+        for (i, k) in known.iter().enumerate() {
+            let sep = crate::syntax::method_separator(k.language);
+            let name = k.function.name.as_str();
+            by_name.entry((k.language, name)).or_default().push(i);
+            if let Some((_, last)) = name.rsplit_once(sep) {
+                by_name.entry((k.language, last)).or_default().push(i);
+            }
+        }
+        let mut in_file: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (i, k) in known.iter().enumerate() {
+            in_file.entry(k.path.as_str()).or_default().push(i);
+        }
+        let mut calls: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+        let mut callers: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+        for (path, (language, parsed)) in files {
+            let here = in_file.get(path.as_str()).map_or(&[][..], Vec::as_slice);
+            for call in &parsed.calls {
+                if !locals.is_local(language, call.module.as_deref()) {
+                    continue;
+                }
+                // The innermost function the call is in.
+                let Some(from) = here
+                    .iter()
+                    .copied()
+                    .filter(|i| {
+                        let f = &known[*i].function;
+                        f.start <= call.line && call.line <= f.end
+                    })
+                    .max_by_key(|i| {
+                        let f = &known[*i].function;
+                        (f.start, std::cmp::Reverse(f.end))
+                    })
+                else {
+                    continue;
+                };
+                for to in by_name
+                    .get(&(*language, call.name.as_str()))
+                    .into_iter()
+                    .flatten()
+                {
+                    if *to != from {
+                        calls.entry(from).or_default().insert(*to);
+                        callers.entry(*to).or_default().insert(from);
+                    }
+                }
+            }
+        }
+        Graph {
+            known,
+            calls,
+            callers,
+        }
+    }
+
+    /// For the function `f` of the file at `path`: the functions it
+    /// calls, and its steps to an effect.
+    pub fn reach(&self, path: &str, f: &crate::syntax::Function) -> (Vec<Callee>, Vec<Step>) {
+        let Some(at) = self
+            .known
+            .iter()
+            .position(|k| k.path == path && k.function == *f)
+        else {
+            return (Vec::new(), Vec::new());
+        };
+        let callee = |i: &usize| Callee {
+            path: self.known[*i].path.clone(),
+            function: self.known[*i].function.name.clone(),
+        };
+        let step = |direction: &'static str, i: &usize| {
+            let k = &self.known[*i];
+            (!k.effects.is_empty()).then(|| Step {
+                direction,
+                path: k.path.clone(),
+                function: k.function.name.clone(),
+                effects: k.effects.clone(),
+            })
+        };
+        let calls: BTreeSet<Callee> = self
+            .calls
+            .get(&at)
+            .into_iter()
+            .flatten()
+            .map(callee)
+            .collect();
+        let mut steps: BTreeSet<Step> = BTreeSet::new();
+        steps.extend(
+            self.calls
+                .get(&at)
+                .into_iter()
+                .flatten()
+                .filter_map(|i| step("triggers", i)),
+        );
+        steps.extend(
+            self.callers
+                .get(&at)
+                .into_iter()
+                .flatten()
+                .filter_map(|i| step("feeds", i)),
+        );
+        (calls.into_iter().collect(), steps.into_iter().collect())
     }
 }
 
@@ -338,7 +606,8 @@ pub struct Computed {
 /// One signal that counts toward a computed level.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct Signal {
-    /// `outside`, `contract`, `diff` or `dependents`.
+    /// `outside`, `contract`, `diff` or `dependents`; for a function,
+    /// also `reach`.
     pub signal: &'static str,
     /// The signal in words, with its numbers.
     pub reason: String,
@@ -376,6 +645,58 @@ pub fn computed_risk(
     lines: u64,
     dependents: usize,
 ) -> Computed {
+    let (points, signals) = tally(external, contract, lines, dependents);
+    Computed {
+        level: level_of(points),
+        signals,
+    }
+}
+
+/// A changed function's level: the signals a file's would have from its
+/// effects and its change, and one point more for being one step from
+/// an effect (`steps`), as a call that triggers one or feeds one.
+pub fn function_risk(effects: &[&'static str], lines: u64, steps: &[Step]) -> Computed {
+    let (mut points, mut signals) = tally(effects, false, lines, 0);
+    if !steps.is_empty() {
+        points += 1;
+        let said: Vec<String> = steps
+            .iter()
+            .map(|s| {
+                format!(
+                    "{} {} via {}",
+                    s.direction,
+                    s.effects.join(", "),
+                    s.function
+                )
+            })
+            .collect();
+        signals.push(Signal {
+            signal: "reach",
+            reason: format!("one step from an effect: {}", said.join("; ")),
+        });
+    }
+    Computed {
+        level: level_of(points),
+        signals,
+    }
+}
+
+/// Two points are medium and four are high.
+fn level_of(points: u32) -> RiskLevel {
+    match points {
+        0 | 1 => RiskLevel::Low,
+        2 | 3 => RiskLevel::Medium,
+        _ => RiskLevel::High,
+    }
+}
+
+/// The points the signals add up to, and the signals that counted.
+fn tally(
+    external: &[&'static str],
+    contract: bool,
+    lines: u64,
+    dependents: usize,
+) -> (u32, Vec<Signal>) {
     let mut points = 0;
     let mut signals = Vec::new();
     let mut count = |n: u32, signal: &'static str, reason: String| {
@@ -410,12 +731,7 @@ pub fn computed_risk(
             format!("{dependents} other files depend on it"),
         );
     }
-    let level = match points {
-        0 | 1 => RiskLevel::Low,
-        2 | 3 => RiskLevel::Medium,
-        _ => RiskLevel::High,
-    };
-    Computed { level, signals }
+    (points, signals)
 }
 
 /// A level as the document and the text spell it.
@@ -1127,6 +1443,7 @@ pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
         if listing {
             text.push_str(&reasons(judged, computed));
             text.push_str(&marked_lines(&n["marks"]));
+            text.push_str(&one_step(&n["functions"]));
         } else if !judged.is_null() {
             text.push_str(&format!(
                 "         judged {} by {}: {} (computed: {})\n",
@@ -1189,6 +1506,32 @@ fn marked_lines(marks: &serde_json::Value) -> String {
             out.push_str(&format!(" ({level})"));
         }
         out.push('\n');
+    }
+    out
+}
+
+/// A changed file's functions one step from an effect, indented under
+/// its marked lines: each with its direction, the effect and the
+/// function it reaches, and that function's file.
+fn one_step(functions: &serde_json::Value) -> String {
+    let mut out = String::new();
+    for f in functions.as_array().into_iter().flatten() {
+        for s in f["steps"].as_array().into_iter().flatten() {
+            let effects: Vec<&str> = s["effects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.as_str())
+                .collect();
+            out.push_str(&format!(
+                "         {} {} {} via {} ({})\n",
+                f["name"].as_str().unwrap_or(""),
+                s["direction"].as_str().unwrap_or(""),
+                effects.join(", "),
+                s["function"].as_str().unwrap_or(""),
+                s["path"].as_str().unwrap_or(""),
+            ));
+        }
     }
     out
 }
