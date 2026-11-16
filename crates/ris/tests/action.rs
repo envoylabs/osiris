@@ -326,6 +326,10 @@ fn a_check_that_runs_past_its_limit_does_not_pass_and_is_stopped() {
     // Both runs are over and their groups killed: what `ps` still lists
     // in those groups now is what the kill missed.
     let left = left_in_groups(&fs::read_to_string(dir.join("groups")).unwrap_or_default());
+    // A fixed sleep, and the behaviour under test: what is proved is an
+    // absence, that nothing writes `late` once the time the check's
+    // background child would have taken has passed, and no condition
+    // can be waited for instead.
     std::thread::sleep(std::time::Duration::from_secs(3));
     assert!(
         !dir.join("late").exists(),

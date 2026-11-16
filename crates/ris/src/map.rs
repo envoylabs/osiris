@@ -792,6 +792,34 @@ pub fn opens_page(actor: &Actor, json: bool, html: bool, terminal: bool) -> bool
     matches!(actor, Actor::Person) && !json && !html && terminal
 }
 
+/// Which output a `ris map` gives, without its page or file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Form {
+    /// The page, written to the file `--html` names.
+    Write,
+    /// The page, written to its fixed file and opened in the browser.
+    Open,
+    /// The ranked list with each file's reasons (`--list`).
+    List,
+    /// The text form.
+    Text,
+}
+
+/// What `ris map` gives: `--html` writes the page there; otherwise the
+/// page is opened only where [`opens_page`] says, which is never with
+/// `--list`; `--list` prints the list; and anything else is the text.
+pub fn form(actor: &Actor, json: bool, html: bool, list: bool, terminal: bool) -> Form {
+    if html {
+        Form::Write
+    } else if !list && opens_page(actor, json, false, terminal) {
+        Form::Open
+    } else if list {
+        Form::List
+    } else {
+        Form::Text
+    }
+}
+
 /// How a file is opened in the browser: a program, and the arguments
 /// that go before the file.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -391,6 +391,21 @@ fn only_the_person_at_a_terminal_with_no_flags_has_the_page_opened() {
 }
 
 #[test]
+fn list_prints_the_list_and_never_opens_the_page() {
+    let seat = Actor::Agent(ris_core::ids::AgentName("heron".to_owned()));
+    // The person at a terminal with no flags gets the page opened, and
+    // with --list, at the same terminal, the list and no page.
+    assert_eq!(form(&Actor::Person, false, false, false, true), Form::Open);
+    assert_eq!(form(&Actor::Person, false, false, true, true), Form::List);
+    assert_eq!(form(&Actor::Person, true, false, true, true), Form::List);
+    assert_eq!(form(&seat, false, false, true, false), Form::List);
+    // --html writes the page whatever else; otherwise the text form.
+    assert_eq!(form(&Actor::Person, false, true, false, true), Form::Write);
+    assert_eq!(form(&Actor::Person, false, false, false, false), Form::Text);
+    assert_eq!(form(&seat, false, false, false, true), Form::Text);
+}
+
+#[test]
 fn the_platform_opener_is_the_systems_own() {
     let opener = Opener::platform();
     let want = if cfg!(target_os = "macos") {

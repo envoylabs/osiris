@@ -1558,22 +1558,25 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             let range = ris::map::range(&p, &l, *phase)?;
             let map = ris::map::build(&p, &l, &range)?;
             let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
-            if let Some(file) = html {
-                ris::map::output(map, ris::map::Show::Write(file))
-            } else if *list {
-                ris::map::output(map, ris::map::Show::List)
-            } else if ris::map::opens_page(&actor, cli.json, false, terminal) {
-                let file = p.root.join(ris::project::DIR).join(ris::map::PAGE_FILE);
-                ris::map::output(
-                    map,
-                    ris::map::Show::Open {
-                        file: &file,
-                        shown: &shown_beside(&p, &file),
-                        opener: &ris::map::Opener::platform(),
-                    },
-                )
-            } else {
-                ris::map::output(map, ris::map::Show::Text)
+            use ris::map::{Form, Show};
+            match (
+                ris::map::form(&actor, cli.json, html.is_some(), *list, terminal),
+                html,
+            ) {
+                (Form::Write, Some(file)) => ris::map::output(map, Show::Write(file)),
+                (Form::Open, _) => {
+                    let file = p.root.join(ris::project::DIR).join(ris::map::PAGE_FILE);
+                    ris::map::output(
+                        map,
+                        Show::Open {
+                            file: &file,
+                            shown: &shown_beside(&p, &file),
+                            opener: &ris::map::Opener::platform(),
+                        },
+                    )
+                }
+                (Form::List, _) => ris::map::output(map, Show::List),
+                _ => ris::map::output(map, Show::Text),
             }
         }
 
