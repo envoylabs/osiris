@@ -1146,7 +1146,7 @@
           "type": "string"
         },
         "kind": {
-          "description": "The kind of line that makes it: `mod` or `use` for Rust.",
+          "description": "The kind of line that makes it: `mod` or `use` for Rust,\n`import` for TypeScript and Go, `require` for Clojure.",
           "type": "string"
         },
         "to": {

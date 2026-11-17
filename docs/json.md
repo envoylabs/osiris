@@ -271,8 +271,14 @@ The compatibility rule in schema terms. Within format 1:
 
 `ris map` gives the phase's change set as a graph over the source
 code: the open phase's, or with none open the last closed one's, or
-that of the phase named (`ris map P-3`). Its `data` is the graph
-document. The document is the contract and holds everything there is
+that of the phase named (`ris map P-3`). Given a git range in place of
+a phase, `ris map A..B` maps the files at `B` against `A`, and `ris map
+A...B` against where the two met, as `git diff` reads them; either end
+left out is `HEAD`. A range is read in any git repository, a project or
+not (outside one, with the default `[map]` configuration, and the page
+is written only with `--html`); its document has `phase` null, the
+range as `tip_ref`, and no auditor's judgements. Its `data` is the
+graph document. The document is the contract and holds everything there is
 to draw: `ris map --html <file>` writes a page that embeds the same
 document, as JSON in the element `<script id="map-data"
 type="application/json">`, and draws nothing that is not in it, so any
@@ -328,7 +334,7 @@ or reshaped.
   main line, and the phase's tip, whose files are the nodes. `tip_ref`
   says what named the tip: the phase's branch while it exists, `HEAD`
   for an open phase with no branch of its own, or the closing merge
-  for a closed phase. `base` is null when where the work left the main
+  for a closed phase, or the range as given. `base` is null when where the work left the main
   line is not known, and then no node carries a diff. `phase` is null
   in a project that has never opened one.
 - `nodes` are the repository's source files, sorted by `path`, which
@@ -339,9 +345,13 @@ or reshaped.
   Files that are neither are not on the map, whatever the phase did to
   them.
 - Test files are not on the map either: a file that would be a node
-  and matches a `[map] tests` pattern (by default `**/tests/**`, every
-  file under a `tests` directory) has no node and no edge, unless a
-  `contracts` pattern also names it. The tests verify the behaviour
+  and matches a `[map] tests` pattern has no node and no edge, unless a
+  `contracts` pattern also names it. By default the patterns are each
+  language's convention: every file under a `tests`, `test` or
+  `__tests__` directory, and every file named as a test beside its
+  source (`*_test.go`; `*.test.ts`, `*.spec.ts` and the same for
+  `.tsx`, `.js` and `.jsx`; `*_test.clj`, `.cljs` and `.cljc`). The
+  tests verify the behaviour
   that lands in the source; `totals.tests` says what the phase did to
   them.
 - `status` is `added`, `modified`, `deleted` or `unchanged` in the
@@ -431,9 +441,17 @@ or reshaped.
   Rust: `mod` (a `mod name;` line, to the module's file) and `use` (a
   `use` line or a qualified path through `crate`, `self`, `super` or a
   package of the repository, to the deepest module file it names).
-  Edges are found by scanning the text, per language; a language with
-  no scanner yet has nodes and no edges, and gaining one adds edges
-  and `kind` values without changing the document's shape.
+  For TypeScript: `import` (an `import` or `export ... from`, a
+  `require` or an `import()` of a relative specifier, to the file it
+  names: with or without its extension, `./wire.js` for `wire.ts`, or
+  a directory's `index` file). For Go: `import` (an import path under
+  a module a `go.mod` in the repository declares, to every Go file in
+  that package's directory). For Clojure: `require` (a namespace an
+  `ns` form's `:require` or `:use` names, to every file whose `ns` form
+  declares it). Rust's edges are found by scanning the text, the
+  others' from their syntax trees; a language with no scanner yet has
+  nodes and no edges, and gaining one adds edges and `kind` values
+  without changing the document's shape.
 - `totals` counts the nodes (`files`), those not `unchanged`
   (`changed`), their lines `added` and `removed`, and the nodes that
   are external or a contract (`outside`). `tests` counts the test files

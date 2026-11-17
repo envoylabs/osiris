@@ -346,8 +346,10 @@ Where the summary draws the phase's items, `ris map` draws what the
 phase did to the code. Its nodes are the repository's source files,
 each with the lines the phase added and removed, read from git as the
 phase branch against the main line; unchanged files are there too,
-faint. Its edges are how the code connects (for Rust, `mod` and `use`
-lines, found by scanning). A file that touches the outside (a
+faint. Its edges are how the code connects: for Rust, `mod` and `use`
+lines, found by scanning; for TypeScript, relative imports; for Go,
+imports of the repository's own packages; for Clojure, required
+namespaces. A file that touches the outside (a
 database, the filesystem, the network, starting a process), found from
 what it imports, is ringed, and so is one you list as a contract or
 format:
@@ -361,7 +363,9 @@ tests = ["**/tests/**", "**/*_test.go"]
 Test files are left off the map, since the behaviour lands in the
 source and the tests only verify it; one line counts the test files
 the phase changed and the lines added and removed in them. `tests`
-names them, and by default it is every file under a `tests` directory.
+names them, and by default it is each language's convention: every
+file under a `tests`, `test` or `__tests__` directory, and every file
+named as a test (`*_test.go`, `*.test.ts`, `*.spec.ts`, `*_test.clj`).
 A node is larger the more the phase changed it, so the eye lands first
 on the large changes, and the ring picks out those at the edges of the
 system. An amber diamond beside a changed file is its risk: hollow for
@@ -409,7 +413,9 @@ database, say) under `[map.effects.<language>]` in
 `ris map --html map.html` writes the page to a file you name and opens
 nothing, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the
-phase just closed, and `ris map P-n` an earlier one.
+phase just closed, and `ris map P-n` an earlier one. `ris map A..B`
+maps a git range instead (`ris map main..feature`, `ris map
+v1.2..v1.3`), in any repository's history, a project or not.
 
 Person actions (A-n) are your own to-do list: only you raise them
 (`ris action raise "..." --done-when "..." --blocks I-7`), linked to

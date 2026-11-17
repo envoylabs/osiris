@@ -219,9 +219,12 @@ enum Cmd {
     /// files connect. With no phase named, the open phase, or the last
     /// one closed. Run by the person at a terminal with no flags, it
     /// writes the page inside .osiris and opens it in the browser.
+    /// Given a git range instead, the change set between two commits of
+    /// any repository, in a project or not.
     Map {
-        /// The phase, such as P-3.
-        phase: Option<ris_core::ids::PhaseId>,
+        /// The phase, such as P-3; or a git range, A..B (the files at B
+        /// against A) or A...B (against where the two met).
+        phase: Option<MapTarget>,
         /// Write one self-contained page that draws the map here.
         #[arg(long, value_name = "FILE")]
         html: Option<PathBuf>,
@@ -314,6 +317,26 @@ enum PhaseCmd {
         #[arg(long)]
         unreviewed: bool,
     },
+}
+
+/// What `ris map` reads: a phase, or a git range.
+#[derive(Clone, Debug)]
+enum MapTarget {
+    Phase(PhaseId),
+    Range(String),
+}
+
+impl std::str::FromStr for MapTarget {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.contains("..") {
+            return Ok(Self::Range(s.to_owned()));
+        }
+        s.parse::<PhaseId>()
+            .map(Self::Phase)
+            .map_err(|_| format!("`{s}` is neither a phase (P-n) nor a git range (A..B or A...B)"))
+    }
 }
 
 /// A phase tag as it is typed: `P-n`, or `none`.
@@ -743,6 +766,25 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 rules: ris::project::RULES.to_owned(),
             },
         ));
+    }
+    // A range is any repository's history: outside a project it is read
+    // with the default configuration, and printed or written, never
+    // opened, since there is no project to keep the page in.
+    if let Cmd::Map {
+        phase: Some(MapTarget::Range(spec)),
+        html,
+        list,
+    } = &cli.command
+        && matches!(Project::find(&cwd), Err(CliError::NotAProject(_)))
+    {
+        let range = ris::map::git_range(&cwd, spec)?;
+        let map = ris::map::build_range(&cwd, &ris::config::MapConfig::default(), &range)?;
+        use ris::map::Show;
+        return match (html, list) {
+            (Some(file), _) => ris::map::output(map, Show::Write(file)),
+            (None, true) => ris::map::output(map, Show::List),
+            (None, false) => ris::map::output(map, Show::Text),
+        };
     }
     if let Cmd::Schema = cli.command {
         // The contract is the program's, not a project's: it prints
@@ -1847,8 +1889,16 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Map { phase, html, list } => {
             let l = p.load()?;
-            let range = ris::map::range(&p, &l, *phase)?;
-            let map = ris::map::build(&p, &l, &range)?;
+            let map = match phase {
+                Some(MapTarget::Range(spec)) => {
+                    let range = ris::map::git_range(&p.work, spec)?;
+                    ris::map::build_range(&p.work, &p.config.map, &range)?
+                }
+                Some(MapTarget::Phase(id)) => {
+                    ris::map::build(&p, &l, &ris::map::range(&p, &l, Some(*id))?)?
+                }
+                None => ris::map::build(&p, &l, &ris::map::range(&p, &l, None)?)?,
+            };
             let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
             use ris::map::{Form, Show};
             match (

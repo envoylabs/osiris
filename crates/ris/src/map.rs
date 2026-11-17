@@ -11,10 +11,11 @@
 //! checkout: the phase branch is checked out nowhere, and the person's
 //! own checkout stays on the main line.
 //!
-//! How code connects is found per language, behind [`Language`]. Rust
-//! is the first: `mod` lines, `use` lines and qualified paths, read by
-//! scanning the text. A file of a language with no scanner is still a
-//! node, with its diff and no edges.
+//! How code connects is found per language, behind [`Language`]. Rust's
+//! `mod` lines, `use` lines and qualified paths are read by scanning the
+//! text; TypeScript's, Go's and Clojure's imports from their syntax
+//! trees ([`crate::connect`]). A file of a language with no scanner is
+//! still a node, with its diff and no edges.
 //!
 //! Inside a changed file of Rust, TypeScript, Go or Clojure, the
 //! functions the phase changed and the lines that touch the outside are
@@ -107,7 +108,12 @@ pub trait Language {
 }
 
 /// The languages with a scanner.
-pub const LANGUAGES: &[&dyn Language] = &[&Rust];
+pub const LANGUAGES: &[&dyn Language] = &[
+    &Rust,
+    &crate::connect::TypeScript,
+    &crate::connect::Go,
+    &crate::connect::Clojure,
+];
 
 /// One source file.
 #[derive(Clone, Debug, Serialize, PartialEq, schemars::JsonSchema)]
@@ -887,7 +893,8 @@ pub fn level_word(level: RiskLevel) -> &'static str {
 pub struct Edge {
     pub from: String,
     pub to: String,
-    /// The kind of line that makes it: `mod` or `use` for Rust.
+    /// The kind of line that makes it: `mod` or `use` for Rust,
+    /// `import` for TypeScript and Go, `require` for Clojure.
     pub kind: &'static str,
 }
 
@@ -1189,6 +1196,65 @@ pub fn range(p: &Project, l: &Loaded, phase: Option<PhaseId>) -> Result<Range, C
     }
 }
 
+/// What `ris map A..B` compares: the files at `B` against `A`, as `git
+/// diff A..B` does; `A...B` compares against where the two met, as
+/// `git diff A...B` does. Either end left out is `HEAD`. No phase is
+/// named, so no auditor's judgement is carried.
+pub fn git_range(dir: &Path, spec: &str) -> Result<Range, CliError> {
+    if git(dir, &["rev-parse", "--git-dir"]).is_err() {
+        return Err(CliError::Other(
+            "ris map reads the files and the diff from git, and this is not a git repository"
+                .into(),
+        ));
+    }
+    let (from, to, met) = match spec.split_once("...") {
+        Some((a, b)) => (a, b, true),
+        None => match spec.split_once("..") {
+            Some((a, b)) => (a, b, false),
+            None => {
+                return Err(CliError::Other(format!(
+                    "`{spec}` is not a range
+  next: give it as A..B or A...B"
+                )));
+            }
+        },
+    };
+    let commit = |name: &str| {
+        let name = if name.is_empty() { "HEAD" } else { name };
+        git_line(
+            dir,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{name}^{{commit}}"),
+            ],
+        )
+        .map_err(|_| {
+            CliError::Other(format!(
+                "`{name}` is not a commit in this repository
+  next: name a branch, a tag or a commit"
+            ))
+        })
+    };
+    let (from, tip) = (commit(from)?, commit(to)?);
+    let base = if met {
+        git_line(dir, &["merge-base", &from, &tip]).map_err(|_| {
+            CliError::Other(format!(
+                "the two ends of `{spec}` share no history, so there is no point where they met"
+            ))
+        })?
+    } else {
+        from
+    };
+    Ok(Range {
+        phase: None,
+        base: Some(base),
+        tip,
+        tip_ref: spec.to_owned(),
+    })
+}
+
 /// The contents of `paths` at `commit`, through one `git cat-file`.
 /// A path that is not a blob there, or is not UTF-8, is left out.
 fn read_blobs(dir: &Path, commit: &str, paths: &[&str]) -> Result<Tree, CliError> {
@@ -1269,6 +1335,16 @@ pub fn judgements(l: &Loaded, phase: Option<PhaseId>) -> BTreeMap<String, Judged
 /// file's diff.
 pub fn build(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::Map, CliError> {
     build_in(&p.work, &p.config.map, &judgements(l, range.phase), range)
+}
+
+/// The graph document for a git range ([`git_range`]) of the
+/// repository at `dir`: no phase, so nothing judged.
+pub fn build_range(
+    dir: &Path,
+    config: &crate::config::MapConfig,
+    range: &Range,
+) -> Result<crate::schema::Map, CliError> {
+    build_in(dir, config, &BTreeMap::new(), range)
 }
 
 /// [`build`] over the repository at `dir`, given what was `judged`:
@@ -1533,7 +1609,10 @@ pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
     let t = &doc["totals"];
     let mut text = format!(
         "{}: {} of {} source file(s) changed (+{} -{}), {} touch the outside or are contracts\n",
-        doc["phase"].as_str().unwrap_or("no phase"),
+        doc["phase"]
+            .as_str()
+            .or(doc["tip_ref"].as_str())
+            .unwrap_or("no phase"),
         t["changed"],
         t["files"],
         t["added"],

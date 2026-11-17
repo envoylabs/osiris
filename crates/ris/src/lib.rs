@@ -4,6 +4,7 @@
 pub mod brief;
 pub mod checks;
 pub mod config;
+pub mod connect;
 pub mod decide;
 pub mod drill;
 pub mod evidence;

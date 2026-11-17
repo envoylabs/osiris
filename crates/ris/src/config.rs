@@ -129,9 +129,32 @@ impl MapConfig {
     }
 }
 
-/// The default `[map] tests`: every file under a `tests` directory.
+/// The default `[map] tests`: each language's convention for where its
+/// tests live. A file under a `tests`, `test` or `__tests__` directory
+/// (Rust's integration tests, Clojure's `test/` tree, Jest's folders),
+/// and a file named as a test beside its source: Go's `_test.go`,
+/// TypeScript's and JavaScript's `.test.` and `.spec.`, Clojure's
+/// `_test.clj`.
 pub fn default_map_tests() -> Vec<String> {
-    vec!["**/tests/**".to_owned()]
+    [
+        "**/tests/**",
+        "**/test/**",
+        "**/__tests__/**",
+        "**/*_test.go",
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/*.test.js",
+        "**/*.test.jsx",
+        "**/*.spec.js",
+        "**/*.spec.jsx",
+        "**/*_test.clj",
+        "**/*_test.cljs",
+        "**/*_test.cljc",
+    ]
+    .map(str::to_owned)
+    .to_vec()
 }
 
 /// The default `worktrees`: beside the repository, as `<repo>-<seat>`.
@@ -468,10 +491,12 @@ preflight = true
 # repository root, where * matches within a path segment and ** any
 # number of segments. Uncomment and list your own. `tests` names the
 # test files, which the map leaves out and counts instead; by default,
-# every file under a tests directory.
+# every file under a tests, test or __tests__ directory, and every file
+# named as a test: *_test.go, *.test.ts, *.spec.ts (and .tsx, .js,
+# .jsx), *_test.clj (and .cljs, .cljc).
 # [map]
 # contracts = [\"docs/api.md\", \"src/wire/**\", \"**/*.proto\"]
-# tests = [\"**/tests/**\"]
+# tests = [\"**/tests/**\", \"**/*_test.go\"]
 #
 # Inside Rust, TypeScript, Go and Clojure files the map marks each line
 # that touches a database, the filesystem, the network or a process,

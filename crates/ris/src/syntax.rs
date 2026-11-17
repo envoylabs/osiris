@@ -59,6 +59,10 @@ pub struct Parsed {
     pub calls: Vec<Call>,
     /// The namespace a Clojure file declares in its `ns` form.
     pub namespace: Option<String>,
+    /// What the file imports, as it names it: a TypeScript module
+    /// specifier (`./store`, `fs`), a Go import path, a Clojure
+    /// namespace it requires. Sorted, each once.
+    pub imports: Vec<String>,
 }
 
 /// The separator between a type and its method in `language`'s names.
@@ -102,6 +106,8 @@ pub fn parse(language: &str, path: &str, text: &str) -> Option<Parsed> {
     out.references.dedup();
     out.calls.sort();
     out.calls.dedup();
+    out.imports.sort();
+    out.imports.dedup();
     Some(out)
 }
 
@@ -552,6 +558,7 @@ fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
                     return false;
                 };
                 let module = module_name(text(source, src));
+                out.imports.push(module.clone());
                 walk(n, &mut |c| {
                     match c.kind() {
                         // `import fs from "fs"`: the default export.
@@ -598,6 +605,25 @@ fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
                         text(name, src).to_owned(),
                         (module_name(text(first, src)), None),
                     );
+                }
+                true
+            }
+            // `export { save } from "./store"`.
+            "export_statement" => {
+                if let Some(source) = n.child_by_field_name("source") {
+                    out.imports.push(module_name(text(source, src)));
+                }
+                true
+            }
+            // `require("./store")` wherever it is, and `import("./store")`.
+            "call_expression" => {
+                if let Some(f) = n.child_by_field_name("function")
+                    && matches!(text(f, src), "require" | "import")
+                    && let Some(args) = n.child_by_field_name("arguments")
+                    && let Some(first) = args.named_child(0)
+                    && first.kind() == "string"
+                {
+                    out.imports.push(module_name(text(first, src)));
                 }
                 true
             }
@@ -755,6 +781,7 @@ fn go(root: Node, src: &[u8], out: &mut Parsed) {
         if n.kind() == "import_spec" {
             if let Some(path) = n.child_by_field_name("path") {
                 let path = text(path, src).trim_matches(['"', '`']).to_owned();
+                out.imports.push(path.clone());
                 let local = n
                     .child_by_field_name("name")
                     .map(|m| text(m, src).to_owned())
@@ -864,17 +891,28 @@ fn symbol(n: Node, src: &[u8]) -> Option<String> {
     })
 }
 
-/// The aliases and referred names of an `ns` form's `:require` clauses.
-fn clojure_requires(ns: Node, src: &[u8], aliases: &mut BTreeMap<String, String>) {
+/// The aliases and referred names of an `ns` form's `:require` clauses,
+/// and every namespace its `:require` and `:use` clauses name.
+fn clojure_requires(
+    ns: Node,
+    src: &[u8],
+    aliases: &mut BTreeMap<String, String>,
+    imports: &mut Vec<String>,
+) {
     for clause in values(ns) {
         if clause.kind() != "list_lit" {
             continue;
         }
         let parts = values(clause);
-        if parts.first().map(|k| text(*k, src)) != Some(":require") {
+        let Some(head @ (":require" | ":use")) = parts.first().map(|k| text(*k, src)) else {
             continue;
-        }
+        };
         for spec in &parts[1..] {
+            // `clojure.string`, bare.
+            if let Some(lib) = symbol(*spec, src) {
+                imports.push(lib);
+                continue;
+            }
             if spec.kind() != "vec_lit" {
                 continue;
             }
@@ -882,6 +920,10 @@ fn clojure_requires(ns: Node, src: &[u8], aliases: &mut BTreeMap<String, String>
             let Some(lib) = items.first().and_then(|n| symbol(*n, src)) else {
                 continue;
             };
+            imports.push(lib.clone());
+            if head == ":use" {
+                continue;
+            }
             let mut i = 1;
             while i + 1 < items.len() {
                 match text(items[i], src) {
@@ -912,7 +954,7 @@ fn clojure(root: Node, src: &[u8], out: &mut Parsed) {
             && values(n).first().and_then(|h| symbol(*h, src)).as_deref() == Some("ns")
         {
             out.namespace = values(n).get(1).and_then(|s| symbol(*s, src));
-            clojure_requires(n, src, &mut aliases);
+            clojure_requires(n, src, &mut aliases, &mut out.imports);
             return false;
         }
         true
