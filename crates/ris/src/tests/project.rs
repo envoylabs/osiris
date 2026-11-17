@@ -30,7 +30,8 @@ fn a_role_refusal_names_that_role_s_next_step() {
 }
 
 /// The rules `ris init` writes keep the rule that a test does not
-/// depend on the machine it runs on, in their Tests section.
+/// depend on the machine it runs on, in their Tests section, with the
+/// one exception for a wait whose length is what the test checks.
 #[test]
 fn the_rules_say_a_test_does_not_depend_on_its_machine() {
     let tests = RULES
@@ -42,6 +43,9 @@ fn the_rules_say_a_test_does_not_depend_on_its_machine() {
         "A test never depends on the machine it runs on",
         "no path, clock speed, system tool or configuration that differs between systems",
         "A test that needs one sets it up itself",
+        "waits for a condition and never for a fixed time",
+        "The one fixed wait a test may keep is a wait whose length is itself what the test checks",
+        "with a comment beside it saying so",
     ] {
         assert!(said.contains(part), "missing {part:?} in:\n{tests}");
     }

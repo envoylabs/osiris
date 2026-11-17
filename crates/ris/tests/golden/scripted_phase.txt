@@ -163,6 +163,9 @@ system tool or configuration that differs between systems. A test that
 needs one sets it up itself: it makes its own directory and names it
 in its canonical form, waits for a condition and never for a fixed
 time, and writes the configuration it reads.
+The one fixed wait a test may keep is a wait whose length is itself
+what the test checks (that nothing happens within it, or that a limit
+is passed), with a comment beside it saying so.
 
 ## Messages
 
