@@ -47,6 +47,11 @@ ris inbox                       # messages to you; read between items
 - You work only the open phase's items. `ris ready` shows you nothing
   else, and `ris claim` refuses an item in the backlog; the person
   brings one into the phase with `ris item bring-in I-7`.
+- `ris item add` puts an item in the open phase, or with
+  `--phase none` in the backlog, which is also where it goes when no
+  phase is open. Tagging an item for a later phase (`--phase P-9`,
+  `ris item phase I-7 P-9`) is planning: the person's and the
+  advisor's, and `ris` refuses any other seat.
 - A question that stops you goes into `ris`, never only into your
   output: raise it as a decision about the item (see Decisions), set
   the item aside, and take another. Nobody reads a question left in a
@@ -139,6 +144,15 @@ the language keeps unit tests beside the code, a test module goes in a
 file under a `tests` directory beside the source it tests, declared
 from the source file by one line, so a source file holds only behaviour
 and its diff shows only behaviour.
+
+A test never depends on the machine it runs on: no path, clock speed,
+system tool or configuration that differs between systems. A test that
+needs one sets it up itself: it makes its own directory and names it
+in its canonical form, waits for a condition and never for a fixed
+time, and writes the configuration it reads.
+The one fixed wait a test may keep is a wait whose length is itself
+what the test checks (that nothing happens within it, or that a limit
+is passed), with a comment beside it saying so.
 
 ## Messages
 

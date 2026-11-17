@@ -37,6 +37,9 @@ fn a_command_stopped_at_its_limit_takes_what_it_started_with_it() {
         Limited::TimedOut { kill_fault } => assert_eq!(kill_fault, None),
         Limited::Finished(..) => panic!("the command ended within 200ms"),
     }
+    // A fixed sleep, and the behaviour under test: what is proved is an
+    // absence, that nothing writes `late` once the background child's
+    // second has passed, and no condition can be waited for instead.
     std::thread::sleep(std::time::Duration::from_millis(1500));
     assert!(
         !dir.join("late").exists(),

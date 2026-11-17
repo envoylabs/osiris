@@ -24,11 +24,53 @@ pub fn on() -> bool {
 }
 
 fn paint(style: Style, s: &str) -> String {
-    if on() {
+    paint_if(on(), style, s)
+}
+
+fn paint_if(on: bool, style: Style, s: &str) -> String {
+    if on {
         format!("{style}{s}{style:#}")
     } else {
         s.to_owned()
     }
+}
+
+/// The colours a seat may take: few enough to tell apart at a glance
+/// on most terminal themes. Red is left out, since elsewhere it means a
+/// failure or a refusal.
+const SEAT_COLOURS: [AnsiColor; 6] = [
+    AnsiColor::Cyan,
+    AnsiColor::Green,
+    AnsiColor::Yellow,
+    AnsiColor::Blue,
+    AnsiColor::Magenta,
+    AnsiColor::BrightBlue,
+];
+
+/// A seat's colour, from its name alone, so it is the same on every
+/// run and every machine: a 32-bit FNV-1a hash of the name picks from
+/// [`SEAT_COLOURS`]. The standard library's hasher is not used because
+/// it does not promise the same output between Rust releases. Two
+/// seats may share a colour; the seat's name is always printed beside
+/// it, so nothing depends on the colour.
+pub fn seat_colour(seat: &str) -> AnsiColor {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in seat.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    SEAT_COLOURS[h as usize % SEAT_COLOURS.len()]
+}
+
+/// `s` in `seat`'s colour: the prefix `ris logs` puts on each line
+/// when it shows more than one seat.
+pub fn seat(seat: &str, s: &str) -> String {
+    seat_if(on(), seat, s)
+}
+
+/// [`seat`] with the choice made by the caller.
+pub fn seat_if(on: bool, seat: &str, s: &str) -> String {
+    paint_if(on, Style::new().fg_color(Some(seat_colour(seat).into())), s)
 }
 
 /// A section header: `== report ==`.
@@ -89,3 +131,7 @@ pub fn other(s: &str) -> String {
 pub fn dim(s: &str) -> String {
     paint(Style::new().dimmed(), s)
 }
+
+#[cfg(test)]
+#[path = "tests/style.rs"]
+mod tests;

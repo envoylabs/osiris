@@ -97,11 +97,6 @@ pub enum FoldError {
         seq: u64,
         action: crate::ids::ActionId,
     },
-    /// An event this version of ris records in the format but does not
-    /// yet fold: an `ItemScoped` with no phase.
-    Unsupported {
-        seq: u64,
-    },
 }
 
 impl std::fmt::Display for FoldError {
@@ -114,9 +109,6 @@ impl std::fmt::Display for FoldError {
             Self::UnknownPhase { seq, phase } => write!(f, "event {seq} refers to unknown {phase}"),
             Self::UnknownAction { seq, action } => {
                 write!(f, "event {seq} refers to unknown {action}")
-            }
-            Self::Unsupported { seq } => {
-                write!(f, "event {seq} is not supported by this version of ris")
             }
         }
     }
@@ -140,6 +132,21 @@ impl State {
         self.phases
             .values()
             .find(|p| matches!(p.state, PhaseState::Open))
+    }
+
+    /// Whether an item may be tagged for `phase`: the open phase, or a
+    /// later one, which is any that has not been opened yet. A closed
+    /// phase takes no more items.
+    pub fn takes_items(&self, phase: PhaseId) -> bool {
+        self.open_phase().is_some_and(|p| p.id == phase) || phase.0 as usize > self.phases.len()
+    }
+
+    /// The items tagged for `phase` that are not superseded, in id
+    /// order.
+    pub fn tagged(&self, phase: PhaseId) -> impl Iterator<Item = &Item> {
+        self.items.values().filter(move |i| {
+            i.phase == Some(phase) && !matches!(i.state, ItemState::Superseded { .. })
+        })
     }
 
     /// Items an agent may claim now: ready, with every dependency merged.
@@ -350,16 +357,7 @@ impl State {
                 }
             }
             Structure::ItemScoped { item, phase } => {
-                let Some(phase) = phase else {
-                    // D-56 gives the event a null phase for an item
-                    // deferred to the backlog. The command that writes
-                    // it, and how state shows an item with no phase,
-                    // come with deferral; until then no ris writes one.
-                    return Err(FoldError::Unsupported { seq });
-                };
-                if !self.phases.contains_key(phase) {
-                    return Err(FoldError::UnknownPhase { seq, phase: *phase });
-                }
+                // The phase may be one not opened yet: a tag is a plan.
                 self.item_mut(seq, *item)?.phase = *phase;
             }
             Structure::ItemClaimed { item, agent } => {

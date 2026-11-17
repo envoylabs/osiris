@@ -1,7 +1,7 @@
 # Osiris: a harness for parallel agent work
 
-**Status:** draft, 2026-11-03; amended 2026-11-05, 2026-11-11 and
-2026-11-12.
+**Status:** draft, 2026-11-03; amended 2026-11-05, 2026-11-11,
+2026-11-12 and 2026-11-16.
 This document is the design. What is built and what is left is in the
 harness's own log (`ris ready`, `ris report`), not here.
 
@@ -129,10 +129,14 @@ the seats up, review, close the phase. There is no check-in in between.
 Between up and review the agents never wait for the person: a
 substantive decision sets its item aside and the agent takes another,
 so nothing raised while the phase runs stops it, and every queued
-decision is put to the person once, at review. Closing the phase merges
-what is merged and carries the rest over: an unmerged item waits in the
-backlog, and seats, who work only the open phase's items, take it up
-once the person brings it into a later phase. How long a phase
+decision is put to the person once, at review. An item's phase is a
+tag: the open phase, a later phase by number, or none, which is the
+backlog. Seats work only the open phase's items. Planning lives in the
+harness between phases: an item is added and tagged with no phase open,
+opening a phase brings in every item tagged for it (or moves their tags
+on by one), and closing a phase merges what is merged and clears the
+tag of each item left unmerged, which waits in the backlog until the
+person tags it again. How long a phase
 runs is the person's choice; a phase fits a working day, by default at
 most two a day.
 
@@ -440,8 +444,9 @@ enum ClaimState {                             // the type exists; no events yet
 
 enum Structure {                              // an event's structural part
     PhaseOpened { phase }, PhaseClosed { phase, report: Hash },
-    ItemAdded { item, phase, checks, depends_on }, ItemClaimed { item, agent },
-    ItemScoped { item, phase },               // the person brought an unstarted item into a phase
+    ItemAdded { item, phase?, checks, depends_on }, // no phase: added to the backlog
+    ItemClaimed { item, agent },
+    ItemScoped { item, phase? },              // an item's phase tag changed: open, later, or none
     ItemBlocked { item, on }, ItemReady { item }, ItemDone { item, evidence },
     ItemMerged { item, commit }, ItemAudited { item, by }, ItemSuperseded { item, by },
     ActionRaised { action, by, blocks, informs }, ActionCheckSet { action },
@@ -534,6 +539,9 @@ Functional core, imperative shell; hexagonal between components.
 - **Agent runners:** one adapter per agent tool. Start an agent on an
   item with a worktree, an environment and the applicable rules; stream
   its output; report done or failed. Vendor independence lives here.
+  `ris status` reads how a seat's last run ended and says why it
+  stopped: nothing left to claim, paused by the person, a setup fault,
+  or the agent tool's usage limit with the time it resets.
 - **Rules, rendered per tool:** one source, rendered into whatever each
   agent tool reads (`CLAUDE.md`, `AGENTS.md`, and so on).
 - **Human interface:** the CLI's `inbox` and `report` first, or a local
@@ -545,12 +553,25 @@ Functional core, imperative shell; hexagonal between components.
   source files, the lines the phase changed in each and their diffs,
   how the code connects, which files touch the outside, and a risk
   level for each changed file: one computed from those signals, and an
-  auditor's judgement beside it where one is recorded), and
-  `ris map --html`
+  auditor's judgement beside it where one is recorded, with the order
+  to read the files in), and `ris map --html`
   writes one self-contained page that embeds that document and draws
   nothing else, so a later interface draws the same map from the same
   JSON. The person's `ris map` at a terminal writes that page inside
-  `.osiris` and opens it in the browser; a seat's never opens anything.
+  `.osiris` and opens it in the browser; a seat's never opens anything,
+  and `ris map --list` prints the files ranked with their reasons. The
+  page has three views of the one document: the ranked list, which it
+  opens on; the graph of files; and one changed function laid out as
+  execution flows, its callers, its callees and the effects reached.
+  Inside Rust, TypeScript, Go and Clojure files the map reads functions
+  and calls from a syntax tree (tree-sitter, one grammar per language):
+  the lines that touch a database, the filesystem, the network or a
+  process, by a list of names per language that a project extends; the
+  functions the phase changed, each with a level of its own; and calls
+  resolved by name across the repository, so a changed function one
+  call from an effect (it triggers one, or feeds one) is marked. Names
+  alone over-flag: a method called on a value means every function so
+  named. A file of another language stays at file level.
 - **Language:** Rust for the core, daemon and CLI.
 
 ## Runtime and environments

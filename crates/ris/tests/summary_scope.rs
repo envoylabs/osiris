@@ -93,18 +93,21 @@ fn summary_shows_the_open_phase_and_counts_the_rest() {
     let text = ok(&dir, "person", &["summary"]);
     assert!(text.starts_with("no phase is open"), "{text}");
     assert!(text.contains("ris phase open"), "{text}");
+    assert!(text.contains("nothing is tagged for P-2"), "{text}");
     assert!(
-        text.contains("2 item(s) and 1 open decision(s) from earlier phases are not shown"),
+        text.contains("2 item(s) and 1 open decision(s) outside the next phase are not shown"),
         "{text}"
     );
     assert!(text.contains("ris summary --all"), "{text}");
     let v = json(&dir, &["summary"]);
     assert!(ids(&v["ready"]["ready"]).is_empty(), "{v}");
     assert!(ids(&v["inbox"]["decisions"]).is_empty(), "{v}");
+    assert_eq!(v["next_phase"]["phase"], "P-2");
+    assert!(ids(&v["next_phase"]["items"]).is_empty(), "{v}");
 
     // No empty sections stand in for a phase that is not there.
     assert!(!text.contains("=="), "{text}");
-    assert_eq!(text.lines().count(), 4, "{text}");
+    assert_eq!(text.lines().count(), 6, "{text}");
 
     // P-2 with no item yet says so and how to add one.
     ok(&dir, "person", &["phase", "open", "second"]);
@@ -119,22 +122,24 @@ fn summary_shows_the_open_phase_and_counts_the_rest() {
     assert!(!text.contains("an old question"), "{text}");
     assert!(!text.contains("left over"), "{text}");
     assert!(
-        text.split_once('\n')
-            .unwrap()
-            .1
-            .starts_with("P-2 open: second\nitems: 1 ready\n\nI-3  ready  this phase's work\n--\n"),
+        text.split_once('\n').unwrap().1.starts_with(
+            "  heron      not started, idle; `ris up heron`\n  \
+             wren       not started, idle; `ris up wren`\n\
+             P-2 open: second\nitems: 1 ready\n\nI-3  ready  this phase's work\n--\n"
+        ),
         "{text}"
     );
     // The footer counts what is left out and names where it is.
     assert!(text.contains("1 open decision(s) in all"), "{text}");
     assert!(text.contains("`ris decide`"), "{text}");
     assert!(
-        text.contains("2 item(s) and 1 open decision(s) from earlier phases are not shown"),
+        text.contains("2 item(s) and 1 open decision(s) outside the open phase are not shown"),
         "{text}"
     );
     assert!(text.contains("`ris report`"), "{text}");
     let v = json(&dir, &["summary"]);
     assert_eq!(v["all"], false);
+    assert!(v["next_phase"].is_null(), "{v}");
     assert_eq!(v["carried_over"]["items"], 2);
     assert_eq!(v["carried_over"]["decisions"], 1);
     assert_eq!(ids(&v["ready"]["ready"]), ["I-3"]);
@@ -146,7 +151,7 @@ fn summary_shows_the_open_phase_and_counts_the_rest() {
     );
 
     // An item of the phase that waits on an earlier phase's item draws
-    // that item, marked with its phase, and the open decision it is set
+    // that item, marked as having no phase, and the open decision it is set
     // aside on, though an earlier phase raised it. The earlier phase's
     // other item stays out.
     ok(
@@ -165,14 +170,14 @@ fn summary_shows_the_open_phase_and_counts_the_rest() {
     assert_eq!(
         picture,
         "D-1  open  an old question\n\
-         └── I-2  blocked [P-1]  set aside\n    \
+         └── I-2  blocked [no phase]  set aside\n    \
          └── I-4  waiting  builds on the old\n\
          I-3  ready  this phase's work",
         "{text}"
     );
     assert!(text.contains("items: 1 ready, 1 waiting\n"), "{text}");
     assert!(
-        text.contains("1 item(s) and 0 open decision(s) from earlier phases are not shown"),
+        text.contains("1 item(s) and 0 open decision(s) outside the open phase are not shown"),
         "{text}"
     );
     let v = json(&dir, &["summary"]);
@@ -287,7 +292,8 @@ fn a_merged_item_stays_on_the_picture_with_its_link() {
     assert!(
         text.starts_with(
             "1 of 2 items merged; 1 in progress (heron on I-2); 0 not started; \
-             no seat is running: start them with `ris up`\n\
+             no seat is running: start them with `ris up`\n  \
+             heron      not started, on I-2; `ris up heron`\n\
              P-1 open: merged\nitems: 1 claimed, 1 merged\n\n\
              I-1  merged  first\n\
              └── I-2  claimed (heron)  second\n--\n"

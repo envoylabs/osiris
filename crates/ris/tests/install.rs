@@ -4,6 +4,8 @@
 //! work in progress is never installed and the install never goes stale.
 //! A failed build leaves the last good program in place.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -61,6 +63,12 @@ fn commit(dir: &Path, file: &str, item: &str) -> String {
 /// A project at width one whose "build" writes the commit it was built
 /// from, and fails when a file named `broken` is in the tree.
 fn setup() -> (PathBuf, PathBuf) {
+    setup_building("git rev-parse HEAD > out/ris")
+}
+
+/// The same project, whose build makes `out/ris` with `make`, a shell
+/// command.
+fn setup_building(make: &str) -> (PathBuf, PathBuf) {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let base = std::env::temp_dir().join(format!("ris-install-{}-{n}", std::process::id()));
@@ -86,11 +94,12 @@ fn setup() -> (PathBuf, PathBuf) {
         format!(
             "denylist = [\"example client\"]\ndocs_item = false\n\
              [install]\n\
-             build = \"test ! -e broken && mkdir -p out && git rev-parse HEAD > out/ris\"\n\
+             build = {command:?}\n\
              artifact = \"out/ris\"\n\
              to = {to:?}\n\
              dir = {build:?}\n\
              [agents.heron]\nrole = \"lead\"\n",
+            command = format!("test ! -e broken && mkdir -p out && {make}"),
             to = to.to_string_lossy(),
             build = build.to_string_lossy(),
         ),
@@ -115,6 +124,88 @@ fn installed(base: &Path) -> Option<String> {
 
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// A close is made by the last merged build, and by the installed
+/// program itself. When the close is the person's first command after
+/// a merge, the program running is older than the build that command
+/// installs: the close is refused with nothing touched. Once the build
+/// is current, a close by any other program than the installed one is
+/// still refused, and the installed one's goes through.
+#[test]
+fn a_close_is_made_only_by_the_installed_build_of_the_last_merge() {
+    // The build here is the program under test itself, so that the
+    // installed program can run the close.
+    let (dir, base) = setup_building("cp \"$RIS_UNDER_TEST\" out/ris");
+    let installed_ris = base.join("bin").join("ris");
+    let installed_commit = || {
+        fs::read_to_string(base.join("build").join("installed"))
+            .ok()
+            .map(|s| s.trim().to_owned())
+    };
+    let close = |program: &Path| {
+        Command::new(program)
+            .args(["phase", "close"])
+            .current_dir(&dir)
+            .envs(common::GIT_IDENTITY)
+            .env("RIS_UNDER_TEST", env!("CARGO_BIN_EXE_ris"))
+            .env("RIS_AGENT", "person")
+            .env_remove("RIS_ROOT")
+            .env("NO_COLOR", "1")
+            .output()
+            .unwrap()
+    };
+    ok(&dir, "heron", &["claim", "I-1"]);
+    ok(&dir, "heron", &["done", "I-1"]);
+    let first = commit(&dir, "first.txt", "I-1");
+    ok(&dir, "heron", &["merge", "I-1"]);
+    let main_before = git(&dir, &["rev-parse", "main"]);
+    let untouched = |what: &str| {
+        assert_eq!(git(&dir, &["rev-parse", "main"]), main_before, "{what}");
+        assert_eq!(git(&dir, &["rev-parse", "phase/P-1"]), first, "{what}");
+        let report = ok(&dir, "person", &["report"]);
+        assert!(
+            String::from_utf8_lossy(&report.stdout).contains("P-1 open"),
+            "the phase stays open: {what}"
+        );
+    };
+
+    let out = close(Path::new(env!("CARGO_BIN_EXE_ris")));
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("installed ris from"), "{err}");
+    assert!(
+        err.contains("refused: this ris was older than the last merge"),
+        "{err}"
+    );
+    assert!(err.contains("next: run `ris phase close` again"), "{err}");
+    // The build is installed, and nothing else moved.
+    assert_eq!(installed_commit().as_deref(), Some(first.as_str()));
+    assert!(installed_ris.exists());
+    untouched("after the close that installed the build");
+
+    // Again, with the build current, by a program that is not the
+    // installed one: refused, though nothing is left to install.
+    let out = close(Path::new(env!("CARGO_BIN_EXE_ris")));
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(!err.contains("installed ris from"), "{err}");
+    assert!(
+        err.contains("refused: this ris is not the installed one"),
+        "{err}"
+    );
+    untouched("after a close by another program");
+
+    // By the installed program: the close goes through.
+    let out = close(&installed_ris);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        !stderr(&out).contains("installed ris from"),
+        "{}",
+        stderr(&out)
+    );
+    assert_ne!(git(&dir, &["rev-parse", "main"]), main_before);
+    let _ = fs::remove_dir_all(&base);
 }
 
 #[test]

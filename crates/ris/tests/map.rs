@@ -186,7 +186,16 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
     assert_eq!(
         keys(&doc),
         [
-            "base", "diffs", "edges", "nodes", "phase", "tip", "tip_ref", "totals"
+            "base",
+            "call_graph",
+            "diffs",
+            "edges",
+            "nodes",
+            "phase",
+            "ranked",
+            "tip",
+            "tip_ref",
+            "totals"
         ]
     );
     assert_eq!(
@@ -196,7 +205,9 @@ fn the_map_is_the_source_files_with_the_phase_diff_and_how_they_connect() {
             "contract",
             "dependents",
             "external",
+            "functions",
             "language",
+            "marks",
             "path",
             "removed",
             "risk",
@@ -569,6 +580,285 @@ fn an_auditor_s_judgement_of_a_file_stands_on_the_map_over_the_computed_level() 
     ok(&dir, "person", &["phase", "close"]);
     assert_eq!(data(&dir, &["map"])["nodes"], doc["nodes"]);
     refused("wren", &judge, "no phase is open");
+}
+
+/// Inside a changed file of a language the map reads, its changed
+/// functions and the lines that touch the outside, by the shipped
+/// patterns and the project's own; any other language stays at file
+/// level.
+#[test]
+fn a_changed_file_s_functions_and_marked_lines_are_on_the_map() {
+    let dir = setup("functions");
+    let config = dir.join(".osiris/config.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config).unwrap() + "\n[map.effects.rust]\ndatabase = [\"crate::db\"]\n",
+    )
+    .unwrap();
+    ok(&dir, "person", &["phase", "open", "inside files"]);
+    git(&dir, &["switch", "-q", "phase/P-1"]);
+    write(
+        &dir,
+        "src/store.rs",
+        "use std::fs;\n\nuse crate::wire::Frame;\n\npub fn save(_: Frame) {\n    \
+         let _ = fs::read(\"frames\");\n    fs::write(\"frames\", b\"\").unwrap();\n}\n\n\
+         pub fn wipe() {\n    std::process::Command::new(\"rm\").status().unwrap();\n    \
+         crate::db::put();\n}\n\npub fn tidy() {\n    wipe();\n}\n",
+    );
+    write(
+        &dir,
+        "cmd/fetch.go",
+        "package main\n\nimport \"net/http\"\n\nfunc fetch() {\n\thttp.Get(\"x\")\n}\n",
+    );
+    write(
+        &dir,
+        "src/app/core.clj",
+        "(ns app.core\n  (:require [clojure.java.io :as io]))\n\n(defn load [p]\n  (slurp (io/file p)))\n",
+    );
+    write(
+        &dir,
+        "tools/x.py",
+        "import os\n\ndef f():\n    os.remove(\"x\")\n",
+    );
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "-m", "feat: inside files"]);
+    git(&dir, &["switch", "-q", "main"]);
+
+    let doc = data(&dir, &["map"]);
+    let store = node(&doc, "src/store.rs");
+    let functions: Vec<(&str, u64, u64)> = store["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["name"].as_str().unwrap(),
+                f["start"].as_u64().unwrap(),
+                f["end"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        functions,
+        [("save", 5, 8), ("wipe", 10, 13), ("tidy", 15, 17)],
+        "{store}"
+    );
+    // One step from an effect: tidy calls wipe, which is direct, and
+    // wipe is fed by nothing.
+    assert_eq!(
+        store["functions"][2]["steps"],
+        json!([{"direction": "triggers", "path": "src/store.rs", "function": "wipe",
+                "effects": ["database", "process"]}])
+    );
+    assert_eq!(
+        store["functions"][2]["calls"],
+        json!([{"path": "src/store.rs", "function": "wipe"}])
+    );
+    assert_eq!(store["functions"][1]["steps"], json!([]));
+    // The call graph around the changed functions: each in full, with
+    // its own lines, the changed ones and its effect sites.
+    let graph = doc["call_graph"]["functions"].as_array().unwrap();
+    let in_graph = |id: &str| {
+        graph
+            .iter()
+            .find(|f| f["id"] == id)
+            .unwrap_or_else(|| panic!("{id} in {graph:?}"))
+    };
+    let wipe = in_graph("src/store.rs:10");
+    assert_eq!(wipe["name"], "wipe");
+    assert_eq!(
+        wipe["lines"][1],
+        "    std::process::Command::new(\"rm\").status().unwrap();"
+    );
+    assert_eq!(wipe["changed"], json!([10, 11, 12, 13]));
+    assert_eq!(
+        wipe["sites"],
+        json!([{"line": 11, "kind": "process"}, {"line": 12, "kind": "database"}])
+    );
+    assert_eq!(wipe["callers"], json!(["src/store.rs:15"]));
+    assert_eq!(
+        in_graph("src/store.rs:15")["calls"],
+        json!(["src/store.rs:10"])
+    );
+    assert_eq!(
+        store["functions"][2]["risk"]["signals"][0]["signal"],
+        "reach"
+    );
+    assert_eq!(
+        store["functions"][1]["effects"],
+        json!(["database", "process"])
+    );
+    assert_eq!(store["functions"][1]["direct"], true);
+    assert_eq!(
+        store["marks"],
+        json!([
+            // Unchanged, but in a function the phase changed.
+            {"line": 6, "kind": "filesystem", "function": "save", "risk": "low"},
+            {"line": 7, "kind": "filesystem", "function": "save", "risk": "low"},
+            {"line": 11, "kind": "process", "function": "wipe", "risk": "low"},
+            // The project's own pattern.
+            {"line": 12, "kind": "database", "function": "wipe", "risk": "low"}
+        ])
+    );
+    // The file's own risk is as it was.
+    assert_eq!(store["risk"]["computed"]["signals"][0]["signal"], "outside");
+    assert_eq!(
+        node(&doc, "cmd/fetch.go")["marks"],
+        json!([{"line": 6, "kind": "network", "function": "fetch", "risk": "low"}])
+    );
+    assert_eq!(
+        node(&doc, "src/app/core.clj")["marks"],
+        json!([{"line": 5, "kind": "filesystem", "function": "load", "risk": "low"}])
+    );
+    // Python stays at file level; an unchanged file has nothing inside.
+    assert!(node(&doc, "tools/x.py")["functions"].is_null());
+    assert!(node(&doc, "tools/x.py")["marks"].is_null());
+    assert!(node(&doc, "src/wire.rs")["functions"].is_null());
+
+    // The list shows a file's marked lines under its reasons.
+    let text = ok(&dir, "person", &["map", "--list"]);
+    assert!(
+        text.contains("\n         line 12: database in wipe (low)\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n         tidy triggers database, process via wipe (src/store.rs)\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n         line 6: network in fetch (low)\n"),
+        "{text}"
+    );
+    // The page carries them, being the same document.
+    let page = dir.join("map.html");
+    ok(&dir, "person", &["map", "--html", page.to_str().unwrap()]);
+    assert!(
+        fs::read_to_string(&page)
+            .unwrap()
+            .contains("\"function\":\"wipe\"")
+    );
+}
+
+/// `ris map --list`: the changed files ranked by risk, highest first,
+/// each with its numbers and reasons, in the document's `ranked` order,
+/// from the same document `--json` gives; it opens nothing.
+#[test]
+fn the_list_ranks_the_changed_files_by_risk_with_their_reasons() {
+    let dir = setup("list");
+    ok(&dir, "person", &["phase", "open", "send frames"]);
+    work(&dir);
+    ok(
+        &dir,
+        "wren",
+        &[
+            "audit",
+            "--file",
+            "src/net.rs",
+            "--risk",
+            "high",
+            "--why",
+            "opens a socket with no timeout",
+        ],
+    );
+    let doc = data(&dir, &["map"]);
+
+    // `ranked` is every changed node, once, the highest level first.
+    let ranked: Vec<&str> = doc["ranked"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
+    let mut changed: Vec<&str> = doc["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["status"] != "unchanged")
+        .map(|n| n["path"].as_str().unwrap())
+        .collect();
+    let mut sorted = ranked.clone();
+    sorted.sort();
+    changed.sort();
+    assert_eq!(sorted, changed, "{doc}");
+    let rank = |p: &str| match node(&doc, p)["risk"]["level"].as_str() {
+        Some("high") => 2,
+        Some("medium") => 1,
+        _ => 0,
+    };
+    assert!(
+        ranked.windows(2).all(|w| rank(w[0]) >= rank(w[1])),
+        "{ranked:?}"
+    );
+    assert_eq!(ranked[..2], ["src/net.rs", "docs/wire.md"]);
+
+    // The text: the totals, then a row a file in that order, each
+    // followed by its reasons.
+    let text = ok(&dir, "person", &["map", "--list"]);
+    assert!(
+        text.starts_with("P-1: 5 of 6 source file(s) changed"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n2 test file(s) left off the map: 2 changed (+5 -0)\n"),
+        "{text}"
+    );
+    assert!(!text.contains("tests/"), "{text}");
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   ") && !l.starts_with("  next:"))
+        .collect();
+    let paths: Vec<&str> = rows
+        .iter()
+        .map(|r| {
+            ranked
+                .iter()
+                .copied()
+                .find(|p| r.contains(&format!(" {p}")))
+                .unwrap_or_else(|| panic!("a ranked path in {r}"))
+        })
+        .collect();
+    assert_eq!(paths, ranked, "{text}");
+    assert!(rows[0].starts_with("  high "), "{text}");
+    assert!(rows[0].contains("+"), "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| *l == rows[0]).unwrap();
+    assert_eq!(
+        lines[at + 1].trim(),
+        "judged high by wren: opens a socket with no timeout"
+    );
+    assert_eq!(
+        lines[at + 2].trim(),
+        "computed low: touches the outside: network"
+    );
+    assert!(
+        text.contains("computed medium: a contract or format"),
+        "{text}"
+    );
+    // A file with no signal still says so.
+    assert!(text.contains("computed low: no signal counts"), "{text}");
+
+    // With --json it is the same document as `ris map`.
+    assert_eq!(data(&dir, &["map", "--list"]), doc);
+    // It writes and opens nothing, and is not a page of its own.
+    assert!(!dir.join(".osiris/map.html").exists());
+    let out = ris(&dir, "person", &["map", "--list", "--html", "x.html"]);
+    assert!(!out.status.success());
+    assert!(!dir.join("x.html").exists());
+
+    // The default text follows the same order.
+    let plain = ok(&dir, "person", &["map"]);
+    let order: Vec<&str> = plain
+        .lines()
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   ") && !l.starts_with("  next:"))
+        .map(|r| {
+            ranked
+                .iter()
+                .copied()
+                .find(|p| r.contains(&format!(" {p}")))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(order, ranked, "{plain}");
 }
 
 #[test]

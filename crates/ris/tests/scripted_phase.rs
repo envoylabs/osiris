@@ -24,7 +24,11 @@ impl Sandbox {
     fn new() -> Self {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("ris-cli-test-{}-{n}", std::process::id()));
+        // The canonical temp directory, so the path `ris` prints (it
+        // resolves symlinks, as macOS's /var to /private/var) is the
+        // one the transcript replaces with `<dir>` on every system.
+        let tmp = std::env::temp_dir().canonicalize().unwrap();
+        let dir = tmp.join(format!("ris-cli-test-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let git = Command::new("git")
@@ -234,8 +238,8 @@ fn scripted_phase_matches_the_golden_transcript() {
     )
     .unwrap();
 
-    // Nothing without a phase.
-    sb.refused(None, &["item", "add", "too early"]);
+    // No phase to close before one is open.
+    sb.refused(None, &["phase", "close"]);
     sb.ok(None, &["phase", "open", "first slice"]);
     sb.refused(None, &["phase", "open", "second at once"]);
 
@@ -520,7 +524,7 @@ fn scripted_phase_matches_the_golden_transcript() {
 
     let got = normalise(&sb.transcript, &sb.dir);
     assert!(
-        !got.contains("/tmp/") && !got.contains(&canary[..6]),
+        !got.contains("/tmp/") && !got.contains("/private") && !got.contains(&canary[..6]),
         "golden is clean"
     );
     let golden = golden_path();
@@ -533,11 +537,81 @@ fn scripted_phase_matches_the_golden_transcript() {
         let actual = actual_path();
         fs::write(&actual, &got).unwrap();
         panic!(
-            "transcript differs from {}; actual written to {}",
+            "transcript differs from {}; actual written to {}\n{}",
             golden.display(),
-            actual.display()
+            actual.display(),
+            differing_lines(&want, &got)
         );
     }
+}
+
+/// The lines where `got` differs from `want`, for a failure message a
+/// CI log can show without the files. The lines both share are found
+/// as their longest common subsequence; every other line is printed in
+/// order with its line number, `-` for a line of the golden file and `+`
+/// for a line of the run, at most `LIMIT` lines in all.
+fn differing_lines(want: &str, got: &str) -> String {
+    const LIMIT: usize = 60;
+    let w: Vec<&str> = want.lines().collect();
+    let g: Vec<&str> = got.lines().collect();
+    // common[i][j]: the length of the longest common subsequence of
+    // w[i..] and g[j..].
+    let mut common = vec![vec![0u32; g.len() + 1]; w.len() + 1];
+    for i in (0..w.len()).rev() {
+        for j in (0..g.len()).rev() {
+            common[i][j] = if w[i] == g[j] {
+                common[i + 1][j + 1] + 1
+            } else {
+                common[i + 1][j].max(common[i][j + 1])
+            };
+        }
+    }
+    let mut lines = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < w.len() || j < g.len() {
+        if i < w.len() && j < g.len() && w[i] == g[j] {
+            i += 1;
+            j += 1;
+        } else if j == g.len() || (i < w.len() && common[i + 1][j] >= common[i][j + 1]) {
+            lines.push(format!("-{:>5} {}\n", i + 1, w[i]));
+            i += 1;
+        } else {
+            lines.push(format!("+{:>5} {}\n", j + 1, g[j]));
+            j += 1;
+        }
+    }
+    let mut out: String = lines.iter().take(LIMIT).map(String::as_str).collect();
+    if lines.len() > LIMIT {
+        out.push_str(&format!(
+            "... {} more differing lines\n",
+            lines.len() - LIMIT
+        ));
+    }
+    if out.is_empty() {
+        out.push_str("(the lines match; the files differ in line endings or a final newline)\n");
+    }
+    out
+}
+
+#[test]
+fn a_differing_transcript_names_only_the_lines_that_differ() {
+    let want = "a\nb\nc\nd\n";
+    let got = "a\nB\nx\nd\n";
+    assert_eq!(
+        differing_lines(want, got),
+        "-    2 b\n-    3 c\n+    2 B\n+    3 x\n"
+    );
+    // A line added at the end shows only on the run's side.
+    assert_eq!(differing_lines("a\n", "a\nb\n"), "+    2 b\n");
+    // Two changes far apart show as those two, not the lines between.
+    let want: String = (0..100).map(|n| format!("{n}\n")).collect();
+    let got = want.replace("\n3\n", "\nthree\n").replace("\n97\n", "\n");
+    assert_eq!(
+        differing_lines(&want, &got),
+        "-    4 3\n+    4 three\n-   98 97\n"
+    );
+    // Files whose lines match still say why they differ.
+    assert!(differing_lines("a\n", "a").contains("final newline"));
 }
 
 #[test]

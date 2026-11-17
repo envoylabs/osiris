@@ -7,7 +7,7 @@
 
 use crate::event::{Event, Salt, Structure, TextPart};
 use crate::ids::{
-    ActionId, Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId,
+    ActionId, Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, Hash, ItemId, PhaseId,
 };
 use crate::primitives::ActionState;
 use crate::primitives::{Blocker, DecisionClass, DecisionState, ItemState, MessageKind, RiskLevel};
@@ -22,16 +22,25 @@ use crate::transitions::{
 /// has already passed the confidentiality scan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
+    /// Opens the next phase. The items tagged for it are in it from
+    /// then on; with `move_on` their tags move to the phase after it
+    /// instead, and it opens with none.
     PhaseOpen {
         goal: Text,
+        move_on: bool,
     },
     /// Closes the open phase. The report hash is taken over the log's
-    /// head and the previous report, never over a rendering.
+    /// head and the previous report, never over a rendering. Its items
+    /// that have not merged lose their tag.
     PhaseClose,
+    /// Adds an item. With no phase open and no tag named it has no
+    /// phase, which is the backlog; it is never refused for lack of an
+    /// open phase.
     ItemAdd {
         goal: Text,
         checks: Vec<CheckId>,
         depends_on: Vec<ItemId>,
+        tag: Tag,
     },
     Claim {
         item: ItemId,
@@ -185,6 +194,27 @@ pub enum Command {
         item: ItemId,
         actor: Actor,
     },
+    /// Tag an unstarted item for the open phase, a later phase by
+    /// number, or none. A move into or out of the open phase is the
+    /// person's only. Which seats may tag at all is the shell's to
+    /// check: the core does not know roles.
+    Tag {
+        item: ItemId,
+        phase: Option<PhaseId>,
+        actor: Actor,
+    },
+}
+
+/// Where a new item is tagged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tag {
+    /// The open phase; none when no phase is open.
+    #[default]
+    Open,
+    /// A named phase: the open one, or a later one by number.
+    Phase(PhaseId),
+    /// No phase: the backlog.
+    None,
 }
 
 impl Command {
@@ -213,6 +243,7 @@ impl Command {
             Self::Audit { .. } => CommandKind::Audit,
             Self::Supersede { .. } => CommandKind::Supersede,
             Self::BringIn { .. } => CommandKind::BringIn,
+            Self::Tag { .. } => CommandKind::Tag,
             Self::RunStart { .. } => CommandKind::RunStart,
             Self::RunStop { .. } => CommandKind::RunStop,
             Self::SetupFault { .. } => CommandKind::SetupFault,
@@ -370,14 +401,23 @@ pub fn report_hash(previous: &Hash, head: &Hash) -> Hash {
 pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
     let kind = command.kind();
     match command {
-        Command::PhaseOpen { goal } => {
+        Command::PhaseOpen { goal, move_on } => {
             if state.open_phase().is_some() {
                 return Err(Refusal::PhaseAlreadyOpen);
             }
             let phase = state.next_phase_id();
-            Ok(vec![
-                Effect::new(Structure::PhaseOpened { phase }).with("goal", goal),
-            ])
+            let mut effects =
+                vec![Effect::new(Structure::PhaseOpened { phase }).with("goal", goal)];
+            if *move_on {
+                let next = PhaseId(phase.0.saturating_add(1));
+                effects.extend(state.tagged(phase).map(|i| {
+                    Effect::new(Structure::ItemScoped {
+                        item: i.id,
+                        phase: Some(next),
+                    })
+                }));
+            }
+            Ok(effects)
         }
 
         Command::PhaseClose => {
@@ -387,30 +427,58 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             // report is taken over the head before it. Verification
             // recomputes it the same way.
             let report = report_hash(&state.last_report, &state.head);
-            Ok(vec![Effect::new(Structure::PhaseClosed { phase, report })])
+            let mut effects = vec![Effect::new(Structure::PhaseClosed { phase, report })];
+            // After the close, so the report covers the phase as it
+            // stood: what has not merged goes back to the backlog.
+            effects.extend(
+                state
+                    .tagged(phase)
+                    .filter(|i| !matches!(i.state, ItemState::Merged { .. }))
+                    .map(|i| {
+                        Effect::new(Structure::ItemScoped {
+                            item: i.id,
+                            phase: None,
+                        })
+                    }),
+            );
+            Ok(effects)
         }
 
         Command::ItemAdd {
             goal,
             checks,
             depends_on,
+            tag,
         } => {
-            let phase = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
+            let open = state.open_phase().map(|p| p.id);
+            let to = match tag {
+                Tag::Open => open,
+                Tag::None => None,
+                Tag::Phase(p) if state.takes_items(*p) => Some(*p),
+                Tag::Phase(p) => return Err(Refusal::PhaseIsClosed(*p)),
+            };
             for d in depends_on {
                 if !state.items.contains_key(d) {
                     return Err(Refusal::UnknownItem(*d));
                 }
             }
             let item = state.next_item_id();
-            Ok(vec![
+            // Added where the log stands, in the open phase or in none,
+            // which is what a phase's tally counts by; a tag for
+            // anywhere else is its own event.
+            let mut effects = vec![
                 Effect::new(Structure::ItemAdded {
                     item,
-                    phase,
+                    phase: open,
                     checks: checks.clone(),
                     depends_on: depends_on.clone(),
                 })
                 .with("goal", goal),
-            ])
+            ];
+            if to != open {
+                effects.push(Effect::new(Structure::ItemScoped { item, phase: to }));
+            }
+            Ok(effects)
         }
 
         Command::Claim { item, agent } => {
@@ -422,7 +490,7 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             // An agent works the open phase's items only; the person
             // brings a backlog item in first.
             let open = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
-            if open != i.phase {
+            if Some(open) != i.phase {
                 return Err(Refusal::NotInOpenPhase {
                     item: *item,
                     phase: i.phase,
@@ -877,12 +945,36 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             }
             let open = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
             item_move(state, *item, kind)?;
-            if state.items[item].phase == open {
+            if state.items[item].phase == Some(open) {
                 return Err(Refusal::AlreadyInOpenPhase(*item));
             }
             Ok(vec![Effect::new(Structure::ItemScoped {
                 item: *item,
                 phase: Some(open),
+            })])
+        }
+
+        Command::Tag { item, phase, actor } => {
+            item_move(state, *item, kind)?;
+            if let Some(p) = phase
+                && !state.takes_items(*p)
+            {
+                return Err(Refusal::PhaseIsClosed(*p));
+            }
+            let from = state.items[item].phase;
+            if from == *phase {
+                return Err(Refusal::AlreadyTagged {
+                    item: *item,
+                    phase: *phase,
+                });
+            }
+            let open = state.open_phase().map(|p| p.id);
+            if *actor != Actor::Person && open.is_some() && (from == open || *phase == open) {
+                return Err(Refusal::ScopeIsForThePerson(*item));
+            }
+            Ok(vec![Effect::new(Structure::ItemScoped {
+                item: *item,
+                phase: *phase,
             })])
         }
 

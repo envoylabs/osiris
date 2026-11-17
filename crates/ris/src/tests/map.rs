@@ -106,6 +106,7 @@ fn test_files_are_counted_and_left_off_unless_a_contract_names_them() {
     let config = crate::config::MapConfig {
         contracts: vec!["tests/*.proto".to_owned()],
         tests: vec!["**/tests/**".to_owned(), "**/*_test.rs".to_owned()],
+        effects: BTreeMap::new(),
     };
     let map = document(&range, &paths, &t, &diff, &config, &BTreeMap::new());
     assert_eq!(paths_of(&map), ["src/lib.rs", "tests/schema.proto"]);
@@ -270,6 +271,10 @@ fn a_changed_file_carries_its_risk_and_a_judgement_stands_over_the_computed_leve
     assert_eq!(node("src/a.rs").risk, None);
     assert_eq!(node("src/lib.rs").risk, None);
 
+    // Ranked by the level that stands: the judged file leads the
+    // larger change, and unchanged files are not ranked.
+    assert_eq!(map.ranked, ["src/c.rs", "src/wire.rs", "src/old.rs"]);
+
     // As the document spells them.
     let doc = serde_json::to_value(&map).unwrap();
     let c = doc["nodes"]
@@ -295,6 +300,404 @@ fn a_changed_file_carries_its_risk_and_a_judgement_stands_over_the_computed_leve
             }
         })
     );
+}
+
+#[test]
+fn ranked_is_the_level_then_the_weight_then_the_path() {
+    let at = |path: &str, status: &'static str, level: RiskLevel, weight: f64| Node {
+        path: path.to_owned(),
+        language: Some("rust"),
+        status,
+        added: 0,
+        removed: 0,
+        external: Vec::new(),
+        contract: false,
+        weight,
+        dependents: 0,
+        risk: (status != "unchanged").then(|| Risk {
+            level,
+            computed: Computed {
+                level,
+                signals: Vec::new(),
+            },
+            judged: None,
+        }),
+        functions: None,
+        marks: None,
+    };
+    let nodes = [
+        at("a.rs", "modified", RiskLevel::Low, 9.0),
+        at("b.rs", "modified", RiskLevel::Medium, 1.0),
+        at("c.rs", "added", RiskLevel::Low, 9.0),
+        at("d.rs", "unchanged", RiskLevel::Low, 0.0),
+        at("e.rs", "deleted", RiskLevel::High, 0.5),
+        at("f.rs", "modified", RiskLevel::Low, 20.0),
+    ];
+    assert_eq!(
+        ranked(&nodes),
+        ["e.rs", "b.rs", "f.rs", "a.rs", "c.rs"],
+        "high, medium, then the low ones heaviest first and a tie by path"
+    );
+}
+
+#[test]
+fn a_diff_s_changes_are_read_in_the_tip_s_line_numbers() {
+    let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+index 1..2 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,4 +1,5 @@
+ fn a() {
+-    one();
++    two();
++    three();
+ }
+@@ -10,3 +11,2 @@ fn b() {
+ x
+-y
+-z
+\\ No newline at end of file
+";
+    let c = changes(diff);
+    assert_eq!(c.added, [2, 3].into_iter().collect());
+    // One line removed before tip line 2, two before tip line 12.
+    assert_eq!(c.removed, [(2, 1), (12, 2)].into_iter().collect());
+    // A new file: every line added.
+    let c = changes("--- /dev/null\n+++ b/n.rs\n@@ -0,0 +1,2 @@\n+a\n+b\n");
+    assert_eq!(c.added, [1, 2].into_iter().collect());
+    assert!(c.removed.is_empty());
+    assert_eq!(changes(""), Changes::default());
+}
+
+#[test]
+fn only_changed_functions_are_kept_and_a_mark_takes_its_function_s_level() {
+    use crate::syntax::{Function, Parsed, Reference};
+    let f = |name: &str, start, end| Function {
+        name: name.to_owned(),
+        start,
+        end,
+    };
+    let r = |line, name: &str| Reference {
+        line,
+        name: name.to_owned(),
+    };
+    let parsed = Parsed {
+        functions: vec![
+            f("save", 1, 10),
+            f("save::inner", 4, 6),
+            f("load", 12, 20),
+            f("idle", 22, 30),
+        ],
+        references: vec![
+            r(2, "std::fs::write"),
+            r(5, "std::net::TcpStream::connect"),
+            r(14, "std::fs::read"),
+            r(24, "std::fs::read"),
+            r(31, "std::fs::remove_file"),
+        ],
+        ..Parsed::default()
+    };
+    let changes = Changes {
+        // In `inner`, so in `save` too; and a top-level line.
+        added: [5, 31].into_iter().collect(),
+        // Lines removed from `load`.
+        removed: [(15, 60)].into_iter().collect(),
+    };
+    let patterns = crate::syntax::default_effects("rust");
+    let (functions, marks) = inside(&parsed, &changes, &patterns, &|_| (Vec::new(), Vec::new()));
+    let summary: Vec<(&str, u64, u64, Vec<&str>, bool)> = functions
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                c.added,
+                c.removed,
+                c.effects.clone(),
+                c.direct,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("save", 1, 0, vec!["filesystem", "network"], true),
+            ("save::inner", 1, 0, vec!["network"], true),
+            ("load", 0, 60, vec!["filesystem"], true),
+        ],
+        "idle is not changed"
+    );
+    // A large change that touches the outside is medium.
+    assert_eq!(functions[2].risk.level, RiskLevel::Medium);
+    assert_eq!(functions[0].risk.level, RiskLevel::Low);
+    let marks: Vec<(u64, &str, Option<&str>, Option<RiskLevel>)> = marks
+        .iter()
+        .map(|m| (m.line, m.kind, m.function.as_deref(), m.risk))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            // In a changed function, though the line is not changed.
+            (2, "filesystem", Some("save"), Some(RiskLevel::Low)),
+            // The innermost function holds it.
+            (5, "network", Some("save::inner"), Some(RiskLevel::Low)),
+            (14, "filesystem", Some("load"), Some(RiskLevel::Medium)),
+            // A changed line outside any function.
+            (31, "filesystem", None, None),
+        ],
+        "line 24, in the unchanged idle, is not marked"
+    );
+}
+
+#[test]
+fn a_changed_function_one_step_from_an_effect_triggers_or_feeds_it() {
+    let tree = tree(&[
+        ("Cargo.toml", "[package]\nname = \"fixture\"\n"),
+        (
+            "src/net.rs",
+            "pub fn send() {\n    std::net::TcpStream::connect(\"x\").unwrap();\n}\n\
+             pub fn save() {\n    std::fs::write(\"y\", b\"\").unwrap();\n}\n\
+             pub fn to_string() {\n    std::fs::read(\"z\").unwrap();\n}\n",
+        ),
+        (
+            "src/store.rs",
+            "use crate::net::send;\n\npub struct Store;\n\nimpl Store {\n    \
+             pub fn save(&self) {\n        send();\n    }\n    \
+             pub fn new() -> Self {\n        Store\n    }\n}\n",
+        ),
+        (
+            "src/app.rs",
+            "use crate::store::Store;\n\npub fn run() {\n    let s = Store::new();\n    \
+             s.save();\n    prepare();\n}\n\npub fn prepare() {}\n\n\
+             pub fn write() {\n    std::fs::write(\"w\", b\"\").unwrap();\n    prepare();\n    \
+             serde_json::to_string();\n}\n",
+        ),
+    ]);
+    let mut files = BTreeMap::new();
+    for (path, text) in &tree {
+        if let Some(p) = crate::syntax::parse("rust", path, text).filter(|_| path.ends_with(".rs"))
+        {
+            files.insert(path.clone(), ("rust", p));
+        }
+    }
+    let locals = Locals::of(&tree, &files);
+    assert!(locals.rust_packages.contains("fixture"));
+    let graph = Graph::new(&files, &locals, &crate::config::MapConfig::default());
+    let function = |path: &str, name: &str| {
+        files[path]
+            .1
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .unwrap()
+            .clone()
+    };
+    let callee = |path: &str, function: &str| Callee {
+        path: path.to_owned(),
+        function: function.to_owned(),
+    };
+    let step = |direction, path: &str, function: &str, effects: &[&'static str]| Step {
+        direction,
+        path: path.to_owned(),
+        function: function.to_owned(),
+        effects: effects.to_vec(),
+    };
+
+    // It calls a direct function through a `use` line: it triggers.
+    let (calls, steps) = graph.reach("src/store.rs", &function("src/store.rs", "Store::save"));
+    assert_eq!(calls, [callee("src/net.rs", "send")]);
+    assert_eq!(
+        steps,
+        [step("triggers", "src/net.rs", "send", &["network"])]
+    );
+
+    // A method on a value could be either `save`: it counts for each,
+    // and the direct one makes a step.
+    let (calls, steps) = graph.reach("src/app.rs", &function("src/app.rs", "run"));
+    assert_eq!(
+        calls,
+        [
+            callee("src/app.rs", "prepare"),
+            callee("src/net.rs", "save"),
+            callee("src/store.rs", "Store::new"),
+            callee("src/store.rs", "Store::save"),
+        ]
+    );
+    assert_eq!(
+        steps,
+        [step("triggers", "src/net.rs", "save", &["filesystem"])]
+    );
+
+    // A direct function calls it: it feeds the effect.
+    let (_, steps) = graph.reach("src/app.rs", &function("src/app.rs", "prepare"));
+    assert_eq!(
+        steps,
+        [step("feeds", "src/app.rs", "write", &["filesystem"])]
+    );
+
+    // A call into another crate is not the repository's, though a
+    // function of the same name is.
+    let (calls, steps) = graph.reach("src/app.rs", &function("src/app.rs", "write"));
+    assert_eq!(calls, [callee("src/app.rs", "prepare")]);
+    assert!(steps.is_empty());
+
+    // Around `prepare`: it and its neighbours in full; their own
+    // neighbours by name only.
+    let added: BTreeMap<String, BTreeSet<u64>> =
+        [("src/app.rs".to_owned(), [9].into_iter().collect())].into();
+    let around = graph.around(
+        &[("src/app.rs".to_owned(), function("src/app.rs", "prepare"))],
+        &tree,
+        &added,
+    );
+    let shape: Vec<(&str, bool, Vec<u64>)> = around
+        .functions
+        .iter()
+        .map(|f| (f.id.as_str(), f.lines.is_some(), f.changed.clone()))
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("src/app.rs:3", true, vec![]),
+            ("src/app.rs:9", true, vec![9]),
+            ("src/app.rs:11", true, vec![]),
+            // Called by run, which is one call out: named only.
+            ("src/net.rs:4", false, vec![]),
+            ("src/store.rs:6", false, vec![]),
+            ("src/store.rs:9", false, vec![]),
+        ]
+    );
+    let prepare = &around.functions[1];
+    assert_eq!(
+        prepare.lines.as_deref(),
+        Some(&["pub fn prepare() {}".to_owned()][..])
+    );
+    // In the order the files and their functions come.
+    assert_eq!(prepare.callers, ["src/app.rs:3", "src/app.rs:11"]);
+    let write = &around.functions[2];
+    assert_eq!(
+        write.sites,
+        [Site {
+            line: 12,
+            kind: "filesystem"
+        }]
+    );
+    assert!(around.functions[3].calls.is_empty() && around.functions[3].sites.is_empty());
+
+    // One step adds a point and says why.
+    let risk = function_risk(
+        &[],
+        1,
+        &[step("triggers", "src/net.rs", "send", &["network"])],
+    );
+    assert_eq!(risk.level, RiskLevel::Low);
+    assert_eq!(risk.signals[0].signal, "reach");
+    assert_eq!(
+        risk.signals[0].reason,
+        "one step from an effect: triggers network via send"
+    );
+    let risk = function_risk(
+        &["filesystem"],
+        1,
+        &[step("feeds", "a.rs", "w", &["network"])],
+    );
+    assert_eq!(
+        risk.level,
+        RiskLevel::Medium,
+        "touching the outside and one step"
+    );
+}
+
+#[test]
+fn whether_a_call_s_module_is_the_repository_s_own() {
+    let locals = Locals {
+        rust_packages: ["fixture".to_owned()].into_iter().collect(),
+        go_dirs: ["store".to_owned()].into_iter().collect(),
+        clojure_namespaces: ["app.store".to_owned()].into_iter().collect(),
+    };
+    for (language, module, local) in [
+        ("rust", None, true),
+        ("rust", Some("crate::store"), true),
+        ("rust", Some("super"), true),
+        ("rust", Some("fixture::wire"), true),
+        ("rust", Some("std::fs"), false),
+        ("rust", Some("serde_json"), false),
+        ("typescript", Some("./store"), true),
+        ("typescript", Some("@/lib/store"), true),
+        ("typescript", Some("fs"), false),
+        ("go", Some("example.com/app/store"), true),
+        ("go", Some("net/http"), false),
+        ("clojure", Some("app.store"), true),
+        ("clojure", Some("clojure.string"), false),
+    ] {
+        assert_eq!(
+            locals.is_local(language, module),
+            local,
+            "{language} {module:?}"
+        );
+    }
+}
+
+#[test]
+fn a_project_s_patterns_add_to_the_shipped_ones() {
+    let config = crate::config::Config::parse(
+        "[map.effects.rust]\ndatabase = [\"crate::db\"]\n\n[agents.heron]\nrole = \"lead\"\n",
+    )
+    .unwrap();
+    let patterns = config.map.effects_for("rust");
+    assert!(patterns.contains(&("crate::db".to_owned(), "database")));
+    assert!(patterns.contains(&("std::fs".to_owned(), "filesystem")));
+    // A language the map does not read inside, or a kind it does not
+    // know, is refused.
+    for bad in [
+        "[map.effects.python]\nprocess = [\"os.system\"]\n",
+        "[map.effects.rust]\nclock = [\"std::time\"]\n",
+    ] {
+        let err = crate::config::Config::parse(bad).unwrap_err();
+        assert!(err.contains("[map.effects."), "{err}");
+    }
+}
+
+#[test]
+fn the_page_lists_the_ranked_files_and_opens_on_the_list() {
+    // The list reads the document's own order, and a row opens the
+    // same pane a node does.
+    assert!(PAGE.contains("(doc.ranked || []).forEach"));
+    assert!(PAGE.contains("tr.addEventListener(\"click\", function () { pick(n); })"));
+    assert!(PAGE.contains("node.on(\"click\""));
+    // Its reasons are the pane's, from the same function.
+    assert!(PAGE.contains("riskLines(n).slice(1)"));
+    // The page opens on the list, with the graph the other view.
+    assert!(PAGE.contains("<body class=\"listing\">"));
+    assert!(PAGE.contains("id=\"view-list\" type=\"button\" aria-pressed=\"true\""));
+    assert!(PAGE.contains("id=\"view-graph\" type=\"button\" aria-pressed=\"false\""));
+    // The graph is hidden, not taken out of the layout, so it can be
+    // fitted while the list shows.
+    assert!(PAGE.contains(
+        "body.listing svg, body.listing #legend, body.listing #tip { visibility: hidden; }"
+    ));
+    // A file with marked lines expands to show them, without picking
+    // it: the pane stays as it is.
+    assert!(PAGE.contains("var marks = n.marks || [];"));
+    assert!(PAGE.contains("event.stopPropagation();\n        detail.hidden = !detail.hidden;"));
+    assert!(PAGE.contains("toggle.setAttribute(\"aria-expanded\""));
+    // The calls view: drawn from the document's call graph, opened from
+    // a marked line, a neighbour taking the focus when clicked, its
+    // boxes in the diff pane's rows.
+    assert!(PAGE.contains("id=\"view-calls\" type=\"button\" aria-pressed=\"false\""));
+    assert!(PAGE.contains("var cg = (doc.call_graph && doc.call_graph.functions) || [];"));
+    assert!(PAGE.contains("if (m[\"function\"]) { opens(div, m[\"function\"], m.line); }"));
+    assert!(PAGE.contains("b.addEventListener(\"click\", function () { focus(f.id); });"));
+    assert!(PAGE.contains("body.className = \"diff box-body\";"));
+    for column in ["called by", "function", "calls", "effects reached"] {
+        assert!(PAGE.contains(&format!("column(\"{column}\"")), "{column}");
+    }
+    // Expanded, it shows each function one step from an effect too.
+    assert!(
+        PAGE.contains("f.steps.forEach(function (s) { steps.push({ from: f.name, step: s }); });")
+    );
+    // The open pane narrows the list as it does the graph.
+    assert!(PAGE.contains("body.paned #list { right: calc(var(--pane) + 12px); }"));
 }
 
 #[test]
@@ -326,6 +729,21 @@ fn only_the_person_at_a_terminal_with_no_flags_has_the_page_opened() {
     // Not when JSON or a file of the person's own was asked for.
     assert!(!opens_page(&Actor::Person, true, false, true));
     assert!(!opens_page(&Actor::Person, false, true, true));
+}
+
+#[test]
+fn list_prints_the_list_and_never_opens_the_page() {
+    let seat = Actor::Agent(ris_core::ids::AgentName("heron".to_owned()));
+    // The person at a terminal with no flags gets the page opened, and
+    // with --list, at the same terminal, the list and no page.
+    assert_eq!(form(&Actor::Person, false, false, false, true), Form::Open);
+    assert_eq!(form(&Actor::Person, false, false, true, true), Form::List);
+    assert_eq!(form(&Actor::Person, true, false, true, true), Form::List);
+    assert_eq!(form(&seat, false, false, true, false), Form::List);
+    // --html writes the page whatever else; otherwise the text form.
+    assert_eq!(form(&Actor::Person, false, true, false, true), Form::Write);
+    assert_eq!(form(&Actor::Person, false, false, false, false), Form::Text);
+    assert_eq!(form(&seat, false, false, false, true), Form::Text);
 }
 
 #[test]

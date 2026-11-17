@@ -140,7 +140,10 @@ fn summary_opens_with_the_phases_state_in_one_line() {
     let text = ok(&dir, "person", &["summary"]);
     let rest = text.split_once('\n').unwrap().1;
     assert!(
-        rest.starts_with("P-1 open: one line\nitems: 3 ready, 1 superseded\n\n"),
+        rest.starts_with(
+            "  heron      not started, idle; `ris up heron`\n\
+             P-1 open: one line\nitems: 3 ready, 1 superseded\n\n"
+        ),
         "{text}"
     );
 

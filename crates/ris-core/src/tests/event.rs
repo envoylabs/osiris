@@ -28,7 +28,7 @@ fn sample_log() -> Vec<Event> {
         (
             Structure::ItemAdded {
                 item: ItemId(1),
-                phase: PhaseId(1),
+                phase: Some(PhaseId(1)),
                 checks: vec![CheckId("cargo-test".into())],
                 depends_on: vec![],
             },

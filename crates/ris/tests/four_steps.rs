@@ -2,7 +2,7 @@
 //! decision raised while the phase runs sets its item aside and never
 //! stops the seat; the person takes it at review with `ris decide`;
 //! phase close merges what is merged, carries the rest over, and its
-//! report counts the items planned, merged and carried over.
+//! report counts the items opened with, planned, merged and carried over.
 
 mod common;
 
@@ -148,7 +148,7 @@ fn a_phase_runs_through_a_queued_decision_and_closes_with_its_tally() {
     // While open, the report counts what would carry over.
     let report = ok(&dir, "person", &["report"]);
     assert!(
-        report.contains("P-1: 3 planned, 1 merged, 2 carry over if closed now"),
+        report.contains("P-1: opened with 0, 3 planned, 1 merged, 2 carry over if closed now"),
         "{report}"
     );
     assert_eq!(tally(&data(&dir, &["report"])), (3, 1, 2));
@@ -159,7 +159,7 @@ fn a_phase_runs_through_a_queued_decision_and_closes_with_its_tally() {
     assert_eq!(tally(&closed["phase"]), (3, 1, 2));
     let report = ok(&dir, "person", &["report"]);
     assert!(
-        report.contains("P-1: 3 planned, 1 merged, 2 carried over"),
+        report.contains("P-1: opened with 0, 3 planned, 1 merged, 2 carried over"),
         "{report}"
     );
 

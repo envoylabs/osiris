@@ -1,5 +1,5 @@
 $ ris ready
-[stderr] no .osiris/ in /private<dir> or above
+[stderr] no .osiris/ in <dir> or above
   next: `ris init` in the project root
 [exit 1]
 
@@ -60,6 +60,11 @@ ris inbox                       # messages to you; read between items
 - You work only the open phase's items. `ris ready` shows you nothing
   else, and `ris claim` refuses an item in the backlog; the person
   brings one into the phase with `ris item bring-in I-7`.
+- `ris item add` puts an item in the open phase, or with
+  `--phase none` in the backlog, which is also where it goes when no
+  phase is open. Tagging an item for a later phase (`--phase P-9`,
+  `ris item phase I-7 P-9`) is planning: the person's and the
+  advisor's, and `ris` refuses any other seat.
 - A question that stops you goes into `ris`, never only into your
   output: raise it as a decision about the item (see Decisions), set
   the item aside, and take another. Nobody reads a question left in a
@@ -153,6 +158,15 @@ file under a `tests` directory beside the source it tests, declared
 from the source file by one line, so a source file holds only behaviour
 and its diff shows only behaviour.
 
+A test never depends on the machine it runs on: no path, clock speed,
+system tool or configuration that differs between systems. A test that
+needs one sets it up itself: it makes its own directory and names it
+in its canonical form, waits for a condition and never for a fixed
+time, and writes the configuration it reads.
+The one fixed wait a test may keep is a wait whose length is itself
+what the test checks (that nothing happens within it, or that a limit
+is passed), with a comment beside it saying so.
+
 ## Messages
 
 Typed and targeted; no broadcasts.
@@ -216,10 +230,10 @@ for the person to answer.
 [exit 0]
 
 $ ris init
-[stderr] /private<dir>/.osiris already exists
+[stderr] <dir>/.osiris already exists
 [exit 1]
 
-$ ris item add too early
+$ ris phase close
 [stderr] refused: no phase is open
   next: open a phase first: `ris phase open`
 [exit 2]
@@ -456,6 +470,7 @@ $ ris --json report
     "tally": {
       "carried_over": 4,
       "merged": 0,
+      "opened_with": 0,
       "planned": 4
     }
   },
@@ -590,6 +605,7 @@ $ ris --json report
     "tally": {
       "carried_over": 4,
       "merged": 0,
+      "opened_with": 0,
       "planned": 4
     }
   },
@@ -734,6 +750,7 @@ $ ris --json report
     "tally": {
       "carried_over": 4,
       "merged": 0,
+      "opened_with": 0,
       "planned": 4
     }
   },
@@ -1001,7 +1018,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
-P-1: 4 planned, 2 merged, 2 carry over if closed now
+P-1: opened with 0, 4 planned, 2 merged, 2 carry over if closed now
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -1026,6 +1043,9 @@ previous report: <hash>
 
 $ ris summary
 2 of 4 items merged; 1 in progress (wren on I-4); 1 not started; no seat is running: start them with `ris up`
+  heron      not started, idle; `ris up heron`
+  rook       not started, idle; `ris up rook`
+  wren       not started, on I-4; `ris up wren`
 P-1 open: first slice
 items: 1 claimed, 2 merged, 1 ready
 
@@ -1048,7 +1068,7 @@ items: 1 claimed, 2 merged, 1 ready
   I-2   ready    the fold
   I-3   merged   the cli (<hash>)
   I-4   claimed  a lint fix (wren)
-P-1: 4 planned, 2 merged, 2 carried over
+P-1: opened with 0, 4 planned, 2 merged, 2 carried over
 substantive decisions (1 answered outside the offered options):
   D-2 [substantive] daemon now or CLI-direct?  (about I-3)
        0: daemon
@@ -1066,10 +1086,11 @@ failed checks:
   I-4 lint failed (E-<hash>)
 audited: 1 of 2 done or merged
 messages: 1
-log: 36 events, head <hash>
+log: 38 events, head <hash>
 report: <hash>
 previous report: <hash>
 closing merge: none needed; the phase's work is already on main
+2 item(s) not merged have no phase now: tag one for a phase with `ris item phase <item> <P-n>`
 the change set as a map of the source: `ris map`, or `ris map --html <file>`
 [exit 0]
 
@@ -1111,7 +1132,7 @@ $ ris --json report
         ],
         "goal": "the fold",
         "id": "I-2",
-        "phase": "P-1",
+        "phase": null,
         "state": "ready"
       },
       {
@@ -1136,13 +1157,13 @@ $ ris --json report
         "depends_on": [],
         "goal": "a lint fix",
         "id": "I-4",
-        "phase": "P-1",
+        "phase": null,
         "state": "claimed"
       }
     ],
     "log": {
       "head": "<hash>",
-      "len": 36
+      "len": 38
     },
     "mechanical": [
       {
@@ -1228,6 +1249,7 @@ $ ris --json report
     "tally": {
       "carried_over": 2,
       "merged": 2,
+      "opened_with": 0,
       "planned": 4
     }
   },

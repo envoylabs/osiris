@@ -59,6 +59,8 @@ pub struct Seat {
     /// run started, oldest first: what the person fixes in the
     /// configuration before the next `ris up`.
     pub faults: Vec<String>,
+    /// For a seat not running that has run: why it stopped.
+    pub stopped: Option<Stopped>,
 }
 
 /// What a running seat last did, read from its run's output file.
@@ -71,6 +73,61 @@ pub struct Activity {
     pub quiet_seconds: u64,
     /// Quiet for longer than `[runner] quiet_after_seconds`.
     pub stuck: bool,
+}
+
+/// Why a seat that is not running stopped, read from how its latest
+/// run ended and from the log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct Stopped {
+    /// `usage_limit`, `setup_fault`, `paused`, `nothing_left` or
+    /// `ended`.
+    pub reason: &'static str,
+    /// For `usage_limit`: when the limit resets, in the agent tool's
+    /// own words; null when it did not say, and for any other reason.
+    pub resets: Option<String>,
+}
+
+/// Why a seat stopped, the first that holds: the agent tool's usage
+/// limit, which its last result says; a setup fault the seat reported
+/// in that run; a pause by the person; a run that finished normally
+/// holding no item, which is how a seat stops once nothing is left for
+/// it to claim; and otherwise `ended` (killed, an error, or a stop while
+/// still holding an item).
+pub fn stopped(end: crate::runner::RunEnd, faulted: bool, paused: bool, holds: bool) -> Stopped {
+    use crate::runner::RunEnd;
+    let (reason, resets) = match end {
+        RunEnd::UsageLimit { resets } => ("usage_limit", resets),
+        _ if faulted => ("setup_fault", None),
+        _ if paused => ("paused", None),
+        RunEnd::Finished if !holds => ("nothing_left", None),
+        _ => ("ended", None),
+    };
+    Stopped { reason, resets }
+}
+
+/// A stop's reason in a few words, as the status line says it.
+pub fn stopped_words(s: &Stopped) -> String {
+    match (s.reason, &s.resets) {
+        ("usage_limit", Some(at)) => format!("usage limit, resets {at}"),
+        ("usage_limit", None) => "usage limit".into(),
+        ("setup_fault", _) => "setup fault".into(),
+        ("paused", _) => "paused by the person".into(),
+        ("nothing_left", _) => "nothing left to claim".into(),
+        _ => "ended".into(),
+    }
+}
+
+/// A seat's stop, from its latest run file in `runs`; `None` when it
+/// has never run or the file cannot be read.
+fn stop_of(runs: &Path, seat: &str, faulted: bool, paused: bool, holds: bool) -> Option<Stopped> {
+    let path = crate::runner::latest_run(runs, seat)?;
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(stopped(
+        crate::runner::run_end(&text),
+        faulted,
+        paused,
+        holds,
+    ))
 }
 
 /// How long a seat's last activity line may be on screen.
@@ -160,12 +217,7 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
         .agents
         .iter()
         .map(|(name, cfg)| {
-            let claim = l
-                .state
-                .items
-                .values()
-                .find(|i| matches!(&i.state, ItemState::Claimed { agent } if agent.0 == *name))
-                .map(|i| i.id.to_string());
+            let claim = claim_of(l, name);
             // Its own worktree if it writes and has one. Otherwise an
             // auditor, an advisor, and a lead working at width one, use
             // the main checkout; a builder without one has nowhere to
@@ -197,6 +249,20 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
             let uncommitted = worktree
                 .as_deref()
                 .and_then(|w| git(w, &["status", "--porcelain"]).map(|s| s.lines().count() as u32));
+            let faults: Vec<String> = l
+                .state
+                .faults
+                .get(&AgentName(name.clone()))
+                .into_iter()
+                .flatten()
+                .map(|at| l.text(*at, "what").to_owned())
+                .collect();
+            let paused = l.state.paused.contains(&AgentName(name.clone()));
+            let stopped = if running {
+                None
+            } else {
+                stop_of(&runs, name, !faults.is_empty(), paused, claim.is_some())
+            };
             Seat {
                 seat: name.clone(),
                 role: cfg.role,
@@ -206,22 +272,120 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
                 ahead,
                 behind,
                 uncommitted,
-                paused: l.state.paused.contains(&AgentName(name.clone())),
+                paused,
                 running,
                 activity: running
                     .then(|| activity(&runs, name, p.config.runner.quiet_after_seconds, now))
                     .flatten(),
-                faults: l
-                    .state
-                    .faults
-                    .get(&AgentName(name.clone()))
-                    .into_iter()
-                    .flatten()
-                    .map(|at| l.text(*at, "what").to_owned())
-                    .collect(),
+                faults,
+                stopped,
             }
         })
         .collect()
+}
+
+/// The item `seat` holds, if any.
+fn claim_of(l: &Loaded, seat: &str) -> Option<String> {
+    l.state
+        .items
+        .values()
+        .find(|i| matches!(&i.state, ItemState::Claimed { agent } if agent.0 == seat))
+        .map(|i| i.id.to_string())
+}
+
+/// Every seat as `ris summary` shows it: whether its agent is running,
+/// what it holds, and for one that is not running why it stopped and
+/// the command that brings it back. Read from the configuration, the
+/// log and the seats' run files, with no call to git.
+///
+/// `alive` says whether a seat's run still has its process. A run
+/// whose process is gone stays in the log as running until `ris up`
+/// clears it; here it is a seat that stopped, with the reason its run
+/// file gives.
+pub fn summary_seats(
+    p: &Project,
+    l: &Loaded,
+    alive: &dyn Fn(&str) -> bool,
+) -> Vec<crate::schema::SummarySeat> {
+    let runs = p.root.join(crate::project::DIR).join("runs");
+    let now = SystemTime::now();
+    p.config
+        .agents
+        .iter()
+        .map(|(name, cfg)| {
+            let seat = AgentName(name.clone());
+            let claim = claim_of(l, name);
+            let running = l.state.running.contains_key(&seat) && alive(name);
+            let faulted = l.state.faults.get(&seat).is_some_and(|f| !f.is_empty());
+            let stopped = if running {
+                None
+            } else {
+                stop_of(
+                    &runs,
+                    name,
+                    faulted,
+                    l.state.paused.contains(&seat),
+                    claim.is_some(),
+                )
+            };
+            crate::schema::SummarySeat {
+                seat: name.clone(),
+                role: cfg.role,
+                running,
+                activity: running
+                    .then(|| activity(&runs, name, p.config.runner.quiet_after_seconds, now))
+                    .flatten(),
+                stopped,
+                attended: !cfg.start,
+                // `ris up` starts no attended seat: the person runs it.
+                next: (!running && cfg.start).then(|| format!("ris up {name}")),
+                claim,
+            }
+        })
+        .collect()
+}
+
+/// A seat's line in `ris summary`: its name, whether it is running and
+/// what it holds, and for a seat that is not running why it stopped
+/// and the command that brings it back, with what comes before that
+/// command when something does.
+pub fn summary_line(s: &crate::schema::SummarySeat) -> String {
+    let doing = match &s.claim {
+        Some(item) => format!("on {item}"),
+        None => "idle".to_owned(),
+    };
+    let mut line = format!("{:<10} ", s.seat);
+    if s.running {
+        line.push_str(&format!("running, {doing}"));
+        if let Some(a) = s.activity.as_ref().filter(|a| a.stuck) {
+            line.push_str(&format!(
+                "; possibly stuck: quiet {}, `ris logs {}` shows its output",
+                ago(a.quiet_seconds),
+                s.seat
+            ));
+        }
+        return line;
+    }
+    line.push_str(&match &s.stopped {
+        Some(st) => format!("stopped: {}, {doing}", stopped_words(st)),
+        None if s.attended => format!("attended, {doing}"),
+        None => format!("not started, {doing}"),
+    });
+    if let Some(next) = &s.next {
+        line.push_str(&match s.stopped.as_ref().map(|st| st.reason) {
+            Some("usage_limit") => format!("; `{next}` once the limit resets"),
+            Some("setup_fault") => {
+                format!("; `ris status` says what is missing: allow it in [runner], then `{next}`")
+            }
+            Some("nothing_left") => format!("; `{next}` once there is more for it"),
+            Some("ended") => format!(
+                "; `ris logs {}` shows how it ended, `{next}` starts it again",
+                s.seat
+            ),
+            _ => format!("; `{next}`"),
+        });
+    }
+    line
 }
 
 fn role_word(r: Role) -> &'static str {
@@ -262,6 +426,9 @@ fn seat_lines(s: &Seat, place: &str) -> String {
     }
     if s.paused {
         line.push_str("  paused");
+    }
+    if let Some(st) = &s.stopped {
+        line.push_str(&format!("  stopped: {}", stopped_words(st)));
     }
     if let Some(a) = &s.activity {
         if a.stuck {
@@ -316,6 +483,7 @@ pub fn render(p: &Project, l: &Loaded) -> Output {
             running: s.running,
             activity: s.activity.clone(),
             faults: s.faults.clone(),
+            stopped: s.stopped.clone(),
         })
         .collect();
     Output::of(text, &crate::schema::Status { seats: rows })

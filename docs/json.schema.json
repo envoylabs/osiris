@@ -453,6 +453,127 @@
       ],
       "type": "object"
     },
+    "CallGraph": {
+      "description": "The calls around the phase's changed functions, for a view of one\nfunction: every changed function and every function one call from\none, in full; the functions one call further, by name only.",
+      "properties": {
+        "functions": {
+          "description": "By path, then first line.",
+          "items": {
+            "$ref": "#/$defs/CallNode"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "functions"
+      ],
+      "type": "object"
+    },
+    "CallNode": {
+      "description": "One function of the call graph.",
+      "properties": {
+        "callers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "calls": {
+          "description": "The functions it calls and those that call it, by id; empty for\na function given by name only.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "changed": {
+          "description": "The lines of it the phase added.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "direct": {
+          "description": "Whether it holds an effect site itself, and their kinds, sorted.",
+          "type": "boolean"
+        },
+        "effects": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "end": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "`path:start`, which `calls` and `callers` name it by.",
+          "type": "string"
+        },
+        "lines": {
+          "description": "Its text at the tip, one entry a line from `start`; null for a\nfunction given by name only.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sites": {
+          "description": "Its effect sites; empty for a function given by name only.",
+          "items": {
+            "$ref": "#/$defs/Site"
+          },
+          "type": "array"
+        },
+        "start": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "path",
+        "name",
+        "start",
+        "end",
+        "direct",
+        "effects",
+        "sites",
+        "changed",
+        "lines",
+        "calls",
+        "callers"
+      ],
+      "type": "object"
+    },
+    "Callee": {
+      "description": "A function of the repository, by file and name.",
+      "properties": {
+        "function": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "function"
+      ],
+      "type": "object"
+    },
     "CarriedOver": {
       "properties": {
         "decisions": {
@@ -530,6 +651,79 @@
           "type": "string"
         }
       ]
+    },
+    "ChangedFunction": {
+      "description": "One function the phase changed.",
+      "properties": {
+        "added": {
+          "description": "The lines the phase added in it, and removed from it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "calls": {
+          "description": "The functions of the repository it calls, as far as names say:\na call that could mean more than one function names each.",
+          "items": {
+            "$ref": "#/$defs/Callee"
+          },
+          "type": "array"
+        },
+        "direct": {
+          "description": "Whether it holds an effect site itself.",
+          "type": "boolean"
+        },
+        "effects": {
+          "description": "The kinds of effect on its lines, changed or not; sorted.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "end": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "As a reader finds it; a method has its type in front.",
+          "type": "string"
+        },
+        "removed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "risk": {
+          "$ref": "#/$defs/Computed",
+          "description": "Its level, from the same signals as a file's (its effects and\nthe size of its change), and one more for being one step from an\neffect."
+        },
+        "start": {
+          "description": "Its first and last line at the tip, counting from 1.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "steps": {
+          "description": "One step from an effect: each direct function it calls (it\ntriggers the effect) and each that calls it (it feeds the\neffect).",
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "start",
+        "end",
+        "added",
+        "removed",
+        "effects",
+        "direct",
+        "calls",
+        "steps",
+        "risk"
+      ],
+      "type": "object"
     },
     "CheckId": {
       "description": "A check's name, as declared in the project's checks file.",
@@ -641,6 +835,11 @@
         {
           "const": "BringIn",
           "description": "The person bringing an item that has not been started from the\nbacklog into the open phase.",
+          "type": "string"
+        },
+        {
+          "const": "Tag",
+          "description": "Tagging an item that has not been started for the open phase, a\nlater phase, or none.",
           "type": "string"
         },
         {
@@ -1605,7 +1804,15 @@
           "$ref": "#/$defs/ItemId"
         },
         "phase": {
-          "$ref": "#/$defs/PhaseId"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its phase tag: the phase it is in or is planned for; null when\nit has none, which is the backlog."
         },
         "state": {
           "description": "`ready`, `claimed`, `blocked`, `done`, `merged` or `superseded`.",
@@ -1643,6 +1850,30 @@
       ],
       "type": "object"
     },
+    "ItemAdded": {
+      "description": "`ris item add`.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The phase it is tagged for; null when it has none."
+        }
+      },
+      "required": [
+        "item",
+        "phase"
+      ],
+      "type": "object"
+    },
     "ItemId": {
       "description": "An item's id, such as I-7.",
       "pattern": "^I-[0-9]+$",
@@ -1657,6 +1888,30 @@
       },
       "required": [
         "item"
+      ],
+      "type": "object"
+    },
+    "ItemTagged": {
+      "description": "`ris item phase`.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ItemId"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The phase it is now tagged for; null when it has none."
+        }
+      },
+      "required": [
+        "item",
+        "phase"
       ],
       "type": "object"
     },
@@ -1748,6 +2003,10 @@
             "null"
           ]
         },
+        "call_graph": {
+          "$ref": "#/$defs/CallGraph",
+          "description": "The calls around the phase's changed functions, for the page's\nview of one function; empty when no file is read inside."
+        },
         "diffs": {
           "additionalProperties": {
             "type": "string"
@@ -1777,6 +2036,13 @@
             }
           ]
         },
+        "ranked": {
+          "description": "The changed nodes' paths in the order to read them: the highest\nrisk level that stands first, then the heaviest, then by path.\nThe order `ris map --list` prints and the page lists.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "tip": {
           "type": "string"
         },
@@ -1794,8 +2060,10 @@
         "tip_ref",
         "totals",
         "nodes",
+        "ranked",
         "edges",
-        "diffs"
+        "diffs",
+        "call_graph"
       ],
       "type": "object"
     },
@@ -1870,6 +2138,46 @@
         "removed",
         "outside",
         "tests"
+      ],
+      "type": "object"
+    },
+    "Mark": {
+      "description": "A line that touches the outside.",
+      "properties": {
+        "function": {
+          "description": "The innermost function it sits in; null outside any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`database`, `filesystem`, `network` or `process`.",
+          "type": "string"
+        },
+        "line": {
+          "description": "At the tip, counting from 1.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "risk": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "That function's level, which is the line's; null outside any\nfunction, where the file's level stands."
+        }
+      },
+      "required": [
+        "line",
+        "kind",
+        "function",
+        "risk"
       ],
       "type": "object"
     },
@@ -2043,6 +2351,25 @@
         }
       ]
     },
+    "NextPhase": {
+      "description": "The phase that opens next, and what is tagged for it.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        }
+      },
+      "required": [
+        "phase",
+        "items"
+      ],
+      "type": "object"
+    },
     "Node": {
       "description": "One source file.",
       "properties": {
@@ -2069,10 +2396,30 @@
           },
           "type": "array"
         },
+        "functions": {
+          "description": "The functions the phase changed, in the order they start; null\nunless the file is changed, still there, has a diff, and is of a\nlanguage the map reads inside (`syntax::SUPPORTED`).",
+          "items": {
+            "$ref": "#/$defs/ChangedFunction"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "language": {
           "description": "The language its extension names; null for a contract file that\nis not source code.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "marks": {
+          "description": "The lines that touch the outside, on a line the phase changed or\nin a function it changed, by line; null when `functions` is.",
+          "items": {
+            "$ref": "#/$defs/Mark"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
@@ -2116,7 +2463,9 @@
         "contract",
         "weight",
         "dependents",
-        "risk"
+        "risk",
+        "functions",
+        "marks"
       ],
       "type": "object"
     },
@@ -2203,6 +2552,13 @@
             "null"
           ]
         },
+        "brought_in": {
+          "description": "The items that were tagged for the phase, which it opened with.",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        },
         "docs_item": {
           "anyOf": [
             {
@@ -2213,6 +2569,13 @@
             }
           ],
           "description": "The item added to bring the docs up to date, if one was."
+        },
+        "moved_on": {
+          "description": "The items that were tagged for the phase and whose tags were\nmoved on to the phase after it instead.",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
         },
         "phase": {
           "$ref": "#/$defs/PhaseId"
@@ -2229,7 +2592,9 @@
         "phase",
         "branch",
         "docs_item",
-        "preflight"
+        "preflight",
+        "brought_in",
+        "moved_on"
       ],
       "type": "object"
     },
@@ -2896,7 +3261,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "An agent claims only the open phase's items; this one is in\nanother phase's backlog.",
+          "description": "An agent claims only the open phase's items; this one is tagged\nfor another phase, or for none (`phase` is then null).",
           "properties": {
             "not_in_open_phase": {
               "properties": {
@@ -2904,7 +3269,14 @@
                   "$ref": "#/$defs/ItemId"
                 },
                 "phase": {
-                  "$ref": "#/$defs/PhaseId"
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PhaseId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -2942,6 +3314,64 @@
           },
           "required": [
             "already_in_open_phase"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An item is tagged for the open phase, a later one or none; this\nphase is closed.",
+          "properties": {
+            "phase_is_closed": {
+              "$ref": "#/$defs/PhaseId"
+            }
+          },
+          "required": [
+            "phase_is_closed"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The item already has this tag (`phase` null: none).",
+          "properties": {
+            "already_tagged": {
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PhaseId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "item",
+                "phase"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "already_tagged"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Moving an item into or out of the open phase is the person's to\ndo: it changes the scope of the work in hand.",
+          "properties": {
+            "scope_is_for_the_person": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "scope_is_for_the_person"
           ],
           "type": "object"
         }
@@ -3051,16 +3481,64 @@
       ]
     },
     "Rules": {
-      "description": "`ris rules`.",
-      "properties": {
-        "rules": {
-          "type": "string"
+      "anyOf": [
+        {
+          "properties": {
+            "rules": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "rules"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "changed": {
+              "description": "Whether the file changed.",
+              "type": "boolean"
+            },
+            "rendered": {
+              "description": "The rules file rendered.",
+              "type": "string"
+            },
+            "source": {
+              "description": "The project's own part, as the command named it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "rendered",
+            "changed"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "With `--check`: nothing was written. A file that is not current\nis the error `check_failed`, so `current` is true here.",
+          "properties": {
+            "checked": {
+              "description": "The rules file checked.",
+              "type": "string"
+            },
+            "current": {
+              "type": "boolean"
+            },
+            "source": {
+              "description": "The project's own part, as the command named it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "checked",
+            "current"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "rules"
       ],
-      "type": "object"
+      "description": "`ris rules`: the rules, or with `--render` what was rendered."
     },
     "Salt": {
       "description": "An event's salt: 32 lowercase hex characters.",
@@ -3190,6 +3668,17 @@
         "seat": {
           "type": "string"
         },
+        "stopped": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Stopped"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a seat not running that has run: why it stopped. Null while\nit runs and before its first run."
+        },
         "uncommitted": {
           "format": "uint32",
           "minimum": 0,
@@ -3217,7 +3706,8 @@
         "paused",
         "running",
         "activity",
-        "faults"
+        "faults",
+        "stopped"
       ],
       "type": "object"
     },
@@ -3323,13 +3813,31 @@
           "type": "string"
         },
         "signal": {
-          "description": "`outside`, `contract`, `diff` or `dependents`.",
+          "description": "`outside`, `contract`, `diff` or `dependents`; for a function,\nalso `reach`.",
           "type": "string"
         }
       },
       "required": [
         "signal",
         "reason"
+      ],
+      "type": "object"
+    },
+    "Site": {
+      "description": "An effect site in a function: its line and kind.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "line": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "line",
+        "kind"
       ],
       "type": "object"
     },
@@ -3345,6 +3853,57 @@
       },
       "required": [
         "seats"
+      ],
+      "type": "object"
+    },
+    "Step": {
+      "description": "A changed function one step from an effect.",
+      "properties": {
+        "direction": {
+          "description": "`triggers`: it calls the direct function; `feeds`: the direct\nfunction calls it.",
+          "type": "string"
+        },
+        "effects": {
+          "description": "The kinds of effect that function holds; sorted.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "function": {
+          "type": "string"
+        },
+        "path": {
+          "description": "The direct function, by file and name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "direction",
+        "path",
+        "function",
+        "effects"
+      ],
+      "type": "object"
+    },
+    "Stopped": {
+      "description": "Why a seat that is not running stopped, read from how its latest\nrun ended and from the log.",
+      "properties": {
+        "reason": {
+          "description": "`usage_limit`, `setup_fault`, `paused`, `nothing_left` or\n`ended`.",
+          "type": "string"
+        },
+        "resets": {
+          "description": "For `usage_limit`: when the limit resets, in the agent tool's\nown words; null when it did not say, and for any other reason.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reason",
+        "resets"
       ],
       "type": "object"
     },
@@ -3392,6 +3951,7 @@
         },
         {
           "additionalProperties": false,
+          "description": "`phase` is the phase open when the item was added, or null when\nnone was: the item then has no phase, which is the backlog.",
           "properties": {
             "checks": {
               "items": {
@@ -3413,7 +3973,14 @@
               "$ref": "#/$defs/ItemId"
             },
             "phase": {
-              "$ref": "#/$defs/PhaseId"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PhaseId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -3427,7 +3994,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "The person moved an unstarted item into a phase, or (with no\nphase) back to the backlog. An item's current phase is the last\nof its `ItemAdded` and its `ItemScoped` events; the phase it was\nadded in does not change.",
+          "description": "An item's phase tag changed: to the open phase, to a later phase\nby number (one not opened yet, which has the item when it\nopens), or to none, which is the backlog. Written when an item\nis tagged, when a phase opens with its tagged items moved on by\none, and when a phase closes, for each of its items left\nunsettled. An item's current phase is the last of its\n`ItemAdded` and its `ItemScoped` events; the phase it was added\nin does not change.",
           "properties": {
             "event": {
               "const": "item_scoped",
@@ -4019,6 +4586,17 @@
         "inbox": {
           "$ref": "#/$defs/Inbox"
         },
+        "next_phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextPhase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "With no phase open, the phase the next `ris phase open` opens\nand the items tagged for it; `null` with a phase open."
+        },
         "phase_state": {
           "anyOf": [
             {
@@ -4035,6 +4613,13 @@
         },
         "report": {
           "$ref": "#/$defs/Report"
+        },
+        "seats": {
+          "description": "Every seat: whether it is running, what it holds, and for one\nthat is not running why it stopped and what brings it back.",
+          "items": {
+            "$ref": "#/$defs/SummarySeat"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -4044,8 +4629,76 @@
         "ready",
         "all",
         "phase_state",
+        "next_phase",
         "carried_over",
-        "checks"
+        "checks",
+        "seats"
+      ],
+      "type": "object"
+    },
+    "SummarySeat": {
+      "description": "A seat as `ris summary` shows it.",
+      "properties": {
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Activity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a running seat: what it last did and how long ago."
+        },
+        "attended": {
+          "description": "An attended seat: the person runs it, and `ris up` does not\nstart it.",
+          "type": "boolean"
+        },
+        "claim": {
+          "description": "The item it holds; null when it is idle.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next": {
+          "description": "The command that brings a seat that is not running back; null\nwhile it runs, and for an attended seat.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "running": {
+          "description": "Its agent is running now. A run whose process is gone is not\nrunning, whatever the log says.",
+          "type": "boolean"
+        },
+        "seat": {
+          "type": "string"
+        },
+        "stopped": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Stopped"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a seat not running that has run: why it stopped, as\n`ris status` gives it. Null while it runs and before its first\nrun."
+        }
+      },
+      "required": [
+        "seat",
+        "role",
+        "running",
+        "claim",
+        "activity",
+        "stopped",
+        "attended",
+        "next"
       ],
       "type": "object"
     },
@@ -4066,7 +4719,7 @@
       "type": "object"
     },
     "Tally": {
-      "description": "What a phase came to: the items planned in it, the merges made while\nit was open (an item carried in from an earlier phase counts where\nit merged), and the items left unsettled, neither merged nor\nsuperseded, which the next phase inherits.",
+      "description": "What a phase came to: the items it opened with, the items planned\nin it, the merges made while it was open (an item carried in from an\nearlier phase counts where it merged), and the items left unsettled,\nneither merged nor superseded, which the next phase inherits.",
       "properties": {
         "carried_over": {
           "format": "uint",
@@ -4078,13 +4731,21 @@
           "minimum": 0,
           "type": "integer"
         },
+        "opened_with": {
+          "description": "The items tagged for the phase before it opened that it opened\nwith: those `ris phase open` brought in, not those it moved on.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
         "planned": {
+          "description": "The items added while the phase was open.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
         }
       },
       "required": [
+        "opened_with",
         "planned",
         "merged",
         "carried_over"
@@ -4220,10 +4881,13 @@
       "$ref": "#/$defs/Installed"
     },
     "data.item_add": {
-      "$ref": "#/$defs/ItemRef"
+      "$ref": "#/$defs/ItemAdded"
     },
     "data.item_bring-in": {
       "$ref": "#/$defs/BroughtIn"
+    },
+    "data.item_phase": {
+      "$ref": "#/$defs/ItemTagged"
     },
     "data.item_supersede": {
       "$ref": "#/$defs/Superseded"
@@ -4376,6 +5040,9 @@
             },
             {
               "$ref": "#/$defs/data.item_add"
+            },
+            {
+              "$ref": "#/$defs/data.item_phase"
             },
             {
               "$ref": "#/$defs/data.item_supersede"

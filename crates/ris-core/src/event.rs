@@ -84,16 +84,22 @@ pub enum Structure {
         /// Taken over the log's head at close, not over the rendering.
         report: Hash,
     },
+    /// `phase` is the phase open when the item was added, or null when
+    /// none was: the item then has no phase, which is the backlog.
     ItemAdded {
         item: ItemId,
-        phase: PhaseId,
+        phase: Option<PhaseId>,
         checks: Vec<CheckId>,
         depends_on: Vec<ItemId>,
     },
-    /// The person moved an unstarted item into a phase, or (with no
-    /// phase) back to the backlog. An item's current phase is the last
-    /// of its `ItemAdded` and its `ItemScoped` events; the phase it was
-    /// added in does not change.
+    /// An item's phase tag changed: to the open phase, to a later phase
+    /// by number (one not opened yet, which has the item when it
+    /// opens), or to none, which is the backlog. Written when an item
+    /// is tagged, when a phase opens with its tagged items moved on by
+    /// one, and when a phase closes, for each of its items left
+    /// unsettled. An item's current phase is the last of its
+    /// `ItemAdded` and its `ItemScoped` events; the phase it was added
+    /// in does not change.
     ItemScoped {
         item: ItemId,
         phase: Option<PhaseId>,

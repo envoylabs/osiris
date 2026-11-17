@@ -108,13 +108,27 @@ pub enum Refusal {
     /// An item is replaced by another item that is not itself replaced
     /// and does not depend, directly or through other items, on it.
     NotAReplacement { item: ItemId, by: ItemId },
-    /// An agent claims only the open phase's items; this one is in
-    /// another phase's backlog.
-    NotInOpenPhase { item: ItemId, phase: PhaseId },
+    /// An agent claims only the open phase's items; this one is tagged
+    /// for another phase, or for none (`phase` is then null).
+    NotInOpenPhase {
+        item: ItemId,
+        phase: Option<PhaseId>,
+    },
     /// Bringing an item into the phase is the person's to do.
     BringInIsForThePerson(ItemId),
     /// The item is already in the open phase.
     AlreadyInOpenPhase(ItemId),
+    /// An item is tagged for the open phase, a later one or none; this
+    /// phase is closed.
+    PhaseIsClosed(PhaseId),
+    /// The item already has this tag (`phase` null: none).
+    AlreadyTagged {
+        item: ItemId,
+        phase: Option<PhaseId>,
+    },
+    /// Moving an item into or out of the open phase is the person's to
+    /// do: it changes the scope of the work in hand.
+    ScopeIsForThePerson(ItemId),
 }
 
 impl Refusal {
@@ -218,6 +232,13 @@ impl Refusal {
                 "raise it with the person, who runs `ris item bring-in`".into()
             }
             Self::AlreadyInOpenPhase(_) => "nothing to do; `ris ready` offers it".into(),
+            Self::PhaseIsClosed(_) => {
+                "name the open phase, a later one by its number, or `none`".into()
+            }
+            Self::AlreadyTagged { item, .. } => format!("nothing to do; `ris show {item}`"),
+            Self::ScopeIsForThePerson(item) => {
+                format!("raise it with the person, who runs `ris item phase {item} <P-n|none>`")
+            }
         }
     }
 }
@@ -335,8 +356,14 @@ impl fmt::Display for Refusal {
             Self::NotAReplacement { item, by } => {
                 write!(f, "refused: {by} cannot replace {item}")
             }
-            Self::NotInOpenPhase { item, phase } => {
+            Self::NotInOpenPhase {
+                item,
+                phase: Some(phase),
+            } => {
                 write!(f, "refused: {item} is in {phase}, not the open phase")
+            }
+            Self::NotInOpenPhase { item, phase: None } => {
+                write!(f, "refused: {item} has no phase, so is not in the open one")
             }
             Self::BringInIsForThePerson(item) => {
                 write!(f, "refused: only the person brings {item} into the phase")
@@ -344,6 +371,20 @@ impl fmt::Display for Refusal {
             Self::AlreadyInOpenPhase(item) => {
                 write!(f, "refused: {item} is already in the open phase")
             }
+            Self::PhaseIsClosed(phase) => {
+                write!(f, "refused: {phase} is closed and takes no more items")
+            }
+            Self::AlreadyTagged {
+                item,
+                phase: Some(phase),
+            } => write!(f, "refused: {item} is already tagged for {phase}"),
+            Self::AlreadyTagged { item, phase: None } => {
+                write!(f, "refused: {item} already has no phase")
+            }
+            Self::ScopeIsForThePerson(item) => write!(
+                f,
+                "refused: only the person moves {item} into or out of the open phase"
+            ),
         }
     }
 }

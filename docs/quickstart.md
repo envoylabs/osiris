@@ -38,6 +38,40 @@ ris init --local
 listed in `.git/info/exclude`, which git never commits, and the rules
 the agents read go in `.osiris/OSIRIS.md`. `git status` is unchanged.
 
+A repository that commits its agents' rules file, with rules of its own
+beside those `ris` gives every project, keeps its own part in a file
+and renders the rules file from the two:
+
+```sh
+ris rules --render docs/project-rules.md --to AGENTS.md
+```
+
+The file is the rules `ris rules` prints, then the project's part as
+written, under a first line naming the command. Only you run it, since
+a seat never writes its own rules, and you run it once: after that the
+file is kept current for you. A seat merges a change to the project's
+part (or, in the osiris repository, to the rules themselves) and
+leaves the rules file alone, and `ris phase close` renders the file
+again into the closing merge when it is no longer what the two render,
+and says so in a line of its own. It finds the file by that first
+line, so nothing is configured, and it renders only where it makes the
+merge: with `merge_on_close = false`, or with the phase's work already
+on the main line, you render and commit the file yourself.
+
+Until the phase closes, the phase branch may hold a rules file that is
+behind its sources: no check a seat runs reads it, so a change to the
+rules never waits for you. To hold the main line to it, run the check
+there:
+
+```sh
+ris rules --render docs/project-rules.md --to AGENTS.md --check
+```
+
+It writes nothing, anyone may run it, and it exits 3 with the first
+line that differs when the file is not what the command would render.
+The osiris repository's own `AGENTS.md` is kept this way, and its CI
+runs the check on the main line.
+
 ## 2. Declare the harness
 
 `.osiris/config.toml` is the one file you write. It stays on this
@@ -135,6 +169,8 @@ ris item add "a review" --no-checks    # done on attached evidence instead
 ris import backlog.toml --dry-run      # a backlog file: validate,
 ris import backlog.toml                # then import
 ris item bring-in I-7                  # an unstarted item from the backlog, into this phase
+ris item add "later" --phase P-2       # planned for a phase not open yet
+ris item phase I-7 P-2                 # the same for an item there already; `none` untags it
 ```
 
 Every phase gets an item to bring the docs up to date, and `ris phase
@@ -142,15 +178,26 @@ close` waits for it (turn it off with `docs_item = false`). The
 osiris-onboard skill (`skills/osiris-onboard`) drafts the import file
 from an existing project's backlog.
 
-Seats work only the open phase's items. An item added while a phase is
-open is that phase's; one left unmerged when its phase closed is in the
-backlog. A seat's `ris ready` shows the open phase's items and nothing
-else, and `ris claim` refuses a backlog item, naming the command that
-brings it in. Your own `ris ready` lists the open phase's items first
-and the backlog after them, and `ris item bring-in I-n`, which only you
-may run, moves an item nobody has started into the open phase. The item
-keeps the phase it was added in for that phase's report, so a closed
-phase's tally does not change when one of its items moves.
+Seats work only the open phase's items. An item's phase is a tag: the
+open phase, a later one by its number, or none, which is the backlog.
+An item added while a phase is open is that phase's unless `--phase`
+says otherwise; one added with no phase open has none; and one left
+unmerged when its phase closes loses its tag. A seat's `ris ready`
+shows the open phase's items and nothing else, and `ris claim` refuses
+any other, naming the command that brings it in. Your own `ris ready`
+lists the open phase's items first and the rest after them.
+
+Planning needs no open phase. `ris item add --phase P-n` and `ris item
+phase I-n <P-n|none>` tag an item nobody has started, and `ris
+summary` with no phase open lists what is tagged for the next one.
+`ris phase open` opens with those items in it and lists them; with
+`--move-on` it moves their tags to the phase after instead. Tagging
+for a later phase is yours and an advisor seat's; a lead, builder or
+auditor adds only to the open phase or to the backlog, and moving an
+item into or out of the open phase (`ris item bring-in`, or `ris item
+phase`) is yours alone. The item keeps the phase it was added in for
+that phase's report, so a phase's tally counts the items added while
+it was open and does not change when one of them is tagged elsewhere.
 
 ## 4. Step two: bring it up
 
@@ -187,7 +234,11 @@ do, it says so.
 For each running seat, `ris status` shows what its agent last ran or
 said and how long ago its output last changed. A seat quiet for longer
 than `[runner] quiet_after_seconds` is marked possibly stuck; `ris logs
-<seat>` shows where it stopped.
+<seat>` shows where it stopped. For a seat that has run and is not
+running, it says why it stopped, beside the seat: nothing left to
+claim, paused by the person, a setup fault, the agent tool's usage
+limit (with the time it resets, when the tool says), or ended for any
+other ending, read from how its last run ended.
 
 A worktree is brought up to the phase branch only when that loses
 nothing: its branch has no commits of its own, its seat holds no claimed
@@ -231,12 +282,18 @@ records its commit; your next command (or `ris install`) builds that
 commit in a checkout outside the repository and installs it where `to`
 says, so you never run a seat's work in progress. A build that fails is
 reported once and leaves the last good program in place; `ris install`
-tries it again.
+tries it again. A phase is closed by that build and no older one: when
+`ris phase close` is itself the command that installs it, the close is
+refused with nothing touched and asks to be run again, since the
+closing merge carries what `ris` renders (the rules file). For the
+same reason a close run by any other `ris` than the one at `to` (an
+older one earlier on your `PATH`, one built by hand) is refused, and
+names the installed one.
 
 ## 5. Step three: review
 
 ```sh
-ris summary                            # the phase in one picture: its items and what they wait on
+ris summary                            # the phase in one picture: its state, each seat, its items and what they wait on
 ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
 ris map                                # the phase's change set drawn over the source files, as one page in the browser
 ris eli5 D-3                           # one decision's full case
@@ -273,7 +330,8 @@ out and names the command that shows it: `ris decide` for the open
 decisions, `ris report` for the report, the decisions taken, failed
 checks and hashes, and `ris summary --all` for the long view of every
 phase (the decision queue, all work in motion, the report and what is
-ready). With no phase open, the summary says so and how to open one.
+ready). With no phase open, the summary says so and how to open one,
+and lists the items tagged for the phase that opens next.
 
 Where the summary draws the phase's items, `ris map` draws what the
 phase did to the code. Its nodes are the repository's source files,
@@ -308,12 +366,37 @@ stands where there is one, and hovering shows both and the reasons.
 `.osiris/map.html` (which git ignores), replacing the last one, opens
 it in your browser and prints where it is; if the browser does not
 open, it says so and you open the file yourself. The page needs no
-network (d3 is inlined): hover a file for its path and numbers, drag
-it, scroll to zoom, and click it to read its diff for the phase in a
-pane beside the graph (click another file to swap it, Esc or the
-pane's button to close it). `ris map` also lists the changed files
-with their risk, the highest first; that list is all a seat gets, and
-all you get when the output is piped, since nothing is opened then.
+network (d3 is inlined) and has two views of the same files, switched
+in its header. It opens on the list: the changed files ranked by risk,
+the highest first, each with its lines added and removed and the
+reasons for its level. The graph is the other view: hover a file for
+its path and numbers, drag it, scroll to zoom. In either, click a file
+to read its diff for the phase in a pane beside it (click another file
+to swap it, Esc or the pane's button to close it). `ris map` also
+lists the changed files with their risk, the highest first; that list
+is all a seat gets, and all you get when the output is piped, since
+nothing is opened then. `ris map --list` prints the same list as the
+page's, with each file's reasons, and opens nothing.
+
+Inside a changed Rust, TypeScript, Go or Clojure file the map also
+finds the functions the phase changed and marks each line that touches
+a database, the filesystem, the network or a process, with the function
+it sits in and that function's level. It also follows calls one step:
+a changed function that calls a function touching the outside triggers
+that effect, and one called by such a function feeds it; each is
+listed with the function and effect it reaches. Calls are matched by
+name, so a common method name can flag more than it should. `ris map
+--list` prints a file's marked lines and its one-step functions under
+its reasons, and on the page a file with any expands to show them.
+Click one of those lines, or the page's calls view, to see one function
+laid out left to right as execution flows: what calls it, the function,
+what it calls, and the effects reached, each a box with its own lines,
+the phase's changes marked and its effect sites labelled. Click a box
+beside it to move there. The page carries the functions one call from
+a changed function in full; one call further, it names them only. What counts is a list of names per language that ships
+with `ris`; add your own (a module of your project that wraps the
+database, say) under `[map.effects.<language>]` in
+`.osiris/config.toml`. Files of other languages stay at file level.
 `ris map --html map.html` writes the page to a file you name and opens
 nothing, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the
@@ -348,17 +431,22 @@ ris phase close                        # merges phase/P-1 into main
 ```
 
 `ris phase close` merges what is merged into the main line and carries
-the rest over: an item not merged stays open, in the backlog, until you
-bring it into a later phase with `ris item bring-in`. The report it prints says how many items the phase planned, how
-many were merged while it was open, and how many carry over; `ris
-report` shows the same line for the open phase, as it would read if
-closed now.
+the rest over: an item not merged loses its phase tag and stays open,
+in the backlog, until you tag it for a later phase with `ris item
+phase` or bring it into the open one with `ris item bring-in`. The
+report it prints says how many items the phase opened with (those
+tagged for it before it opened), how many were added while it was
+open (planned), how many were merged while it was open, and how many
+carry over; `ris report` shows the same line for the open phase, as
+it would read if closed now.
 
 `ris down` kills nothing: each agent stops at its next claim, and
 worktrees and the log are kept. `ris up` after the next `ris phase
 open` brings everything back.
 
-`ris` makes commits of its own: the closing merge, the rebase inside a
+`ris` makes commits of its own: the closing merge (which carries the
+rules file rendered again, when the phase changed what it is rendered
+from), the rebase inside a
 seat's `ris merge`, and the rebase `ris up` does over a change to the
 rules file. Each needs a git identity. Where git has none, the command
 is refused before anything is touched and names what to run (`git

@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn cmd(dir: &Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_ris"));
@@ -71,22 +71,47 @@ fn a_watcher_sees_what_another_process_appends() {
             }
         }
     });
-    std::thread::sleep(Duration::from_millis(200));
+    let event = |line: String| -> (u64, serde_json::Value) {
+        let e: serde_json::Value = serde_json::from_str(&line).unwrap();
+        (e["seq"].as_u64().unwrap(), e["structure"]["event"].clone())
+    };
+    // When the watcher has started is not known from outside, so items
+    // are added until it prints one: those added before it started are
+    // not printed, and from the first it prints, every later one is.
+    let start = Instant::now();
+    let mut seen = Vec::new();
+    while seen.is_empty() {
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "the watcher printed nothing"
+        );
+        ok(&dir, &["item", "add", "probe"]);
+        if let Ok(line) = rx.recv_timeout(Duration::from_millis(100)) {
+            seen.push(event(line));
+        }
+    }
+    // The log's length now, one event a line, and two more to come.
+    let logged = String::from_utf8_lossy(&ok(&dir, &["watch", "--from", "1", "--once"]).stdout)
+        .lines()
+        .count() as u64;
     ok(&dir, &["item", "add", "first"]);
     ok(&dir, &["item", "add", "second"]);
-    let mut seen = Vec::new();
-    while seen.len() < 2 {
+    let last = logged + 2;
+    while seen.last().unwrap().0 < last {
         let line = rx
             .recv_timeout(Duration::from_secs(10))
             .expect("the watcher printed the new events");
-        let e: serde_json::Value = serde_json::from_str(&line).unwrap();
-        seen.push((e["seq"].as_u64().unwrap(), e["structure"]["event"].clone()));
+        seen.push(event(line));
     }
     let _ = child.kill();
     let _ = child.wait();
+    let first = seen[0].0;
+    assert!(first > 1, "the event before it started is not printed");
     assert_eq!(
         seen,
-        vec![(2, "item_added".into()), (3, "item_added".into())],
+        (first..=last)
+            .map(|seq| (seq, "item_added".into()))
+            .collect::<Vec<_>>(),
         "only the new events, in order"
     );
 

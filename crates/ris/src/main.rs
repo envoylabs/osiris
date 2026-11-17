@@ -11,7 +11,9 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use ris_core::command::{Choice, Command};
-use ris_core::ids::{Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, ItemId};
+use ris_core::ids::{
+    Actor, AgentName, CheckId, CommitHash, DecisionId, EvidenceId, ItemId, PhaseId,
+};
 use ris_core::primitives::{DecisionClass, MessageKind};
 use serde_json::json;
 
@@ -81,9 +83,24 @@ enum Cmd {
         follow: bool,
     },
     /// Print the agents' rules (what OSIRIS.md holds). Not listed in
-    /// help: named wherever it is needed.
+    /// help: named wherever it is needed. With `--render`, write a
+    /// rules file instead: these rules, then the project's own part.
     #[command(hide = true)]
-    Rules,
+    Rules {
+        /// The project's own part of the rules, a file in the
+        /// repository, by its relative path. The person's only: a seat
+        /// never writes its own rules.
+        #[arg(long, requires = "to")]
+        render: Option<PathBuf>,
+        /// The rules file to render into, by its relative path.
+        #[arg(long, requires = "render")]
+        to: Option<PathBuf>,
+        /// Write nothing: say whether the rules file is what the rules
+        /// and the project's part render, and exit 3 when it is not.
+        /// Anyone may run it.
+        #[arg(long, requires = "render")]
+        check: bool,
+    },
     /// Add an agent seat to .osiris/config.toml (the person's), or
     /// report a fault in your own seat's setup (`ris seat fault`).
     Seat {
@@ -208,6 +225,10 @@ enum Cmd {
         /// Write one self-contained page that draws the map here.
         #[arg(long, value_name = "FILE")]
         html: Option<PathBuf>,
+        /// Print the changed files ranked by risk, highest first, each
+        /// with its reasons, and open nothing.
+        #[arg(long, conflicts_with = "html")]
+        list: bool,
     },
     /// Where each seat is: role, worktree, branch, claim, commits ahead
     /// of and behind the phase branch, uncommitted changes.
@@ -270,8 +291,35 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum PhaseCmd {
-    Open { goal: String },
+    /// Open the next phase. The items tagged for it are in it, and are
+    /// listed.
+    Open {
+        goal: String,
+        /// Move the items tagged for this phase on to the one after it
+        /// instead, so this phase opens with none of them.
+        #[arg(long)]
+        move_on: bool,
+    },
+    /// Close the open phase. Its items that have not merged lose their
+    /// tag: they are in the backlog until tagged again.
     Close,
+}
+
+/// A phase tag as it is typed: `P-n`, or `none`.
+#[derive(Clone, Copy)]
+struct PhaseTag(Option<PhaseId>);
+
+impl std::str::FromStr for PhaseTag {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("none") {
+            return Ok(Self(None));
+        }
+        s.parse::<PhaseId>()
+            .map(|p| Self(Some(p)))
+            .map_err(|_| format!("`{s}` is not a phase: use P-n, or `none` for no phase"))
+    }
 }
 
 #[derive(Subcommand)]
@@ -288,6 +336,15 @@ enum ItemCmd {
     /// phase, so a seat may claim it (the person's only).
     BringIn {
         item: ItemId,
+    },
+    /// Tag an item nobody has started for a phase: the open one, a
+    /// later one by its number (it has the item when it opens), or
+    /// `none` for the backlog. The person's and the advisor's; a move
+    /// into or out of the open phase is the person's only.
+    Phase {
+        item: ItemId,
+        /// `P-n`, or `none`.
+        phase: PhaseTag,
     },
 }
 
@@ -391,6 +448,12 @@ struct ItemAdd {
     /// An item this one cannot start before. Repeatable.
     #[arg(long = "depends")]
     depends_on: Vec<ItemId>,
+    /// The phase to tag it for: the open one, a later one by its
+    /// number (the person's and the advisor's to name), or `none` for
+    /// the backlog. Without this, the open phase; none when no phase
+    /// is open.
+    #[arg(long)]
+    phase: Option<PhaseTag>,
 }
 
 #[derive(Subcommand)]
@@ -662,10 +725,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             },
         ));
     }
-    if let Cmd::Rules = cli.command {
+    if let Cmd::Rules { render: None, .. } = cli.command {
         return Ok(Output::of(
             ris::project::RULES.trim_end(),
-            &schema::Rules {
+            &schema::Rules::Text {
                 rules: ris::project::RULES.to_owned(),
             },
         ));
@@ -685,13 +748,109 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         && let Some(cfg) = &p.config.install
     {
         let l = p.load()?;
-        if let Some(line) = ris::install::catch_up(&p.root, cfg, &l.log) {
-            eprintln!("{line}");
+        match ris::install::catch_up(&p.root, cfg, &l.log) {
+            Some(Ok(line)) => {
+                eprintln!("{line}");
+                // The program running is older than the one just
+                // installed. A close commits to the main line (the
+                // closing merge, and the rules file rendered into it
+                // from the rules this program holds), so it is made by
+                // the build the phase's checks passed, never an older
+                // one. Nothing has been touched: running it again is
+                // the whole cost.
+                if matches!(
+                    cli.command,
+                    Cmd::Phase {
+                        action: PhaseCmd::Close
+                    }
+                ) {
+                    return Err(CliError::Other(
+                        "refused: this ris was older than the last merge, whose build has only now been installed; \
+                         the phase is closed by that build, since the closing merge carries what ris itself renders\n  \
+                         next: run `ris phase close` again"
+                            .into(),
+                    ));
+                }
+            }
+            Some(Err(warning)) => eprintln!("{warning}"),
+            None => {}
+        }
+        // The installed build being current says nothing about the
+        // program running: another ris (an older one earlier on PATH,
+        // one built by hand) would render the rules file from its own
+        // rules. A close is made by the installed program itself.
+        if matches!(
+            cli.command,
+            Cmd::Phase {
+                action: PhaseCmd::Close
+            }
+        ) && ris::install::is_installed(&p.root, cfg, std::env::current_exe().ok().as_deref())
+            == Some(false)
+        {
+            return Err(CliError::Other(format!(
+                "refused: this ris is not the installed one, and the phase is closed by the installed build, \
+                 since the closing merge carries what ris itself renders\n  \
+                 next: run `ris phase close` with the ris at {}",
+                cfg.to
+            )));
         }
     }
 
     match &cli.command {
-        Cmd::Init { .. } | Cmd::Rules | Cmd::Schema => unreachable!(),
+        Cmd::Init { .. } | Cmd::Schema => unreachable!(),
+
+        Cmd::Rules { render, to, check } => {
+            let (Some(source), Some(to)) = (render, to) else {
+                unreachable!("without --render the rules are printed above")
+            };
+            if *check {
+                let stale = ris::rules_file::stale(&cwd, source, to)?;
+                let (source, to) = (ris::rules_file::named(source)?, ris::rules_file::named(to)?);
+                if let Some(why) = stale {
+                    return Err(CliError::CheckFailed {
+                        lines: vec![
+                            why,
+                            format!(
+                                "  next: the person runs `ris rules --render {source} --to {to}` and commits the result"
+                            ),
+                        ],
+                    });
+                }
+                return Ok(Output::of(
+                    format!("{to} is what the rules and {source} render"),
+                    &schema::Rules::Checked {
+                        source,
+                        checked: to,
+                        current: true,
+                    },
+                ));
+            }
+            // A seat never writes its own rules: the person renders
+            // them, and reads the change before committing it.
+            if actor != Actor::Person {
+                return Err(CliError::Other(
+                    "refused: only the person renders a rules file; a seat never writes its own rules\n  \
+                     next: merge the change to the rules or to the project's part; `ris phase close` renders the file into the closing merge"
+                        .into(),
+                ));
+            }
+            let changed = ris::rules_file::write(&cwd, source, to)?;
+            let (source, to) = (ris::rules_file::named(source)?, ris::rules_file::named(to)?);
+            Ok(Output::of(
+                if changed {
+                    format!(
+                        "rendered {to} from the rules and {source}\n  next: read the change with `git diff {to}` and commit it"
+                    )
+                } else {
+                    format!("{to} is already what the rules and {source} render")
+                },
+                &schema::Rules::Rendered {
+                    source,
+                    rendered: to,
+                    changed,
+                },
+            ))
+        }
 
         Cmd::Worktree { seat } => {
             let path = make_worktree(&p, seat)?;
@@ -816,9 +975,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         }
 
         Cmd::Phase { action } => match action {
-            PhaseCmd::Open { goal } => {
+            PhaseCmd::Open { goal, move_on } => {
                 let goal = p.text("goal", goal)?;
-                let command = Command::PhaseOpen { goal };
+                let command = Command::PhaseOpen {
+                    goal,
+                    move_on: *move_on,
+                };
                 // Refusals first, so a refused open creates no branch.
                 let l = p.load()?;
                 ris_core::apply(&l.state, &command)?;
@@ -832,11 +994,40 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     ));
                 }
                 let branch = open_phase_branch(&p, l.state.next_phase_id())?;
+                // What was tagged for the phase, read before it opens:
+                // it opens with them, or their tags move on.
+                let tagged: Vec<ItemId> = l
+                    .state
+                    .tagged(l.state.next_phase_id())
+                    .map(|i| i.id)
+                    .collect();
                 let (l, _) = p.run(&command)?;
                 let phase = l.state.open_phase().expect("just opened").id;
                 let mut text = match &branch {
                     Some(b) => format!("opened {phase} on branch {b}"),
                     None => format!("opened {phase}"),
+                };
+                if !tagged.is_empty() {
+                    text.push_str(&if *move_on {
+                        format!(
+                            "\n  {} item(s) tagged for it moved on to {}:",
+                            tagged.len(),
+                            PhaseId(phase.0.saturating_add(1))
+                        )
+                    } else {
+                        format!("\n  {} item(s) tagged for it are in it:", tagged.len())
+                    });
+                    for id in &tagged {
+                        text.push_str(&format!(
+                            "\n    {id} {}",
+                            l.text(l.state.items[id].at, "goal")
+                        ));
+                    }
+                }
+                let (brought_in, moved_on) = if *move_on {
+                    (Vec::new(), tagged)
+                } else {
+                    (tagged, Vec::new())
                 };
                 // The standing rule: every phase ends with the docs
                 // describing what it built.
@@ -846,6 +1037,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         goal: p.text("goal", DOCS_GOAL)?,
                         checks: p.checks.for_item(None),
                         depends_on: Vec::new(),
+                        tag: ris_core::command::Tag::Open,
                     })?;
                     let id = *l.state.items.keys().last().expect("just added");
                     text.push_str(&format!(
@@ -867,6 +1059,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         branch,
                         docs_item: docs,
                         preflight: missing,
+                        brought_in,
+                        moved_on,
                     },
                 ))
             }
@@ -885,7 +1079,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 // The docs item, if this phase has one, is merged (or
                 // superseded) before the phase closes.
                 if let Some(docs) = l.state.items.values().find(|i| {
-                    i.phase == phase_id
+                    i.phase == Some(phase_id)
                         && l.text(i.at, "goal") == DOCS_GOAL
                         && !matches!(
                             i.state,
@@ -901,15 +1095,24 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 }
                 let closing = closing_merge(&mut p, phase_id, &goal)?;
                 let (l, events) = p.run(&Command::PhaseClose)?;
-                let closed = events.last().expect("close emits one event");
+                // The close, then one event for each item it untagged.
+                let closed = events.first().expect("close emits its event first");
                 let report = match &closed.structure {
                     ris_core::event::Structure::PhaseClosed { report, .. } => *report,
                     _ => unreachable!(),
                 };
+                let untagged = events.len() - 1;
+                let left = if untagged > 0 {
+                    format!(
+                        "\n{untagged} item(s) not merged have no phase now: tag one for a phase with `ris item phase <item> <P-n>`"
+                    )
+                } else {
+                    String::new()
+                };
                 let (text, phase) = render::report_data(&l);
                 Ok(Output::of(
                     format!(
-                        "{text}\n{closing}\nthe change set as a map of the source: `ris map`, or `ris map --html <file>`"
+                        "{text}\n{closing}{left}\nthe change set as a map of the source: `ris map`, or `ris map --html <file>`"
                     ),
                     &schema::PhaseClosed {
                         report,
@@ -930,8 +1133,29 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         )));
                     }
                 }
+                use ris_core::command::Tag;
+                let tag = match a.phase {
+                    None => Tag::Open,
+                    Some(PhaseTag(None)) => Tag::None,
+                    Some(PhaseTag(Some(phase))) => Tag::Phase(phase),
+                };
+                // A writing seat or an auditor adds to the phase in
+                // hand or to the backlog; planning a later phase is the
+                // person's and the advisor's.
+                if let (Tag::Phase(phase), Actor::Agent(seat)) = (tag, &actor)
+                    && let Some(role) = p.config.agents.get(&seat.0).map(|a| a.role)
+                    && role != ris::config::Role::Advisor
+                    && p.load()?.state.open_phase().map(|o| o.id) != Some(phase)
+                {
+                    return Err(CliError::RoleForbids {
+                        seat: seat.0.clone(),
+                        role,
+                        what: ris::project::PLANS_PHASES,
+                    });
+                }
                 let (l, _) = p.run(&Command::ItemAdd {
                     goal,
+                    tag,
                     checks: p.checks.for_item(if a.no_checks {
                         Some(&[])
                     } else if a.checks.is_empty() {
@@ -942,9 +1166,43 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     depends_on: a.depends_on.clone(),
                 })?;
                 let id = *l.state.items.keys().last().expect("just added");
+                let phase = l.state.items[&id].phase;
+                let open = l.state.open_phase().map(|o| o.id);
+                // Where it went is said when that is not the open phase.
+                let text = match phase {
+                    Some(_) if phase == open => format!("added {id}"),
+                    Some(phase) => {
+                        format!("added {id}, tagged for {phase}, which has it when it opens")
+                    }
+                    None => format!(
+                        "added {id} with no phase (the backlog)\n  \
+                         next: tag it for a phase with `ris item phase {id} <P-n>`"
+                    ),
+                };
+                Ok(Output::of(text, &schema::ItemAdded { item: id, phase }))
+            }
+            ItemCmd::Phase { item, phase } => {
+                let (l, _) = p.run(&Command::Tag {
+                    item: *item,
+                    phase: phase.0,
+                    actor: actor.clone(),
+                })?;
+                let open = l.state.open_phase().map(|o| o.id);
+                let text = match phase.0 {
+                    Some(phase) if Some(phase) == open => {
+                        format!("{item} is in {phase}, the open phase")
+                    }
+                    Some(phase) => {
+                        format!("{item} tagged for {phase}, which has it when it opens")
+                    }
+                    None => format!("{item} has no phase (the backlog)"),
+                };
                 Ok(Output::of(
-                    format!("added {id}"),
-                    &schema::ItemRef { item: id },
+                    text,
+                    &schema::ItemTagged {
+                        item: *item,
+                        phase: phase.0,
+                    },
                 ))
             }
             ItemCmd::Supersede { item, by } => {
@@ -966,7 +1224,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     item: *item,
                     actor: actor.clone(),
                 })?;
-                let phase = l.state.items[item].phase;
+                let phase = l.state.open_phase().expect("bring-in needs one").id;
                 Ok(Output::of(
                     format!("{item} brought into {phase}"),
                     &schema::BroughtIn { item: *item, phase },
@@ -1544,30 +1802,36 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 .filter(|seat| run_alive(&p, &seat.0))
                 .cloned()
                 .collect();
-            Ok(render::summary(&l, &actor, *all, closed, &running))
+            let seats = ris::status::summary_seats(&p, &l, &|seat| run_alive(&p, seat));
+            Ok(render::summary(&l, &actor, *all, closed, &running, seats))
         }
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 
-        Cmd::Map { phase, html } => {
+        Cmd::Map { phase, html, list } => {
             let l = p.load()?;
             let range = ris::map::range(&p, &l, *phase)?;
             let map = ris::map::build(&p, &l, &range)?;
             let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
-            if let Some(file) = html {
-                ris::map::output(map, ris::map::Show::Write(file))
-            } else if ris::map::opens_page(&actor, cli.json, false, terminal) {
-                let file = p.root.join(ris::project::DIR).join(ris::map::PAGE_FILE);
-                ris::map::output(
-                    map,
-                    ris::map::Show::Open {
-                        file: &file,
-                        shown: &shown_beside(&p, &file),
-                        opener: &ris::map::Opener::platform(),
-                    },
-                )
-            } else {
-                ris::map::output(map, ris::map::Show::Text)
+            use ris::map::{Form, Show};
+            match (
+                ris::map::form(&actor, cli.json, html.is_some(), *list, terminal),
+                html,
+            ) {
+                (Form::Write, Some(file)) => ris::map::output(map, Show::Write(file)),
+                (Form::Open, _) => {
+                    let file = p.root.join(ris::project::DIR).join(ris::map::PAGE_FILE);
+                    ris::map::output(
+                        map,
+                        Show::Open {
+                            file: &file,
+                            shown: &shown_beside(&p, &file),
+                            opener: &ris::map::Opener::platform(),
+                        },
+                    )
+                }
+                (Form::List, _) => ris::map::output(map, Show::List),
+                _ => ris::map::output(map, Show::Text),
             }
         }
 
@@ -2083,6 +2347,18 @@ fn forbidden_by_role(p: &Project, actor: &Actor, command: &Cmd) -> Result<(), Cl
             "record a risk judgement: an auditor does, as it reviews the phase",
         );
     }
+    // Tagging an item for a phase is planning: the person's, and the
+    // advisor's beside them.
+    if let (
+        Cmd::Item {
+            action: ItemCmd::Phase { .. },
+        },
+        Some(role),
+    ) = (command, role_of(&name.0))
+        && role != Role::Advisor
+    {
+        return refuse(&name.0, role, ris::project::PLANS_PHASES);
+    }
     match role_of(&name.0) {
         Some(Role::Auditor) => match command {
             Cmd::Claim { .. } => refuse(&name.0, Role::Auditor, "claim items"),
@@ -2113,7 +2389,8 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
         | Cmd::Status
         | Cmd::Verify
         | Cmd::Eli5 { .. }
-        | Cmd::Rules
+        | Cmd::Rules { render: None, .. }
+        | Cmd::Rules { check: true, .. }
         | Cmd::Logs { .. }
         | Cmd::Log { .. }
         | Cmd::Watch { .. }
@@ -2128,7 +2405,7 @@ fn advisor_forbids(command: &Cmd) -> Option<&'static str> {
             action: SeatCmd::Fault { .. },
         }
         | Cmd::Item {
-            action: ItemCmd::Add(_),
+            action: ItemCmd::Add(_) | ItemCmd::Phase { .. },
         }
         | Cmd::Decision {
             action: DecisionCmd::Explain(_),
@@ -2856,7 +3133,8 @@ fn logs(p: &Project, seat: &str, follow: bool, json: bool) -> Result<Output, Cli
 }
 
 /// `ris logs` with no seat: every configured seat's latest run, each
-/// line prefixed with its seat as `docker compose logs` does. Followed,
+/// line prefixed with its seat as `docker compose logs` does, the
+/// prefix in the seat's own colour when styling is on. Followed,
 /// each seat is read from where it was left, a seat's newer run is
 /// picked up when it starts, and it ends once no seat is running and
 /// what they wrote has been read.
@@ -2895,7 +3173,10 @@ fn logs_all(p: &Project, follow: bool, json: bool) -> Result<Output, CliError> {
                     continue;
                 };
                 for part in shown.lines() {
-                    let prefixed = format!("{seat:<width$} | {part}");
+                    // The prefix takes the seat's colour, when styling
+                    // is on; the name stays in it either way.
+                    let prefix = ris::style::seat(seat, &format!("{seat:<width$} |"));
+                    let prefixed = format!("{prefix} {part}");
                     let line = schema::SeatLine {
                         seat: seat.clone(),
                         line: part.to_owned(),
@@ -3507,9 +3788,13 @@ fn closing_merge(
             let _ = git(&p.root, &["switch", "--quiet", &here]);
         }
     };
+    // Where the main line stands before the merge. The merge commit is
+    // amended when a rules file is rendered into it, so the way back
+    // is to this commit by name.
+    let before = git(&p.root, &["rev-parse", "HEAD"]).map_err(CliError::Other)?;
     let undo = |p: &Project| {
         let _ = git(&p.root, &["merge", "--abort"]);
-        let _ = git(&p.root, &["reset", "--quiet", "--hard", "ORIG_HEAD"]);
+        let _ = git(&p.root, &["reset", "--quiet", "--hard", &before]);
         back(p);
     };
     let message = format!("chore: close {phase}: {goal}");
@@ -3525,6 +3810,20 @@ fn closing_merge(
             e.lines().next().unwrap_or("merge failed")
         )));
     }
+    // A rendered rules file is rendered again into the merge, so a
+    // change the phase made to the rules or to the project's part
+    // reaches the file the seats read with no step of its own, and the
+    // main line never takes a rules file that is not current.
+    let rendered = match render_rules_into_merge(&p.root) {
+        Ok(rendered) => rendered,
+        Err(e) => {
+            undo(p);
+            return Err(CliError::Other(format!(
+                "refused: the rules file could not be rendered into the closing merge ({e}); \
+                 the merge was undone and the phase stays open"
+            )));
+        }
+    };
     // The full checks on the merged result, in the main worktree.
     let mut failed = Vec::new();
     let names: Vec<String> = p.checks.checks.keys().cloned().collect();
@@ -3552,13 +3851,34 @@ fn closing_merge(
         false
     };
     Ok(format!(
-        "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}{}",
+        "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}{}{}",
         if deleted {
             format!("; {branch} deleted")
         } else {
             String::new()
-        }
+        },
+        rendered
+            .iter()
+            .map(|(to, source)| format!(
+                "\nclosing merge: rendered {to} from the rules and {source}, which the phase changed; the merge carries it"
+            ))
+            .collect::<String>()
     ))
+}
+
+/// Render again each rendered rules file in the merged tree at `root`,
+/// and amend the merge commit with those that changed. Returns each
+/// file that changed, with its source.
+fn render_rules_into_merge(root: &std::path::Path) -> Result<Vec<(String, String)>, String> {
+    let rendered = ris::rules_file::rerender(root).map_err(|e| e.to_string())?;
+    if rendered.is_empty() {
+        return Ok(rendered);
+    }
+    let mut add = vec!["add", "--"];
+    add.extend(rendered.iter().map(|(to, _)| to.as_str()));
+    git(root, &add)?;
+    git(root, &["commit", "--quiet", "--amend", "--no-edit"])?;
+    Ok(rendered)
 }
 
 fn phase_branch_name(phase: ris_core::ids::PhaseId) -> String {

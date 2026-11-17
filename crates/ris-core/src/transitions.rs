@@ -40,6 +40,9 @@ pub enum CommandKind {
     /// The person bringing an item that has not been started from the
     /// backlog into the open phase.
     BringIn,
+    /// Tagging an item that has not been started for the open phase, a
+    /// later phase, or none.
+    Tag,
     /// The person pausing seats, or resuming them.
     Pause,
     Resume,
@@ -78,6 +81,7 @@ impl CommandKind {
         Self::Explain,
         Self::Supersede,
         Self::BringIn,
+        Self::Tag,
         Self::Pause,
         Self::Resume,
         Self::RaiseAction,
@@ -178,6 +182,9 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         // open phase; its state does not change, only its phase.
         (S::Ready, C::BringIn, Move::Stay),
         (S::Blocked, C::BringIn, Move::Stay),
+        // And tagged for another phase, or for none.
+        (S::Ready, C::Tag, Move::Stay),
+        (S::Blocked, C::Tag, Move::Stay),
         // A person action that blocks an item sets it aside, claimed or
         // not, as a substantive decision does; one more blocker on a
         // blocked item leaves it blocked. Done, it returns the item to
@@ -197,6 +204,9 @@ pub const PHASE: &[(PhaseStateKind, CommandKind, Move<PhaseStateKind>)] = {
     use PhaseStateKind as S;
     &[
         (S::Open, C::ItemAdd, Move::Stay),
+        // An item is added whether or not a phase is open: with none
+        // open it has no phase, or is tagged for a later one.
+        (S::Closed, C::ItemAdd, Move::Stay),
         (S::Open, C::PhaseClose, Move::To(S::Closed)),
         (S::Closed, C::PhaseOpen, Move::To(S::Open)),
     ]

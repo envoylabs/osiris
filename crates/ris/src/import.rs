@@ -194,6 +194,7 @@ pub fn plan(
         }
         if let Some(goal) = goal {
             commands.push(Command::ItemAdd {
+                tag: ris_core::command::Tag::Open,
                 goal,
                 checks: checks.for_item(it.checks.as_deref()),
                 depends_on: depends,

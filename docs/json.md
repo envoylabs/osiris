@@ -77,8 +77,10 @@ line of output per envelope, and ends once no seat is running; without
   that one of them waits on, and the open decisions and actions
   attached to any of those, whatever phase raised them; `unlinked`
   counts the nodes with no edge, which are listed all the same.
-  `carried_over` counts the unmerged `items` and open `decisions` from
-  earlier phases that are left out. `phase_state` is where the open
+  `carried_over` counts the unmerged `items` and open `decisions`
+  outside the open phase that are left out. `next_phase` is `null`
+  with a phase open; with none open it is the `phase` that opens next
+  and the `items` tagged for it. `phase_state` is where the open
   phase stands, `null` with no phase open: `line` (the one line the
   text output opens with), `items` (the phase's items, superseded ones
   left out), `merged`, `in_progress` (claimed, or done and not yet
@@ -90,27 +92,55 @@ line of output per envelope, and ends once no seat is running; without
   `ready_to_close` (every item merged, and at least one). `merged`,
   `in_progress`, `set_aside` and `not_started` add up to `items`. It
   is the open phase's whether or not `--all` is given, though only the
-  default text output shows the line. `all` says whether `--all` was
+  default text output shows the line. `seats` is every configured
+  seat, as the text shows them under that line: `seat`, `role`,
+  `running` (its agent is running now; a run whose process is gone is
+  not), `claim` (the item it holds, or `null`), `activity` (for a
+  running seat, as in `ris status`), `stopped` (for a seat that has
+  run and is not running, why, as in `ris status`), `attended` (the
+  person runs it, and `ris up` does not start it) and `next` (the
+  command that brings a seat that is not running back; `null` while
+  it runs and for an attended seat). `all` says whether `--all` was
   given, in which case nothing is left out and the `graph` is the work
   in motion in every phase: open decisions, open actions and unmerged
   items, where only nodes with an edge are listed.
 - `ris report` (and `phase` in `ris phase close`'s data): `tally`,
-  the phase's `planned` items, the `merged` count (merges made while it
+  the items the phase `opened_with` (those tagged for it before it
+  opened that `ris phase open` brought in, not those it moved on), the
+  phase's `planned` items (added while it was open), the `merged` count (merges made while it
   was open, carried-in items included) and `carried_over` (items, from
   any phase up to it, neither merged nor superseded; for an open phase,
   what would carry over if it closed now).
 - `ris ready`: for a seat, the open phase's items it may claim and no
-  other. For the person, those first and then the backlog: the
-  unmerged items of earlier phases, which no seat may claim until the
-  person brings them in.
+  other. For the person, those first and then every other item that
+  could be claimed were it in the phase: the backlog, and what is
+  tagged for later phases.
+- An item's `phase`, wherever an item record appears, is its tag: the
+  phase it is in, a later phase it is planned for, or `null` when it
+  has none, which is the backlog. `ris item add` gives `item` and the
+  `phase` it was tagged for: the open phase, or what `--phase P-n` or
+  `--phase none` named, or `null` with no phase open. `ris item phase
+  I-n <P-n|none>` gives the same two keys for an item nobody has
+  started. The event `item_added` carries the phase open when the item
+  was added, `null` when none was; every later change of tag is an
+  `item_scoped` event (with `item` and `phase`, `null` for none): one
+  for a tag given at `ris item add` that is not the open phase, one
+  for `ris item phase` and `ris item bring-in`, one per item whose tag
+  `ris phase open --move-on` moves to the next phase, and one per
+  unmerged item of a phase when it closes, after its `phase_closed`
+  event. An item's current phase is the phase of the last of its
+  `item_added` and `item_scoped` events; the phase it was added in does
+  not change, and a phase's `tally` counts by that. The refusals:
+  `{"phase_is_closed": "P-n"}` for a tag naming a closed phase,
+  `{"already_tagged": {"item", "phase"}}`,
+  `{"scope_is_for_the_person": "I-n"}` for a seat moving an item into
+  or out of the open phase, and `role_forbids` for a seat that is not
+  an advisor tagging for a phase that is not open.
 - `ris item bring-in I-n`, the person's only: `item` and the open
-  `phase` it is now in. It writes the event `item_scoped` (with `item`
-  and `phase`). An item's current phase is the phase of the last of
-  its `item_added` and `item_scoped` events; the phase it was added in
-  does not change, and a phase's `tally` counts by that. A claim of an
-  item outside the open phase is refused with
-  `{"not_in_open_phase": {"item", "phase"}}`, and an agent's bring-in
-  with `{"bring_in_is_for_the_person": "I-n"}`.
+  `phase` it is now in. A claim of an item outside the open phase is
+  refused with `{"not_in_open_phase": {"item", "phase"}}`, `phase`
+  being `null` when the item has none, and an agent's bring-in with
+  `{"bring_in_is_for_the_person": "I-n"}`.
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
 - `ris audit`: `queue`, the open phase's done and merged items the
@@ -126,8 +156,18 @@ line of output per envelope, and ends once no seat is running; without
   since its output last changed, and `stuck` (quiet for longer than
   `[runner] quiet_after_seconds`); null otherwise; and `faults`, the
   setup faults the seat reported with `ris seat fault` since its latest
-  run started, oldest first.
-- `ris phase open`: `phase`, `branch`, `docs_item` and `preflight`, what
+  run started, oldest first; and `stopped`, for a seat not running that
+  has run, why it stopped (null otherwise): `reason`, the first of
+  `usage_limit` (the agent tool's last result says it hit its usage
+  limit), `setup_fault` (it reported one in that run), `paused` (by the
+  person), `nothing_left` (its run finished normally holding no item)
+  and `ended` (anything else: killed, an error, or a stop while holding
+  an item); and `resets`, for `usage_limit`, when the limit resets in
+  the tool's own words, or null.
+- `ris phase open`: `brought_in`, the items that were tagged for the
+  phase and are in it, or `moved_on`, the same items when `--move-on`
+  moved their tags to the phase after (the other is empty); and
+  `phase`, `branch`, `docs_item` and `preflight`, what
   the writing seats would lack to run the checks, each
   `{"kind": "program", "check", "program"}`, `{"kind": "write", "tool",
   "path"}` or `{"kind": "network", "tool", "host"}`; empty when nothing
@@ -135,6 +175,14 @@ line of output per envelope, and ends once no seat is running; without
   same findings, as a `config` error, before it starts any seat.
 - `ris show A-n`: a person action, with `blocks`, `informs`, `state`
   and, when it has one, its `check`.
+- `ris rules`: `rules`, the agents' rules as text. With `--render
+  <project part> --to <rules file>`, the person's only, it writes the
+  rules file (those rules, then the project's part) and gives `source`
+  and `rendered`, the two paths as given, and `changed`, whether the
+  file differed from what was there. With `--check` added, anyone's, it
+  writes nothing and gives `source`, `checked` (the rules file) and
+  `current`, which is true: a file that is not what the two render is
+  the error `check_failed`, exit status 3.
 - `ris decide` with no decision: `queue`, the open substantive
   decisions oldest first, whatever phase raised them, each entry the
   `data` that `ris eli5 D-n` gives (`decision`, and `explanation` or
@@ -219,9 +267,10 @@ document, as JSON in the element `<script id="map-data"
 type="application/json">`, and draws nothing that is not in it, so any
 other renderer draws the same map from either source. `ris map` with
 no flags, run by the person at a terminal, writes that page to
-`.osiris/map.html` and opens it in the browser; with `--json`, run by
-a seat, or with output that is not a terminal, nothing is written or
-opened. It follows the
+`.osiris/map.html` and opens it in the browser; with `--json` or
+`--list`, run by a seat, or with output that is not a terminal,
+nothing is written or opened. `ris map --list --json` gives the same
+document as `ris map --json`. It follows the
 rule of the rest of format 1: keys are added, never removed, renamed
 or reshaped.
 
@@ -243,8 +292,18 @@ or reshaped.
          {"signal": "outside", "reason": "touches the outside: filesystem"},
          {"signal": "dependents", "reason": "4 other files depend on it"}]},
        "judged": {"level": "high", "why": "writes the store with no lock", "seat": "wren"}
-     }}
+     },
+     "functions": [
+       {"name": "Store::save", "start": 40, "end": 58, "added": 6, "removed": 1,
+        "effects": ["filesystem"], "direct": true,
+        "risk": {"level": "low", "signals": [
+          {"signal": "outside", "reason": "touches the outside: filesystem"}]}}
+     ],
+     "marks": [
+       {"line": 47, "kind": "filesystem", "function": "Store::save", "risk": "low"}
+     ]}
   ],
+  "ranked": ["src/store.rs"],
   "edges": [
     {"from": "src/store.rs", "to": "src/wire.rs", "kind": "use"}
   ],
@@ -308,6 +367,54 @@ or reshaped.
   `risk.level` is the level that stands, and the one to draw: the
   judgement's where there is one, and the computed one otherwise. A
   closed phase's map keeps its judgements.
+- `functions` and `marks` look inside a changed file of Rust,
+  TypeScript, Go or Clojure, read from its syntax tree at `tip` and
+  its diff; they are null for any other language, an unchanged or
+  deleted file, and when `base` is null. `functions` are the
+  functions the phase changed (a line added in one, or removed from
+  it), in the order they start: `name` as a reader finds it (a method
+  with its type in front), `start` and `end` lines at `tip`, the lines
+  `added` in it and `removed` from it, the kinds of `effects` on its
+  lines, whether it is `direct` (holds an effect site itself), the
+  functions of the repository it `calls` (`path` and `function`), its
+  `steps` one step from an effect, and its `risk`, computed from the
+  same signals as a file's (its effects and the size of its change),
+  with one point more and the signal `reach` when it has a step, as
+  `level` and `signals`. A step is a direct function it calls
+  (`direction` `triggers`) or one that calls it (`feeds`), with that
+  function's `path`, `function` and `effects`. Calls are resolved by
+  name over every file on the map of those languages: a call into a
+  module the repository does not hold (a standard library, a package,
+  another crate) is left out, a name with a type in front means that
+  method, and a bare name (a method called on a value, say) means every
+  function and method so named, so the hint errs toward flagging. `marks` are the
+  lines that touch the outside (an effect site), on a line the phase
+  changed or in a function it changed, by line: `line` at `tip`,
+  `kind` (`database`, `filesystem`, `network` or `process`), the
+  innermost `function` it sits in, and `risk`, that function's level,
+  which is the line's (null outside any function, where the file's
+  stands). A file's own `risk` does not change with them. An effect
+  site is a name the code uses, its imports and aliases resolved
+  (`std::fs::read`, `fs.readFile`, `os.ReadFile`,
+  `clojure.java.io/file`), that is one of the language's patterns or
+  lies under one: a list shipped per language, extended per project in
+  `[map.effects.<language>]` of `.osiris/config.toml`. A method called
+  on a value names no module and is not read.
+- `call_graph` holds the calls around the phase's changed functions,
+  for a view of one function: `functions`, sorted by `path` and then
+  `start`, are every changed function and every function one call from
+  one, in full, and the functions one call further, by name only. Each
+  has an `id` (`path:start`), its `path`, `name`, `start` and `end`,
+  whether it is `direct` and its `effects`, its effect `sites` (`line`
+  and `kind`), the lines of it the phase added (`changed`), its text at
+  `tip` as `lines` (one entry a line from `start`), and the ids of the
+  functions it `calls` and its `callers`. A function given by name only
+  has `lines` null and no sites, calls or callers. Empty when no file is
+  read inside.
+- `ranked` is the path of every changed node, each once, in the order
+  to read them: the highest `risk.level` first, then the greatest
+  `weight`, then by `path`. It is the order `ris map --list` prints
+  and the page lists, so neither ranks the files itself.
 - `edges` are how the code connects, each from the file that names the
   other, sorted. `kind` is the kind of line that makes the edge. For
   Rust: `mod` (a `mod name;` line, to the module's file) and `use` (a

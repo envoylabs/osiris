@@ -294,7 +294,7 @@ impl Graph {
                 id: n.to_string(),
                 state: state(l, *n),
                 phase: match n {
-                    Node::Item(i) => Some(l.state.items[i].phase),
+                    Node::Item(i) => l.state.items[i].phase,
                     _ => None,
                 },
             })
@@ -384,8 +384,14 @@ fn label(l: &Loaded, n: Node) -> String {
         if let ItemState::Claimed { agent } = &item.state {
             note.push_str(&format!(" ({agent})"));
         }
-        if l.state.open_phase().is_some_and(|p| p.id != item.phase) {
-            note.push_str(&format!(" [{}]", item.phase));
+        if l.state
+            .open_phase()
+            .is_some_and(|p| Some(p.id) != item.phase)
+        {
+            note.push_str(&match item.phase {
+                Some(phase) => format!(" [{phase}]"),
+                None => " [no phase]".to_owned(),
+            });
         }
     }
     format!("{n}  {}{note}  {text}", state(l, n))

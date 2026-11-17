@@ -7,9 +7,11 @@
 mod common;
 
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -126,10 +128,61 @@ impl Drop for Rig {
     }
 }
 
+/// A running `ris` whose output is read line by line as it comes, so a
+/// test can wait until it has printed something.
+struct Follower {
+    child: std::process::Child,
+    lines: mpsc::Receiver<String>,
+    out: String,
+}
+
+impl Follower {
+    fn new(mut child: std::process::Child) -> Self {
+        let stdout = child.stdout.take().unwrap();
+        let (tx, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                if tx.send(line.unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            child,
+            lines,
+            out: String::new(),
+        }
+    }
+
+    /// Read output until `f` holds of all of it, or fail after a while.
+    fn until(&mut self, what: &str, f: impl Fn(&str) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !f(&self.out) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.lines.recv_timeout(left) {
+                Ok(line) => {
+                    self.out.push_str(&line);
+                    self.out.push('\n');
+                }
+                Err(_) => panic!("timed out: {what}; printed:\n{}", self.out),
+            }
+        }
+    }
+
+    /// Everything it printed, once it has exited.
+    fn finish(mut self) -> String {
+        self.out.extend(self.lines.iter().map(|l| l + "\n"));
+        self.child.wait().unwrap();
+        self.out
+    }
+}
+
 /// The fake agent prints who it is and waits until a file appears, so
-/// the test decides when each agent stops.
+/// the test decides when each agent stops. As it exits it leaves a
+/// file saying so, which a test can wait for.
 const WAITING_AGENT: &str = "#!/bin/sh\nprintf 'hello from %s\\n' \"$RIS_AGENT\"\n\
-    while [ ! -f \"$RIS_ROOT/.osiris/stop-$RIS_AGENT\" ]; do sleep 0.05; done\nexit 0\n";
+    while [ ! -f \"$RIS_ROOT/.osiris/stop-$RIS_AGENT\" ]; do sleep 0.05; done\n\
+    : > \"$RIS_ROOT/.osiris/gone-$RIS_AGENT\"\nexit 0\n";
 
 /// `worktrees` in the configuration places a builder's worktree; one
 /// inside the main checkout leaves that checkout clean.
@@ -581,6 +634,11 @@ fn up_clears_a_run_whose_process_is_gone_and_starts_it_again() {
     rig.until("rook's run names its process", |_| {
         fs::read_to_string(&lock).is_ok_and(|s| !s.trim().is_empty())
     });
+    // The lock names the process before it starts the agent: wait for
+    // the agent's first line, so the kill leaves an agent behind.
+    rig.until("rook's agent has started", |r| {
+        r.ok(None, &["logs", "rook"]).contains("hello from rook")
+    });
     let pid = fs::read_to_string(&lock).unwrap().trim().to_owned();
     assert!(
         Command::new("kill")
@@ -592,9 +650,11 @@ fn up_clears_a_run_whose_process_is_gone_and_starts_it_again() {
     // Its agent is left behind; let it go too, then clear the way for
     // the next one.
     let stop = rig.repo.join(".osiris/stop-rook");
+    let gone = rig.repo.join(".osiris/gone-rook");
     fs::write(&stop, "").unwrap();
-    std::thread::sleep(Duration::from_millis(500));
+    rig.until("rook's left-behind agent exits", |_| gone.exists());
     fs::remove_file(&stop).unwrap();
+    fs::remove_file(&gone).unwrap();
     assert_eq!(
         rook_runs(&rig, "run_stopped"),
         0,
@@ -657,6 +717,119 @@ fn summary_says_when_no_seat_is_running() {
     let s = state(&rig);
     assert!(s["line"].as_str().unwrap().ends_with(none), "{s}");
     assert_eq!(rig.events("run_stopped").len(), 0, "nothing was recorded");
+    // The seat's own line says it stopped and what starts it again,
+    // though the log still has it as running.
+    let text = rig.ok(None, &["summary"]);
+    assert!(
+        text.lines().any(|l| l.trim_start().starts_with("rook")
+            && l.contains("stopped: ended")
+            && l.ends_with("`ris up rook` starts it again")),
+        "{text}"
+    );
+}
+
+/// `ris summary` shows the seats under its first line, one line each:
+/// running and on what, or why it stopped and the command that brings
+/// it back. `--json` carries the same as `seats`.
+#[test]
+fn summary_shows_each_seat_under_its_first_line() {
+    let rig = Rig::new("summary-seats", ENDING_AGENT);
+    rig.ok(None, &["item", "add", "something to do"]);
+    let seats = |r: &Rig| -> Value {
+        let out = r.ris(None, &["--json", "summary"]).stdout;
+        common::validate_output(&["summary"], &String::from_utf8(out.clone()).unwrap());
+        serde_json::from_slice::<Value>(&out).unwrap()["data"]["seats"].clone()
+    };
+    let seat = |v: &Value, name: &str| -> Value {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["seat"] == name)
+            .unwrap_or_else(|| panic!("{name} in {v}"))
+            .clone()
+    };
+    // The seats' lines: those between the first line and the header.
+    let lines = |r: &Rig| -> Vec<String> {
+        let text = r.ok(None, &["summary"]);
+        text.lines()
+            .skip(1)
+            .take_while(|l| !l.starts_with("P-1 open"))
+            .map(|l| l.trim().to_owned())
+            .collect()
+    };
+
+    // Before any run: every seat is there, not started, with its command.
+    let v = seats(&rig);
+    assert_eq!(v.as_array().unwrap().len(), 3, "{v}");
+    for name in ["heron", "rook", "wren"] {
+        let s = seat(&v, name);
+        assert_eq!(s["running"], false, "{s}");
+        assert_eq!(s["stopped"], Value::Null, "{s}");
+        assert_eq!(s["next"], format!("ris up {name}"), "{s}");
+    }
+    assert_eq!(
+        lines(&rig),
+        [
+            "heron      not started, idle; `ris up heron`",
+            "rook       not started, idle; `ris up rook`",
+            "wren       not started, idle; `ris up wren`",
+        ]
+    );
+
+    // Each run ends its own way, heron's while it holds an item.
+    rig.ok(Some("heron"), &["claim", "I-1"]);
+    rig.ok(None, &["up"]);
+    rig.until("every seat's run has ended", |r| {
+        seats(r)
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["running"] == false && !s["stopped"].is_null())
+    });
+    let v = seats(&rig);
+    assert_eq!(seat(&v, "heron")["claim"], "I-1");
+    assert_eq!(seat(&v, "heron")["stopped"]["reason"], "ended");
+    assert_eq!(seat(&v, "rook")["stopped"]["reason"], "usage_limit");
+    assert_eq!(seat(&v, "rook")["next"], "ris up rook");
+    assert_eq!(
+        lines(&rig),
+        [
+            "heron      stopped: ended, on I-1; `ris logs heron` shows how it ended, `ris up heron` starts it again",
+            "rook       stopped: usage limit, resets 3:20am (UTC), idle; `ris up rook` once the limit resets",
+            "wren       stopped: ended, idle; `ris logs wren` shows how it ended, `ris up wren` starts it again",
+        ]
+    );
+}
+
+/// A running seat's line in `ris summary` says so and names the item it
+/// holds, and has no command to bring it back.
+#[test]
+fn summary_shows_a_running_seat_and_what_it_holds() {
+    let rig = Rig::new("summary-running", WAITING_AGENT);
+    rig.ok(None, &["item", "add", "something to do"]);
+    rig.ok(Some("rook"), &["claim", "I-1"]);
+    rig.ok(None, &["up", "rook"]);
+    let rook = |r: &Rig| -> Value {
+        let v: Value = serde_json::from_slice(&r.ris(None, &["--json", "summary"]).stdout).unwrap();
+        v["data"]["seats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["seat"] == "rook")
+            .unwrap()
+            .clone()
+    };
+    rig.until("rook running", |r| rook(r)["running"] == true);
+    let s = rook(&rig);
+    assert_eq!(s["claim"], "I-1", "{s}");
+    assert_eq!(s["next"], Value::Null, "{s}");
+    assert_eq!(s["stopped"], Value::Null, "{s}");
+    let text = rig.ok(None, &["summary"]);
+    assert_eq!(
+        text.lines().nth(2).map(str::trim),
+        Some("rook       running, on I-1"),
+        "{text}"
+    );
 }
 
 /// A start that fails is reported as failing, with why, not as started.
@@ -731,6 +904,91 @@ fn up_and_down_leave_an_attended_seat_alone() {
     assert!(!seats_of(&rig, "run_started").contains(&rook));
 }
 
+/// Each seat ends its run its own way: rook on the agent tool's usage
+/// limit, heron having finished with nothing held, wren cut off with no
+/// result record. A result record is one line of the tool's stream
+/// JSON, with only the keys read.
+const ENDING_AGENT: &str = "#!/bin/sh\ncase \"$RIS_AGENT\" in\n\
+    rook) echo '{\"type\":\"result\",\"is_error\":true,\"result\":\"You have hit your 5-hour limit - resets 3:20am (UTC)\"}' ;;\n\
+    heron) echo '{\"type\":\"result\",\"is_error\":false,\"result\":\"nothing left\"}' ;;\n\
+    esac\nexit 0\n";
+
+/// `ris status` says why a seat that is not running stopped, read from
+/// how its last run ended, and `--json` carries it.
+#[test]
+fn status_says_why_each_stopped_seat_stopped() {
+    let rig = Rig::new("stopped", ENDING_AGENT);
+    let status = |r: &Rig| -> Value {
+        serde_json::from_slice(&r.ris(None, &["--json", "status"]).stdout).unwrap()
+    };
+    // Before any run, nothing is said.
+    let seats = status(&rig)["data"]["seats"].clone();
+    assert!(
+        seats
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["stopped"].is_null()),
+        "{seats}"
+    );
+    rig.ok(None, &["up"]);
+    rig.until("every seat's run has ended", |r| {
+        let v = status(r);
+        v["data"]["seats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["running"] == false && !s["stopped"].is_null())
+    });
+    let v = status(&rig);
+    common::validate_output(&["status"], &serde_json::to_string(&v).unwrap());
+    let stopped = |name: &str| {
+        v["data"]["seats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["seat"] == name)
+            .unwrap()["stopped"]
+            .clone()
+    };
+    assert_eq!(
+        stopped("rook"),
+        serde_json::json!({"reason": "usage_limit", "resets": "3:20am (UTC)"})
+    );
+    assert_eq!(
+        stopped("heron"),
+        serde_json::json!({"reason": "nothing_left", "resets": null})
+    );
+    assert_eq!(
+        stopped("wren"),
+        serde_json::json!({"reason": "ended", "resets": null})
+    );
+    let text = rig.ok(None, &["status"]);
+    let line = |name: &str| {
+        text.lines()
+            .find(|l| l.starts_with(name))
+            .unwrap_or_else(|| panic!("{name} in:\n{text}"))
+            .to_owned()
+    };
+    assert!(
+        line("rook").ends_with("stopped: usage limit, resets 3:20am (UTC)"),
+        "{text}"
+    );
+    assert!(
+        line("heron").ends_with("stopped: nothing left to claim"),
+        "{text}"
+    );
+    assert!(line("wren").ends_with("stopped: ended"), "{text}");
+
+    // Paused by the person, a seat whose run finished says so.
+    rig.ok(None, &["seat", "pause", "heron"]);
+    assert!(
+        rig.ok(None, &["status"])
+            .lines()
+            .any(|l| l.starts_with("heron") && l.ends_with("stopped: paused by the person")),
+    );
+}
+
 /// Watching the seats: `ris logs` with no seat prints every seat's
 /// output with its seat in front, and followed it streams them all
 /// until none is running; `ris status` shows what each running seat
@@ -780,9 +1038,12 @@ fn every_seat_is_watched_in_one_stream_and_a_quiet_one_is_marked() {
         c.replace("[runner]\n", "[runner]\nquiet_after_seconds = 0\n"),
     )
     .unwrap();
-    std::thread::sleep(Duration::from_millis(20));
-    let rook = seat(&status(&rig), "rook");
-    assert_eq!(rook["activity"]["stuck"], true, "{rook}");
+    // Stuck is quiet for longer than zero seconds, measured from the run
+    // file's modification time, whose resolution differs between file
+    // systems: wait until it shows.
+    rig.until("rook is marked stuck", |r| {
+        seat(&status(r), "rook")["activity"]["stuck"] == true
+    });
     let text = rig.ok(None, &["status"]);
     assert!(text.contains("possibly stuck: quiet"), "{text}");
 
@@ -805,15 +1066,24 @@ fn every_seat_is_watched_in_one_stream_and_a_quiet_one_is_marked() {
             .spawn()
             .unwrap()
     };
-    let text = follow(&["logs", "-f"]);
-    let json = follow(&["--json", "logs", "--follow"]);
-    std::thread::sleep(Duration::from_millis(300));
+    let mut text = Follower::new(follow(&["logs", "-f"]));
+    let mut json = Follower::new(follow(&["--json", "logs", "--follow"]));
+    // Both followers are reading before the seats stop: each has printed
+    // every seat's line.
+    text.until("the text follower prints every seat", |out| {
+        prefixed.iter().all(|p| out.lines().any(|l| l == *p))
+    });
+    json.until("the json follower prints every seat", |out| {
+        ["heron", "rook", "wren"]
+            .iter()
+            .all(|s| out.contains(&format!("\"seat\":\"{s}\"")))
+    });
     rig.stop_all();
-    let text = String::from_utf8(text.wait_with_output().unwrap().stdout).unwrap();
+    let text = text.finish();
     for p in prefixed {
         assert!(text.lines().any(|l| l == p), "{p} in:\n{text}");
     }
-    let json = String::from_utf8(json.wait_with_output().unwrap().stdout).unwrap();
+    let json = json.finish();
     // Each followed line is an envelope of the committed schema.
     common::validate_output(&["logs", "--follow"], &json);
     let seats: Vec<String> = json

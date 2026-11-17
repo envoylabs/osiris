@@ -39,7 +39,9 @@ pub const PATH: &str = "docs/json.schema.json";
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Item {
     pub id: ItemId,
-    pub phase: PhaseId,
+    /// Its phase tag: the phase it is in or is planned for; null when
+    /// it has none, which is the backlog.
+    pub phase: Option<PhaseId>,
     pub goal: String,
     /// `ready`, `claimed`, `blocked`, `done`, `merged` or `superseded`.
     pub state: &'static str,
@@ -282,9 +284,39 @@ pub struct Summary {
     /// The open phase's state in one line and as counts; `null` with
     /// no phase open.
     pub phase_state: Option<PhaseState>,
+    /// With no phase open, the phase the next `ris phase open` opens
+    /// and the items tagged for it; `null` with a phase open.
+    pub next_phase: Option<NextPhase>,
     pub carried_over: CarriedOver,
     /// What running the person's action checks did.
     pub checks: Vec<String>,
+    /// Every seat: whether it is running, what it holds, and for one
+    /// that is not running why it stopped and what brings it back.
+    pub seats: Vec<SummarySeat>,
+}
+
+/// A seat as `ris summary` shows it.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct SummarySeat {
+    pub seat: String,
+    pub role: Role,
+    /// Its agent is running now. A run whose process is gone is not
+    /// running, whatever the log says.
+    pub running: bool,
+    /// The item it holds; null when it is idle.
+    pub claim: Option<String>,
+    /// For a running seat: what it last did and how long ago.
+    pub activity: Option<crate::status::Activity>,
+    /// For a seat not running that has run: why it stopped, as
+    /// `ris status` gives it. Null while it runs and before its first
+    /// run.
+    pub stopped: Option<crate::status::Stopped>,
+    /// An attended seat: the person runs it, and `ris up` does not
+    /// start it.
+    pub attended: bool,
+    /// The command that brings a seat that is not running back; null
+    /// while it runs, and for an attended seat.
+    pub next: Option<String>,
 }
 
 /// Where the open phase stands. Its items that are not superseded are
@@ -317,6 +349,13 @@ pub struct PhaseState {
 pub struct InProgress {
     pub item: ItemId,
     pub seat: Option<AgentName>,
+}
+
+/// The phase that opens next, and what is tagged for it.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct NextPhase {
+    pub phase: PhaseId,
+    pub items: Vec<Item>,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -430,6 +469,22 @@ pub struct ItemRef {
     pub item: ItemId,
 }
 
+/// `ris item add`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ItemAdded {
+    pub item: ItemId,
+    /// The phase it is tagged for; null when it has none.
+    pub phase: Option<PhaseId>,
+}
+
+/// `ris item phase`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ItemTagged {
+    pub item: ItemId,
+    /// The phase it is now tagged for; null when it has none.
+    pub phase: Option<PhaseId>,
+}
+
 /// `ris item supersede`.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Superseded {
@@ -530,10 +585,30 @@ pub struct Init {
     pub local: bool,
 }
 
-/// `ris rules`.
+/// `ris rules`: the rules, or with `--render` what was rendered.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
-pub struct Rules {
-    pub rules: String,
+#[serde(untagged)]
+pub enum Rules {
+    Text {
+        rules: String,
+    },
+    Rendered {
+        /// The project's own part, as the command named it.
+        source: String,
+        /// The rules file rendered.
+        rendered: String,
+        /// Whether the file changed.
+        changed: bool,
+    },
+    /// With `--check`: nothing was written. A file that is not current
+    /// is the error `check_failed`, so `current` is true here.
+    Checked {
+        /// The project's own part, as the command named it.
+        source: String,
+        /// The rules file checked.
+        checked: String,
+        current: bool,
+    },
 }
 
 /// `ris worktree`.
@@ -626,6 +701,11 @@ pub struct PhaseOpened {
     pub docs_item: Option<ItemId>,
     /// What the writing seats would lack to run the checks.
     pub preflight: Vec<crate::preflight::Missing>,
+    /// The items that were tagged for the phase, which it opened with.
+    pub brought_in: Vec<ItemId>,
+    /// The items that were tagged for the phase and whose tags were
+    /// moved on to the phase after it instead.
+    pub moved_on: Vec<ItemId>,
 }
 
 /// `ris phase close`.
@@ -658,6 +738,9 @@ pub struct SeatStatus {
     pub running: bool,
     pub activity: Option<crate::status::Activity>,
     pub faults: Vec<String>,
+    /// For a seat not running that has run: why it stopped. Null while
+    /// it runs and before its first run.
+    pub stopped: Option<crate::status::Stopped>,
 }
 
 /// `ris scan`, clean. A hit is the `leak` error instead.
@@ -715,10 +798,17 @@ pub struct Map {
     pub tip_ref: String,
     pub totals: MapTotals,
     pub nodes: Vec<crate::map::Node>,
+    /// The changed nodes' paths in the order to read them: the highest
+    /// risk level that stands first, then the heaviest, then by path.
+    /// The order `ris map --list` prints and the page lists.
+    pub ranked: Vec<String>,
     pub edges: Vec<crate::map::Edge>,
     /// Each changed node's unified diff between `base` and `tip`, by
     /// path, as `git diff` writes it; empty when `base` is null.
     pub diffs: std::collections::BTreeMap<String, String>,
+    /// The calls around the phase's changed functions, for the page's
+    /// view of one function; empty when no file is read inside.
+    pub call_graph: crate::map::CallGraph,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -830,7 +920,8 @@ pub fn commands(g: &mut SchemaGenerator) -> Vec<(&'static str, Schema)> {
         ("seat fault", g.subschema_for::<SeatRef>()),
         ("phase open", g.subschema_for::<PhaseOpened>()),
         ("phase close", g.subschema_for::<PhaseClosed>()),
-        ("item add", g.subschema_for::<ItemRef>()),
+        ("item add", g.subschema_for::<ItemAdded>()),
+        ("item phase", g.subschema_for::<ItemTagged>()),
         ("item supersede", g.subschema_for::<Superseded>()),
         ("item bring-in", g.subschema_for::<BroughtIn>()),
         ("ready", g.subschema_for::<Ready>()),
