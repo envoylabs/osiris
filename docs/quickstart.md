@@ -285,7 +285,10 @@ reported once and leaves the last good program in place; `ris install`
 tries it again. A phase is closed by that build and no older one: when
 `ris phase close` is itself the command that installs it, the close is
 refused with nothing touched and asks to be run again, since the
-closing merge carries what `ris` renders (the rules file).
+closing merge carries what `ris` renders (the rules file). For the
+same reason a close run by any other `ris` than the one at `to` (an
+older one earlier on your `PATH`, one built by hand) is refused, and
+names the installed one.
 
 ## 5. Step three: review
 

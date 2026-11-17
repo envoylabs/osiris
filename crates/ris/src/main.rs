@@ -775,6 +775,25 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             Some(Err(warning)) => eprintln!("{warning}"),
             None => {}
         }
+        // The installed build being current says nothing about the
+        // program running: another ris (an older one earlier on PATH,
+        // one built by hand) would render the rules file from its own
+        // rules. A close is made by the installed program itself.
+        if matches!(
+            cli.command,
+            Cmd::Phase {
+                action: PhaseCmd::Close
+            }
+        ) && ris::install::is_installed(&p.root, cfg, std::env::current_exe().ok().as_deref())
+            == Some(false)
+        {
+            return Err(CliError::Other(format!(
+                "refused: this ris is not the installed one, and the phase is closed by the installed build, \
+                 since the closing merge carries what ris itself renders\n  \
+                 next: run `ris phase close` with the ris at {}",
+                cfg.to
+            )));
+        }
     }
 
     match &cli.command {

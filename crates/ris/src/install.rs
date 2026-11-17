@@ -231,6 +231,17 @@ pub fn catch_up(root: &Path, cfg: &InstallConfig, log: &[Event]) -> Option<Resul
     })
 }
 
+/// Whether the program at `exe` is the one installed at `[install].to`,
+/// each path made canonical so a link to the installed program counts.
+/// `None` when nothing is installed there, so there is nothing to
+/// compare with. A program whose own path cannot be found is not the
+/// installed one.
+pub fn is_installed(root: &Path, cfg: &InstallConfig, exe: Option<&Path>) -> Option<bool> {
+    let to = fs::canonicalize(cfg.paths(root).to).ok()?;
+    let exe = exe.and_then(|e| fs::canonicalize(e).ok());
+    Some(exe.is_some_and(|e| e == to))
+}
+
 /// A commit as shown: its first twelve characters.
 pub fn short(commit: &str) -> &str {
     &commit[..commit.len().min(12)]
