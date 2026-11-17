@@ -510,16 +510,19 @@ fn the_calls_button_opens_on_the_first_changed_function() {
 
 #[test]
 fn the_page_draws_this_repository_s_last_closed_phase() {
-    // Real data: the last phase closed on this repository's history.
-    let Some(map) = super::history::closed_phase("chore: close P-") else {
+    // Real data: the latest phase closed on this repository's history
+    // whose map holds a marked line inside a function, which is what
+    // the list looks a function up for. A phase may close with none
+    // (documents alone, say), so the closing merges are walked back to
+    // one that does, and a history with none is passed over.
+    let in_a_function = |map: &crate::schema::Map| {
+        !marks_in_functions(&serde_json::to_value(map).unwrap()).is_empty()
+    };
+    let Some(map) = super::history::closed_phase_where("chore: close P-", &in_a_function) else {
         return;
     };
     let doc = serde_json::to_value(&map).unwrap();
     let in_functions = marks_in_functions(&doc);
-    assert!(
-        !in_functions.is_empty(),
-        "the phase holds a marked line inside a function"
-    );
 
     let html = page(&doc);
     let (_, _, script) = parts(&html);
@@ -571,6 +574,15 @@ fn the_page_draws_this_repository_s_last_closed_phase() {
     let s = page.state();
     assert_eq!(s["pane_path"], ranked[0].as_str());
     assert!(!s["pane_rows"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn a_closed_phase_that_holds_nothing_the_test_needs_is_passed_over() {
+    // The falsifier of the walk in the test above: a phase whose map
+    // does not hold what is asked for (here, anything) is not drawn and
+    // nothing is asserted of it. P-12 is named so one map is built.
+    let none = super::history::closed_phase_where("chore: close P-12: ", &|_| false);
+    assert!(none.is_none());
 }
 
 #[test]
