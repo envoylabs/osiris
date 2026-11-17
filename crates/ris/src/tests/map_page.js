@@ -156,8 +156,8 @@ function __rows() {
   });
 }
 
-// The lines an expanded row shows: each marked line and each step.
-function __marks() {
+// What the expanded rows hold, in order: every child of their cells.
+function __detail() {
   var out = [];
   document.getElementById("list-rows").childNodes.forEach(function (tr) {
     if (!tr.classList.contains("marks")) { return; }
@@ -165,13 +165,35 @@ function __marks() {
   });
   return out;
 }
-// Those of them that open a function in the calls view.
+// The folds: each holds a row's lines one step from an effect.
+function __folds() {
+  return __detail().filter(function (el) { return el.classList.contains("steps"); });
+}
+// The buttons that open them, in the same order.
+function __unfolds() {
+  return __detail().filter(function (el) { return el.tagName === "BUTTON"; });
+}
+// The marked lines an expanded row shows, outside any fold.
+function __marks() {
+  return __detail().filter(function (el) {
+    return el.tagName === "DIV" && !el.classList.contains("steps");
+  });
+}
+// The lines one step from an effect, inside the folds.
+function __steps() {
+  var out = [];
+  __folds().forEach(function (fold) { out = out.concat(fold.childNodes); });
+  return out;
+}
+// The marked lines that open a function in the calls view.
 function __opening() {
   return __marks().filter(function (div) { return div.classList.contains("go"); });
 }
 
 function __click(id) { __fire(document.getElementById(id), "click"); }
 function __clickMark(i) { __fire(__opening()[i], "click"); }
+function __clickUnfold(i) { __fire(__unfolds()[i], "click"); }
+function __clickStep(i) { __fire(__steps()[i], "click"); }
 function __clickRow(i) { __fire(__rows()[i], "click"); }
 function __key(key) {
   (__window.listeners.keydown || []).forEach(function (fn) { fn({ key: key }); });
@@ -195,6 +217,12 @@ function __state() {
     }),
     marks: __marks().map(function (div) {
       return { text: div.textContent, opens: div.classList.contains("go") };
+    }),
+    steps: __steps().map(function (div) {
+      return { text: div.textContent, opens: div.classList.contains("go") };
+    }),
+    folds: __folds().map(function (fold, i) {
+      return { label: __unfolds()[i].textContent, hidden: fold.hidden };
     }),
     list_top: document.getElementById("list").style.top || "",
     pane_path: document.getElementById("pane-path").textContent,

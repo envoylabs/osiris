@@ -232,6 +232,10 @@ enum Cmd {
         /// with its reasons, and open nothing.
         #[arg(long, conflicts_with = "html")]
         list: bool,
+        /// With --list, print each function one step from an effect
+        /// under its file, where the list alone gives their count.
+        #[arg(long, requires = "list")]
+        steps: bool,
     },
     /// Where each seat is: role, worktree, branch, claim, commits ahead
     /// of and behind the phase branch, uncommitted changes.
@@ -774,6 +778,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         phase: Some(MapTarget::Range(spec)),
         html,
         list,
+        steps,
     } = &cli.command
         && matches!(Project::find(&cwd), Err(CliError::NotAProject(_)))
     {
@@ -782,7 +787,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         use ris::map::Show;
         return match (html, list) {
             (Some(file), _) => ris::map::output(map, Show::Write(file)),
-            (None, true) => ris::map::output(map, Show::List),
+            (None, true) => ris::map::output(map, Show::List { steps: *steps }),
             (None, false) => ris::map::output(map, Show::Text),
         };
     }
@@ -1892,7 +1897,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 
-        Cmd::Map { phase, html, list } => {
+        Cmd::Map {
+            phase,
+            html,
+            list,
+            steps,
+        } => {
             let l = p.load()?;
             let map = match phase {
                 Some(MapTarget::Range(spec)) => {
@@ -1922,7 +1932,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         },
                     )
                 }
-                (Form::List, _) => ris::map::output(map, Show::List),
+                (Form::List, _) => ris::map::output(map, Show::List { steps: *steps }),
                 _ => ris::map::output(map, Show::Text),
             }
         }

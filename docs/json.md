@@ -399,17 +399,32 @@ or reshaped.
   `added` in it and `removed` from it, the kinds of `effects` on its
   lines, whether it is `direct` (holds an effect site itself), the
   functions of the repository it `calls` (`path` and `function`), its
-  `steps` one step from an effect, and its `risk`, computed from the
-  same signals as a file's (its effects and the size of its change),
-  with one point more and the signal `reach` when it has a step, as
-  `level` and `signals`. A step is a direct function it calls
-  (`direction` `triggers`) or one that calls it (`feeds`), with that
-  function's `path`, `function` and `effects`. Calls are resolved by
-  name over every file on the map of those languages: a call into a
-  module the repository does not hold (a standard library, a package,
-  another crate) is left out, a name with a type in front means that
-  method, and a bare name (a method called on a value, say) means every
-  function and method so named, so the hint errs toward flagging. `marks` are the
+  `steps` one step from an effect, whether it is `wide` itself, and
+  its `risk`, computed from the same signals as a file's (its effects
+  and the size of its change), with one point more and the signal
+  `reach` when it has a step that counts, as `level` and `signals`. A
+  step is a direct function it calls (`direction` `triggers`) or one
+  that calls it (`feeds`), with that function's `path`, `function` and
+  `effects`, and whether that function is `wide`. A function is wide
+  when the functions it calls, or those that call it, lie in more than
+  half of the files that hold functions, and in at least eight: a
+  command's dispatcher, a helper everything uses. Most functions are
+  one step from such a function, so a step to one does not count
+  toward the level, and no step of a function that is wide itself
+  does. Calls are resolved over every file on the map of those
+  languages, and only where the text says which function is meant: a
+  call into a module the repository does not hold (a standard library,
+  a package, another crate) is left out; a call that names a module
+  means the functions of the file or directory named as the module's
+  last segment is; a name with a type in front means that type's
+  method; and a name with neither means a function of the caller's own
+  file, or failing that its directory. A method called on a value is a
+  call only where the text says the value's type (`self` or `this`, a
+  Go method's receiver, a parameter or a `let` with its type, a `let`
+  set to `Type::new(..)`, `Type::default()` or a struct written out),
+  and then means that type's method; on any other value it is not
+  resolved, so a call is never matched to a method by its name alone
+  and the hint errs toward missing a step. `marks` are the
   lines that touch the outside (an effect site), on a line the phase
   changed or in a function it changed, by line: `line` at `tip`,
   `kind` (`database`, `filesystem`, `network` or `process`), the

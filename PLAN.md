@@ -568,10 +568,16 @@ Functional core, imperative shell; hexagonal between components.
   the lines that touch a database, the filesystem, the network or a
   process, by a list of names per language that a project extends; the
   functions the phase changed, each with a level of its own; and calls
-  resolved by name across the repository, so a changed function one
-  call from an effect (it triggers one, or feeds one) is marked. Names
-  alone over-flag: a method called on a value means every function so
-  named. A file of another language stays at file level.
+  resolved across the repository, so a changed function one call from
+  an effect (it triggers one, or feeds one) is marked. A call is
+  resolved only where the text says which function it means: by its
+  path, by its own file, or for a method by the type written for the
+  value it is called on; a method on any other value is left
+  unresolved, since its name alone means every method so named. A
+  function most of the repository calls or is called by is said once
+  for a file and adds nothing to a function's level. The list gives
+  the direct marks first and the one-step marks as a count. A file of
+  another language stays at file level.
 - **Language:** Rust for the core, daemon and CLI.
 
 ## Runtime and environments

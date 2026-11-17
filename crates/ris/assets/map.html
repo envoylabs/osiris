@@ -247,6 +247,8 @@
   }
   #list .expand:hover, #list .expand:focus-visible { color: var(--modified); outline: none; }
   #list tr.marks td { padding: 2px 10px 8px 36px; font-size: 12px; }
+  #list tr.marks .expand { display: block; }
+  #list tr.marks .steps { padding-left: 14px; }
   #list tr.marks div.go { cursor: pointer; }
   #list tr.marks div.go:hover, #list tr.marks div.go:focus-visible { color: var(--modified); outline: none; }
 
@@ -762,24 +764,39 @@
     });
     listRows.appendChild(tr);
     listed.set(n, tr);
-    // Expanded, a file shows its marked lines: each line that touches
-    // the outside, the function it sits in and that function's level.
-    // Below them, each changed function one step from an effect: the
-    // direction, the effect and the function it reaches.
+    // Expanded, a file shows its marked lines first: each line that
+    // touches the outside, the function it sits in and that function's
+    // level. Below them, folded under their count, the changed
+    // functions one step from an effect: the direction, the effect and
+    // the function reached. A wide function (one most of the repository
+    // calls or is called by) is one line for the file, whether it is
+    // the file's own or the one its functions are a step from.
     var marks = n.marks || [];
     var steps = [];
+    var own = [];
+    var wide = new Map();
     (n.functions || []).forEach(function (f) {
-      f.steps.forEach(function (s) { steps.push({ from: f.name, step: s }); });
+      if (f.wide) {
+        if (f.steps.length > 0) { own.push(f); }
+        return;
+      }
+      f.steps.forEach(function (s) {
+        if (!s.wide) { steps.push({ from: f.name, step: s }); return; }
+        var key = [s.path, s["function"], s.direction].join("\n");
+        if (!wide.has(key)) { wide.set(key, { step: s, count: 0 }); }
+        wide.get(key).count += 1;
+      });
     });
-    if (marks.length + steps.length > 0) {
+    var away = steps.length + own.length + wide.size;
+    if (marks.length + away > 0) {
       var detail = document.createElement("tr");
       detail.className = "marks";
       detail.hidden = true;
       var td = document.createElement("td");
       td.colSpan = 4;
       // A line in a function opens the calls view on that function.
-      var opens = function (div, name, line) {
-        var f = functionAt(n.path, name, line);
+      var opens = function (div, path, name, line) {
+        var f = functionAt(path, name, line);
         if (f === null) { return; }
         div.className = "go";
         div.tabIndex = 0;
@@ -798,18 +815,58 @@
         div.appendChild(span("outside", m.kind));
         if (m["function"]) { div.appendChild(span("", " in " + m["function"])); }
         if (m.risk) { div.appendChild(span("level " + m.risk, " (" + m.risk + ")")); }
-        if (m["function"]) { opens(div, m["function"], m.line); }
+        if (m["function"]) { opens(div, n.path, m["function"], m.line); }
         td.appendChild(div);
       });
-      steps.forEach(function (o) {
-        var div = document.createElement("div");
-        div.appendChild(span("", o.from + " " + o.step.direction + " "));
-        div.appendChild(span("outside", o.step.effects.join(", ")));
-        div.appendChild(span("", " via " + o.step["function"]));
-        div.appendChild(span("quiet", "  " + o.step.path));
-        opens(div, o.from, null);
-        td.appendChild(div);
-      });
+      if (away > 0) {
+        var folded = document.createElement("div");
+        folded.className = "steps";
+        folded.hidden = true;
+        var most = ", which most of the repository calls or is called by";
+        var plural = function (count) { return count === 1 ? "" : "s"; };
+        steps.forEach(function (o) {
+          var div = document.createElement("div");
+          div.appendChild(span("", o.from + " " + o.step.direction + " "));
+          div.appendChild(span("outside", o.step.effects.join(", ")));
+          div.appendChild(span("", " via " + o.step["function"]));
+          div.appendChild(span("quiet", "  " + o.step.path));
+          opens(div, n.path, o.from, null);
+          folded.appendChild(div);
+        });
+        own.forEach(function (f) {
+          var div = document.createElement("div");
+          div.appendChild(span("", f.name + most + ", is one step from " +
+            f.steps.length + " function" + plural(f.steps.length) + " with an effect"));
+          opens(div, n.path, f.name, f.start);
+          folded.appendChild(div);
+        });
+        wide.forEach(function (w) {
+          var div = document.createElement("div");
+          var verb = w.step.direction === "triggers" ? "trigger" : "feed";
+          div.appendChild(span("", w.count + " function" + plural(w.count) + " " +
+            verb + (w.count === 1 ? "s " : " ")));
+          div.appendChild(span("outside", w.step.effects.join(", ")));
+          div.appendChild(span("", " via " + w.step["function"]));
+          div.appendChild(span("quiet", "  " + w.step.path));
+          div.appendChild(span("", most));
+          opens(div, w.step.path, w.step["function"], null);
+          folded.appendChild(div);
+        });
+        var unfold = document.createElement("button");
+        unfold.type = "button";
+        unfold.className = "expand";
+        unfold.setAttribute("aria-expanded", "false");
+        var count = away + " one step from an effect";
+        unfold.textContent = "▸ " + count;
+        unfold.addEventListener("click", function (event) {
+          event.stopPropagation();
+          folded.hidden = !folded.hidden;
+          unfold.setAttribute("aria-expanded", String(!folded.hidden));
+          unfold.textContent = (folded.hidden ? "▸ " : "▾ ") + count;
+        });
+        td.appendChild(unfold);
+        td.appendChild(folded);
+      }
       detail.appendChild(td);
       listRows.appendChild(detail);
       var toggle = document.createElement("button");
@@ -817,7 +874,7 @@
       toggle.className = "expand";
       toggle.setAttribute("aria-expanded", "false");
       var label = marks.length + " marked" +
-        (steps.length > 0 ? ", " + steps.length + " one step away" : "");
+        (away > 0 ? ", " + away + " one step away" : "");
       toggle.textContent = "▸ " + label;
       toggle.addEventListener("click", function (event) {
         // Expanding is not picking: the pane stays as it is.

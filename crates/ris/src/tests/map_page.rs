@@ -228,11 +228,6 @@ fn with_the_lookup_after_the_list(script: &str) -> String {
     rest.replacen(after, &format!("{after}{lookup}"), 1)
 }
 
-/// Git's answer in this repository, trimmed, or `None` when git refuses.
-fn git_here(args: &[&str]) -> Option<String> {
-    git_line(Path::new(env!("CARGO_MANIFEST_DIR")), args).ok()
-}
-
 fn ranked(doc: &serde_json::Value) -> Vec<String> {
     doc["ranked"]
         .as_array()
@@ -426,6 +421,80 @@ fn a_marked_line_in_a_function_opens_the_calls_view_on_that_function() {
 }
 
 #[test]
+fn the_one_step_marks_are_folded_under_a_count_below_the_direct_marks() {
+    // The file that touches the network, with what `annotate` would say
+    // of a larger repository: `send` one step from an effect twice, once
+    // through a wide function; a second function through the same wide
+    // one; and a wide function of the file's own.
+    let mut doc = document_with_changes();
+    let step = |direction: &str, function: &str, wide: bool| {
+        serde_json::json!({
+            "direction": direction, "path": "src/main.rs", "function": function,
+            "effects": ["filesystem"], "wide": wide,
+        })
+    };
+    let net = doc["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|n| n["path"] == "src/net.rs")
+        .unwrap();
+    let mut send = net["functions"][0].clone();
+    assert_eq!(send["name"], "send");
+    send["steps"] =
+        serde_json::json!([step("feeds", "run", true), step("triggers", "save", false)]);
+    let mut other = send.clone();
+    other["name"] = "other".into();
+    other["steps"] = serde_json::json!([step("feeds", "run", true)]);
+    let mut dispatch = send.clone();
+    dispatch["name"] = "dispatch".into();
+    dispatch["wide"] = true.into();
+    dispatch["steps"] = serde_json::json!([
+        step("triggers", "save", false),
+        step("triggers", "load", false)
+    ]);
+    net["functions"] = serde_json::json!([send, other, dispatch]);
+
+    let html = page(&doc);
+    let (_, _, script) = parts(&html);
+    let mut page = Page::run(&html, script).unwrap_or_else(|e| panic!("the script threw: {e}"));
+    let s = page.state();
+    // The direct mark stands outside the fold, and first.
+    assert_eq!(s["marks"].as_array().unwrap().len(), 1, "{s}");
+    assert_eq!(
+        s["folds"],
+        serde_json::json!([{ "label": "▸ 3 one step from an effect", "hidden": true }]),
+        "the fold is closed, and a wide function counts once"
+    );
+    let most = ", which most of the repository calls or is called by";
+    assert_eq!(
+        s["steps"],
+        serde_json::json!([
+            { "text": "send triggers filesystem via save  src/main.rs", "opens": true },
+            // Neither `dispatch` nor `run` is in this document's call
+            // graph, so neither line opens a function.
+            { "text": format!("dispatch{most}, is one step from 2 functions with an effect"),
+              "opens": false },
+            { "text": format!("2 functions feed filesystem via run  src/main.rs{most}"),
+              "opens": false },
+        ])
+    );
+
+    page.act("__clickUnfold(0)");
+    let s = page.state();
+    assert_eq!(
+        s["folds"],
+        serde_json::json!([{ "label": "▾ 3 one step from an effect", "hidden": false }])
+    );
+    assert_eq!(s["pane_path"], "", "unfolding picks no file");
+    page.act("__clickStep(0)");
+    assert_eq!(
+        page.state()["calls_note"],
+        "send in src/net.rs: click a box beside it to move there."
+    );
+}
+
+#[test]
 fn the_calls_button_opens_on_the_first_changed_function() {
     let (_, html) = the_page();
     let (_, _, script) = parts(&html);
@@ -441,51 +510,10 @@ fn the_calls_button_opens_on_the_first_changed_function() {
 
 #[test]
 fn the_page_draws_this_repository_s_last_closed_phase() {
-    // Real data: the last phase closed on this repository's history,
-    // read from git as `ris map` reads it. The history is the checkout's
-    // own, so the test holds wherever the repository is cloned whole. A
-    // shallow clone or an exported tree has no closing merge to read,
-    // and is the one case passed over; a whole clone without one fails.
-    let merges = git_here(&[
-        "log",
-        "--first-parent",
-        "--merges",
-        "--format=%H %s",
-        "HEAD",
-    ]);
-    let closing = merges.as_deref().and_then(|log| {
-        log.lines()
-            .filter_map(|line| line.split_once(' '))
-            .find(|(_, subject)| subject.starts_with("chore: close P-"))
-            .map(|(sha, _)| sha.to_owned())
-    });
-    let base = closing
-        .as_deref()
-        .and_then(|tip| git_here(&["rev-parse", "--verify", "--quiet", &format!("{tip}^1")]));
-    let (Some(tip), Some(base)) = (closing, base) else {
-        let whole = git_here(&["rev-parse", "--is-shallow-repository"]).as_deref() == Some("false");
-        assert!(
-            !whole,
-            "a whole clone of this repository holds a closing merge and its first parent"
-        );
-        eprintln!("passed over: this checkout does not hold the history of a closed phase");
+    // Real data: the last phase closed on this repository's history.
+    let Some(map) = super::history::closed_phase("chore: close P-") else {
         return;
     };
-    let range = Range {
-        phase: None,
-        base: Some(base),
-        tip,
-        tip_ref: "HEAD".to_owned(),
-    };
-    // The map's paths are the repository's, so git is asked at its root.
-    let root = git_here(&["rev-parse", "--show-toplevel"]).expect("the checkout's root");
-    let map = build_in(
-        Path::new(&root),
-        &crate::config::MapConfig::default(),
-        &BTreeMap::new(),
-        &range,
-    )
-    .unwrap_or_else(|e| panic!("the phase's map is read from git: {e}"));
     let doc = serde_json::to_value(&map).unwrap();
     let in_functions = marks_in_functions(&doc);
     assert!(

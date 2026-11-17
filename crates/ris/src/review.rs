@@ -89,7 +89,10 @@ pub fn run(
     let (map, tip, list) = match crate::map::range(p, &l, Some(phase)) {
         Ok(range) => {
             let map = crate::map::build(p, &l, &range)?;
-            let list = crate::map::output(map.clone(), crate::map::Show::List)?.text;
+            // The one-step marks as a count: `ris map --list --steps`
+            // names each, and the list's last lines say so.
+            let list =
+                crate::map::output(map.clone(), crate::map::Show::List { steps: false })?.text;
             (Some(Box::new(map)), Some(CommitHash(range.tip)), list)
         }
         Err(e) => (

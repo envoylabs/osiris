@@ -662,7 +662,7 @@
           "type": "integer"
         },
         "calls": {
-          "description": "The functions of the repository it calls, as far as names say:\na call that could mean more than one function names each.",
+          "description": "The functions of the repository it calls, where the text says\nwhich: by a path, by the caller's own file, or for a method by\nthe type written for the value it is called on. A call the text\nleaves open to more than one function names each.",
           "items": {
             "$ref": "#/$defs/Callee"
           },
@@ -695,7 +695,7 @@
         },
         "risk": {
           "$ref": "#/$defs/Computed",
-          "description": "Its level, from the same signals as a file's (its effects and\nthe size of its change), and one more for being one step from an\neffect."
+          "description": "Its level, from the same signals as a file's (its effects and\nthe size of its change), and one more for being one step from an\neffect by a step that is not wide, unless it is wide itself."
         },
         "start": {
           "description": "Its first and last line at the tip, counting from 1.",
@@ -709,6 +709,10 @@
             "$ref": "#/$defs/Step"
           },
           "type": "array"
+        },
+        "wide": {
+          "description": "Whether it is itself a function most of the repository calls or\nis called by ([`Step::wide`] says the measure). Its steps do not\ncount toward its level, and the list says them once.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -721,7 +725,8 @@
         "direct",
         "calls",
         "steps",
-        "risk"
+        "risk",
+        "wide"
       ],
       "type": "object"
     },
@@ -3939,13 +3944,18 @@
         "path": {
           "description": "The direct function, by file and name.",
           "type": "string"
+        },
+        "wide": {
+          "description": "Whether that function is one most of the repository calls or is\ncalled by (a command's dispatcher, a helper everything uses):\nwhat it calls, or what calls it, lies in more than half of the\nfiles that hold functions. Such a step does not count toward the\nchanged function's level, and the list says it once for the file.",
+          "type": "boolean"
         }
       },
       "required": [
         "direction",
         "path",
         "function",
-        "effects"
+        "effects",
+        "wide"
       ],
       "type": "object"
     },

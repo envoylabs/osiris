@@ -39,8 +39,14 @@ pub struct Reference {
 /// name (`load`, or with its type in front where the call names one:
 /// `Store::new`), and the module the file's imports say it comes from
 /// (`crate::store`, `./store`, a Go import path, a Clojure namespace),
-/// or `None` when they say nothing: a name of the file's own, or a
-/// method called on a value.
+/// or `None` when they say nothing: a name of the file's own.
+///
+/// A method called on a value is a call only where the text says the
+/// value's type: the type the method is written in (`self`, `this`, a
+/// Go method's receiver), or a parameter or a `let` with its type. It
+/// is then named with that type in front, as a call that names the type
+/// is. A method on any other value is not a call here: its bare name
+/// could mean any type's method of that name, in the repository or not.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Call {
     pub line: u64,
@@ -331,13 +337,7 @@ fn rust(root: Node, src: &[u8], out: &mut Parsed) {
             }
             "function_item" => {
                 if let Some(name) = n.child_by_field_name("name") {
-                    let owner = enclosing(n, &["impl_item", "trait_item"]).and_then(|o| {
-                        o.child_by_field_name(if o.kind() == "impl_item" {
-                            "type"
-                        } else {
-                            "name"
-                        })
-                    });
+                    let owner = rust_owner(n);
                     let name = text(name, src);
                     out.functions.push(Function {
                         name: match owner {
@@ -435,12 +435,22 @@ fn rust_call(callee: Node, src: &[u8], aliases: &BTreeMap<String, String>) -> Op
                 module,
             })
         }
-        // `x.save(..)`: a method on a value.
-        "field_expression" => Some(Call {
-            line,
-            name: text(callee.child_by_field_name("field")?, src).to_owned(),
-            module: None,
-        }),
+        // `x.save(..)`: a method on a value, where the text says the
+        // value's type.
+        "field_expression" => {
+            let ty = rust_receiver(callee.child_by_field_name("value")?, src)?;
+            let method = text(callee.child_by_field_name("field")?, src);
+            // The type's module, when a `use` line brought the type in.
+            let module = aliases
+                .get(&ty)
+                .and_then(|full| full.rsplit_once("::"))
+                .map(|(m, _)| m.to_owned());
+            Some(Call {
+                line,
+                name: format!("{ty}::{method}"),
+                module,
+            })
+        }
         // `crate::store::load(..)`, `Store::new(..)`.
         "scoped_identifier" => {
             let path: String = text(callee, src).split_whitespace().collect();
@@ -468,6 +478,140 @@ fn rust_call(callee: Node, src: &[u8], aliases: &BTreeMap<String, String>) -> Op
         }
         _ => None,
     }
+}
+
+/// The type an `impl` or a trait gives the functions written in it.
+fn rust_owner<'t>(n: Node<'t>) -> Option<Node<'t>> {
+    enclosing(n, &["impl_item", "trait_item"]).and_then(|o| {
+        o.child_by_field_name(if o.kind() == "impl_item" {
+            "type"
+        } else {
+            "name"
+        })
+    })
+}
+
+/// A written type as the name its methods carry: `&mut Store` and
+/// `store::Store` are `Store`, `Self` is the type of the `impl` it is
+/// written in. `None` for a type with no one name (a tuple, a closure,
+/// `impl Trait`).
+fn rust_type(t: Node, src: &[u8]) -> Option<String> {
+    match t.kind() {
+        "type_identifier" if text(t, src) == "Self" => {
+            rust_owner(t).map(|o| bare_type(text(o, src)))
+        }
+        "type_identifier" => Some(text(t, src).to_owned()),
+        "reference_type" | "generic_type" => rust_type(t.child_by_field_name("type")?, src),
+        "scoped_type_identifier" => Some(text(t.child_by_field_name("name")?, src).to_owned()),
+        _ => None,
+    }
+}
+
+/// The name a pattern binds, when it binds one: `x` and `mut x`.
+fn rust_binding<'a>(pattern: Node, src: &'a [u8]) -> Option<&'a str> {
+    match pattern.kind() {
+        "identifier" => Some(text(pattern, src)),
+        "mut_pattern" => pattern
+            .named_child(0)
+            .filter(|c| c.kind() == "identifier")
+            .map(|c| text(c, src)),
+        _ => None,
+    }
+}
+
+/// The type a `let` gives its name by what it is set to, where the text
+/// says it: a struct written out (`Store { .. }`), or `Store::new(..)`
+/// and `Store::default()`, which return their own type by convention.
+fn rust_value_type(value: Node, src: &[u8]) -> Option<String> {
+    match value.kind() {
+        "struct_expression" => rust_type(value.child_by_field_name("name")?, src),
+        "call_expression" => {
+            let f = value.child_by_field_name("function")?;
+            if f.kind() != "scoped_identifier" {
+                return None;
+            }
+            let made = text(f.child_by_field_name("name")?, src);
+            let ty = f.child_by_field_name("path")?;
+            if !matches!(made, "new" | "default") {
+                return None;
+            }
+            match ty.kind() {
+                "identifier" if text(ty, src) == "Self" => {
+                    rust_owner(ty).map(|o| bare_type(text(o, src)))
+                }
+                "identifier" if is_type(text(ty, src)) => Some(text(ty, src).to_owned()),
+                "scoped_identifier" => ty
+                    .child_by_field_name("name")
+                    .map(|n| text(n, src).to_owned())
+                    .filter(|n| is_type(n)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The type of the value a method is called on, where the text of the
+/// function it is in says it: `self`, a parameter with its type, or a
+/// name a `let` above gave a type ([`rust_value_type`], or one written
+/// after the name). `None` for anything else (a field, the result of a
+/// call, a name bound by a pattern), whose type takes a type checker.
+fn rust_receiver(value: Node, src: &[u8]) -> Option<String> {
+    if value.kind() == "self" {
+        return rust_owner(value).map(|o| bare_type(text(o, src)));
+    }
+    if value.kind() != "identifier" {
+        return None;
+    }
+    let name = text(value, src);
+    // The nearest closure or function that takes the name says its type;
+    // a closure's parameter with no type written hides any outside it.
+    let mut at = value.parent();
+    let mut function = None;
+    while let Some(n) = at {
+        if matches!(n.kind(), "closure_expression" | "function_item")
+            && let Some(parameters) = n.child_by_field_name("parameters")
+        {
+            let mut cursor = parameters.walk();
+            for p in parameters.named_children(&mut cursor) {
+                let pattern = if p.kind() == "parameter" {
+                    p.child_by_field_name("pattern")
+                } else {
+                    Some(p)
+                };
+                if pattern.and_then(|b| rust_binding(b, src)) == Some(name) {
+                    return rust_type(p.child_by_field_name("type")?, src);
+                }
+            }
+        }
+        if n.kind() == "function_item" {
+            function = Some(n);
+            break;
+        }
+        at = n.parent();
+    }
+    // The last `let` of the name above the call, in the same function.
+    let mut found = None;
+    walk(function?, &mut |n| {
+        if n.start_byte() >= value.start_byte() {
+            return false;
+        }
+        if n.kind() == "let_declaration"
+            && n.end_byte() <= value.start_byte()
+            && n.child_by_field_name("pattern")
+                .and_then(|b| rust_binding(b, src))
+                == Some(name)
+        {
+            found = Some(match n.child_by_field_name("type") {
+                Some(t) => rust_type(t, src),
+                None => n
+                    .child_by_field_name("value")
+                    .and_then(|v| rust_value_type(v, src)),
+            });
+        }
+        true
+    });
+    found.flatten()
 }
 
 fn join_rust(prefix: &str, s: &str) -> String {
@@ -545,6 +689,28 @@ fn member_chain(n: Node, src: &[u8]) -> Option<Vec<String>> {
         }
         _ => None,
     }
+}
+
+/// The type written for the parameter `name` names, in the nearest
+/// function that takes one of that name; `None` when none does, or its
+/// type is not one name.
+fn typescript_parameter(name: Node, src: &[u8]) -> Option<String> {
+    let wanted = text(name, src);
+    let mut at = name.parent();
+    while let Some(n) = at {
+        if let Some(parameters) = n.child_by_field_name("parameters") {
+            let mut cursor = parameters.walk();
+            for p in parameters.named_children(&mut cursor) {
+                if p.child_by_field_name("pattern").map(|b| text(b, src)) != Some(wanted) {
+                    continue;
+                }
+                let ty = p.child_by_field_name("type")?.named_child(0)?;
+                return (ty.kind() == "type_identifier").then(|| text(ty, src).to_owned());
+            }
+        }
+        at = n.parent();
+    }
+    None
 }
 
 fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
@@ -697,16 +863,34 @@ fn typescript(root: Node, src: &[u8], out: &mut Parsed) {
                             None => (local.to_owned(), None),
                         })
                     }
-                    // `store.save(..)`, `this.save(..)`: the module when
-                    // the object is an imported name.
-                    Some((c, "member_expression")) => c.child_by_field_name("property").map(|p| {
-                        let module = c
-                            .child_by_field_name("object")
-                            .filter(|o| o.kind() == "identifier")
-                            .and_then(|o| imports.get(text(o, src)))
-                            .map(|(m, _)| m.clone());
-                        (text(p, src).to_owned(), module)
-                    }),
+                    // `store.save(..)` on an imported name: that module's
+                    // function. `this.save(..)`, and a method on a
+                    // parameter with its type: that type's method. A
+                    // method on any other value is not a call here.
+                    Some((c, "member_expression")) => {
+                        let method = c.child_by_field_name("property").map(|p| text(p, src));
+                        let object = c.child_by_field_name("object");
+                        match (method, object) {
+                            (Some(method), Some(o)) if o.kind() == "this" => enclosing(
+                                o,
+                                &["class_declaration", "abstract_class_declaration", "class"],
+                            )
+                            .and_then(|class| class.child_by_field_name("name"))
+                            .map(|class| (format!("{}.{method}", text(class, src)), None)),
+                            (Some(method), Some(o)) if o.kind() == "identifier" => {
+                                match imports.get(text(o, src)) {
+                                    Some((module, _)) => {
+                                        Some((method.to_owned(), Some(module.clone())))
+                                    }
+                                    None => typescript_parameter(o, src).map(|ty| {
+                                        let module = imports.get(&ty).map(|(m, _)| m.clone());
+                                        (format!("{ty}.{method}"), module)
+                                    }),
+                                }
+                            }
+                            _ => None,
+                        }
+                    }
                     _ => None,
                 };
                 if let Some((name, module)) = call {
@@ -775,6 +959,35 @@ fn go_package(path: &str) -> &str {
     }
 }
 
+/// The type written for the receiver or parameter `name` names, in the
+/// nearest function that takes one of that name, as its methods carry
+/// it (`*Store` is `Store`; a type of another package keeps the
+/// package: `store.Store`). `None` when no function around it does.
+fn go_parameter(name: Node, src: &[u8]) -> Option<String> {
+    let wanted = text(name, src);
+    let mut at = name.parent();
+    while let Some(n) = at {
+        for field in ["receiver", "parameters"] {
+            let Some(list) = n.child_by_field_name(field) else {
+                continue;
+            };
+            let mut cursor = list.walk();
+            for p in list.named_children(&mut cursor) {
+                let mut names = p.walk();
+                if p.children_by_field_name("name", &mut names)
+                    .any(|m| text(m, src) == wanted)
+                {
+                    return p
+                        .child_by_field_name("type")
+                        .map(|t| bare_type(text(t, src)));
+                }
+            }
+        }
+        at = n.parent();
+    }
+    None
+}
+
 fn go(root: Node, src: &[u8], out: &mut Parsed) {
     let mut aliases: BTreeMap<String, String> = BTreeMap::new();
     walk(root, &mut |n| {
@@ -825,17 +1038,28 @@ fn go(root: Node, src: &[u8], out: &mut Parsed) {
                 let call = match n.child_by_field_name("function") {
                     // `load(..)`: the package's own.
                     Some(f) if f.kind() == "identifier" => Some((text(f, src).to_owned(), None)),
-                    // `store.Load(..)` through an import, or `s.Save(..)`
-                    // on a value.
+                    // `store.Load(..)` through an import: that package's
+                    // function. `s.Save(..)` on a method's receiver or
+                    // a parameter: its type's method. A method on any
+                    // other value is not a call here.
                     Some(f) if f.kind() == "selector_expression" => {
-                        f.child_by_field_name("field").map(|field| {
-                            let module = f
-                                .child_by_field_name("operand")
-                                .filter(|o| o.kind() == "identifier")
-                                .and_then(|o| aliases.get(text(o, src)))
-                                .cloned();
-                            (text(field, src).to_owned(), module)
-                        })
+                        let field = f.child_by_field_name("field").map(|x| text(x, src));
+                        let operand = f
+                            .child_by_field_name("operand")
+                            .filter(|o| o.kind() == "identifier");
+                        match (field, operand) {
+                            (Some(field), Some(o)) => match aliases.get(text(o, src)) {
+                                Some(path) => Some((field.to_owned(), Some(path.clone()))),
+                                None => go_parameter(o, src).map(|ty| match ty.split_once('.') {
+                                    // `store.Store`: a type of an import.
+                                    Some((package, ty)) => {
+                                        (format!("{ty}.{field}"), aliases.get(package).cloned())
+                                    }
+                                    None => (format!("{ty}.{field}"), None),
+                                }),
+                            },
+                            _ => None,
+                        }
                     }
                     _ => None,
                 };

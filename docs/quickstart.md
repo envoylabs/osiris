@@ -397,10 +397,18 @@ a database, the filesystem, the network or a process, with the function
 it sits in and that function's level. It also follows calls one step:
 a changed function that calls a function touching the outside triggers
 that effect, and one called by such a function feeds it; each is
-listed with the function and effect it reaches. Calls are matched by
-name, so a common method name can flag more than it should. `ris map
---list` prints a file's marked lines and its one-step functions under
-its reasons, and on the page a file with any expands to show them.
+listed with the function and effect it reaches. A call is followed only
+where the text says which function it means: by its path, by its own
+file, or for a method by the type of the value it is called on (`self`,
+a parameter or a `let` with its type). A method on any other value is
+not followed, so a step can be missed and a common method name flags
+nothing. A function most of the repository calls or is called by (a
+command's dispatcher, say) is said once for a file, and a step to it
+does not raise a function's level. `ris map --list` prints a file's
+marked lines under its reasons and then the count of its one-step
+functions; `ris map --list --steps` names each. On the page a file
+with any expands to show its marked lines, with the one-step functions
+folded under their count.
 Click one of those lines, or the page's calls view, to see one function
 laid out left to right as execution flows: what calls it, the function,
 what it calls, and the effects reached, each a box with its own lines,

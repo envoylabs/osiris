@@ -405,7 +405,9 @@ fn only_changed_functions_are_kept_and_a_mark_takes_its_function_s_level() {
         removed: [(15, 60)].into_iter().collect(),
     };
     let patterns = crate::syntax::default_effects("rust");
-    let (functions, marks) = inside(&parsed, &changes, &patterns, &|_| (Vec::new(), Vec::new()));
+    let (functions, marks) = inside(&parsed, &changes, &patterns, &|_| {
+        (Vec::new(), Vec::new(), false)
+    });
     let summary: Vec<(&str, u64, u64, Vec<&str>, bool)> = functions
         .iter()
         .map(|c| {
@@ -501,35 +503,33 @@ fn a_changed_function_one_step_from_an_effect_triggers_or_feeds_it() {
         path: path.to_owned(),
         function: function.to_owned(),
         effects: effects.to_vec(),
+        wide: false,
     };
 
     // It calls a direct function through a `use` line: it triggers.
-    let (calls, steps) = graph.reach("src/store.rs", &function("src/store.rs", "Store::save"));
+    let (calls, steps, _) = graph.reach("src/store.rs", &function("src/store.rs", "Store::save"));
     assert_eq!(calls, [callee("src/net.rs", "send")]);
     assert_eq!(
         steps,
         [step("triggers", "src/net.rs", "send", &["network"])]
     );
 
-    // A method on a value could be either `save`: it counts for each,
-    // and the direct one makes a step.
-    let (calls, steps) = graph.reach("src/app.rs", &function("src/app.rs", "run"));
+    // A method on a value whose `let` says its type is that type's
+    // method, never the free function of the same name: `net::save`
+    // holds an effect, and `run` is not one step from it.
+    let (calls, steps, _) = graph.reach("src/app.rs", &function("src/app.rs", "run"));
     assert_eq!(
         calls,
         [
             callee("src/app.rs", "prepare"),
-            callee("src/net.rs", "save"),
             callee("src/store.rs", "Store::new"),
             callee("src/store.rs", "Store::save"),
         ]
     );
-    assert_eq!(
-        steps,
-        [step("triggers", "src/net.rs", "save", &["filesystem"])]
-    );
+    assert!(steps.is_empty(), "{steps:?}");
 
     // A direct function calls it: it feeds the effect.
-    let (_, steps) = graph.reach("src/app.rs", &function("src/app.rs", "prepare"));
+    let (_, steps, _) = graph.reach("src/app.rs", &function("src/app.rs", "prepare"));
     assert_eq!(
         steps,
         [step("feeds", "src/app.rs", "write", &["filesystem"])]
@@ -537,7 +537,7 @@ fn a_changed_function_one_step_from_an_effect_triggers_or_feeds_it() {
 
     // A call into another crate is not the repository's, though a
     // function of the same name is.
-    let (calls, steps) = graph.reach("src/app.rs", &function("src/app.rs", "write"));
+    let (calls, steps, _) = graph.reach("src/app.rs", &function("src/app.rs", "write"));
     assert_eq!(calls, [callee("src/app.rs", "prepare")]);
     assert!(steps.is_empty());
 
@@ -562,7 +562,6 @@ fn a_changed_function_one_step_from_an_effect_triggers_or_feeds_it() {
             ("src/app.rs:9", true, vec![9]),
             ("src/app.rs:11", true, vec![]),
             // Called by run, which is one call out: named only.
-            ("src/net.rs:4", false, vec![]),
             ("src/store.rs:6", false, vec![]),
             ("src/store.rs:9", false, vec![]),
         ]
@@ -589,6 +588,7 @@ fn a_changed_function_one_step_from_an_effect_triggers_or_feeds_it() {
         &[],
         1,
         &[step("triggers", "src/net.rs", "send", &["network"])],
+        false,
     );
     assert_eq!(risk.level, RiskLevel::Low);
     assert_eq!(risk.signals[0].signal, "reach");
@@ -600,12 +600,280 @@ fn a_changed_function_one_step_from_an_effect_triggers_or_feeds_it() {
         &["filesystem"],
         1,
         &[step("feeds", "a.rs", "w", &["network"])],
+        false,
     );
     assert_eq!(
         risk.level,
         RiskLevel::Medium,
         "touching the outside and one step"
     );
+}
+
+/// A package whose `main.rs` holds a dispatcher, `run`, that calls one
+/// function in each of `leaves` other files, `leaf_n::work`, and writes
+/// a file itself; and `helper`, which `leaf_0::work` alone calls and
+/// which writes a file too.
+fn dispatcher(
+    leaves: usize,
+) -> (
+    Tree,
+    BTreeMap<String, (&'static str, crate::syntax::Parsed)>,
+) {
+    let mut files = vec![(
+        "Cargo.toml".to_owned(),
+        "[package]\nname = \"fixture\"\n".to_owned(),
+    )];
+    let calls: String = (0..leaves)
+        .map(|n| format!("    crate::leaf_{n}::work();\n"))
+        .collect();
+    files.push((
+        "src/main.rs".to_owned(),
+        format!(
+            "pub fn run() {{\n    std::fs::write(\"x\", b\"\").unwrap();\n{calls}}}\n\
+             pub fn helper() {{\n    std::fs::write(\"y\", b\"\").unwrap();\n}}\n"
+        ),
+    ));
+    for n in 0..leaves {
+        let body = if n == 0 { "    crate::helper();\n" } else { "" };
+        files.push((
+            format!("src/leaf_{n}.rs"),
+            format!("pub fn work() {{\n{body}}}\n"),
+        ));
+    }
+    let tree: Tree = files.into_iter().collect();
+    let mut parsed = BTreeMap::new();
+    for (path, text) in &tree {
+        if path.ends_with(".rs") {
+            let p = crate::syntax::parse("rust", path, text).unwrap();
+            parsed.insert(path.clone(), ("rust", p));
+        }
+    }
+    (tree, parsed)
+}
+
+#[test]
+fn a_function_most_of_the_repository_is_called_by_is_wide_and_its_steps_do_not_count() {
+    let reach = |leaves: usize, path: &str, name: &str| {
+        let (tree, files) = dispatcher(leaves);
+        let graph = Graph::new(
+            &files,
+            &Locals::of(&tree, &files),
+            &crate::config::MapConfig::default(),
+        );
+        let f = files[path]
+            .1
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .unwrap();
+        graph.reach(path, f)
+    };
+    let said = |steps: &[Step]| -> Vec<(&'static str, String, bool)> {
+        steps
+            .iter()
+            .map(|s| (s.direction, s.function.clone(), s.wide))
+            .collect()
+    };
+
+    // Ten files hold functions and `run` calls into nine: most of them,
+    // and at least eight. Its step to each leaf is the dispatcher's.
+    let (_, steps, wide) = reach(9, "src/leaf_3.rs", "work");
+    assert!(!wide);
+    assert_eq!(said(&steps), [("feeds", "run".to_owned(), true)]);
+    assert_eq!(
+        function_risk(&[], 1, &steps, wide).signals,
+        [],
+        "one step from the dispatcher alone is no signal"
+    );
+
+    // A step to a function that is not wide stands beside it, and counts.
+    let (_, steps, wide) = reach(9, "src/leaf_0.rs", "work");
+    assert_eq!(
+        said(&steps),
+        [
+            ("feeds", "run".to_owned(), true),
+            ("triggers", "helper".to_owned(), false)
+        ]
+    );
+    let risk = function_risk(&[], 1, &steps, wide);
+    assert_eq!(
+        risk.signals[0].reason,
+        "one step from an effect: triggers filesystem via helper"
+    );
+
+    // The dispatcher itself is wide: it is one step from most functions,
+    // so its own steps add nothing to its level.
+    let (calls, _, wide) = reach(9, "src/main.rs", "run");
+    assert_eq!(calls.len(), 9);
+    assert!(wide);
+    let step = Step {
+        direction: "triggers",
+        path: "src/main.rs".to_owned(),
+        function: "helper".to_owned(),
+        effects: vec!["filesystem"],
+        wide: false,
+    };
+    assert_eq!(function_risk(&[], 1, &[step], true).signals, []);
+
+    // Seven of eight files is most of them and under the floor: in a
+    // small repository no function is wide.
+    let (_, steps, _) = reach(7, "src/leaf_3.rs", "work");
+    assert_eq!(said(&steps), [("feeds", "run".to_owned(), false)]);
+
+    // Nine of twenty files is at the floor and under half.
+    let (tree, mut files) = dispatcher(9);
+    for n in 0..10 {
+        let p = crate::syntax::parse("rust", "x.rs", "pub fn idle() {}\n").unwrap();
+        files.insert(format!("src/other_{n}.rs"), ("rust", p));
+    }
+    let graph = Graph::new(
+        &files,
+        &Locals::of(&tree, &files),
+        &crate::config::MapConfig::default(),
+    );
+    let f = &files["src/leaf_3.rs"].1.functions[0];
+    let (_, steps, _) = graph.reach("src/leaf_3.rs", f);
+    assert_eq!(said(&steps), [("feeds", "run".to_owned(), false)]);
+}
+
+#[test]
+fn a_call_means_the_functions_its_path_or_its_file_says() {
+    let locals = Locals {
+        rust_packages: ["fixture".to_owned()].into_iter().collect(),
+        ..Locals::default()
+    };
+    let call = |name: &str, module: Option<&str>| crate::syntax::Call {
+        line: 1,
+        name: name.to_owned(),
+        module: module.map(str::to_owned),
+    };
+    let rust = [
+        "src/app.rs",
+        "src/store.rs",
+        "src/store/disk.rs",
+        "lib/git.rs",
+    ];
+    for (name, module, from, expected) in [
+        // No module, no type: the caller's own file, never another's.
+        ("get", None, "src/app.rs", &["src/app.rs"][..]),
+        // Not in its file: its directory's, and no further.
+        ("get", None, "src/other.rs", &["src/app.rs", "src/store.rs"]),
+        ("get", None, "elsewhere/x.rs", &[]),
+        // A type in front: that method, wherever it is written.
+        ("Store::get", None, "elsewhere/x.rs", &rust[..]),
+        // A module: the file or the directory its last segment names.
+        (
+            "get",
+            Some("crate::store"),
+            "src/app.rs",
+            &["src/store.rs", "src/store/disk.rs"],
+        ),
+        (
+            "get",
+            Some("crate::store::disk"),
+            "src/app.rs",
+            &["src/store/disk.rs"],
+        ),
+        ("get", Some("crate::net"), "src/app.rs", &[]),
+        // `self` is the caller's file; `super` its directory or the one
+        // above; the package itself names no file.
+        ("get", Some("self"), "src/store.rs", &["src/store.rs"]),
+        (
+            "get",
+            Some("super"),
+            "src/store/disk.rs",
+            &["src/app.rs", "src/store.rs", "src/store/disk.rs"],
+        ),
+        ("get", Some("crate"), "src/app.rs", &rust[..]),
+        ("get", Some("fixture"), "src/app.rs", &rust[..]),
+    ] {
+        let found: Vec<&str> = meant("rust", &call(name, module), from, &rust, &locals)
+            .into_iter()
+            .map(|i| rust[i])
+            .collect();
+        assert_eq!(found, expected, "rust {name} {module:?} from {from}");
+    }
+    // The other languages name a module by a path or a namespace.
+    for (language, module, candidates, expected) in [
+        (
+            "typescript",
+            "./store",
+            &["src/store.ts", "src/app.ts"][..],
+            &["src/store.ts"][..],
+        ),
+        (
+            "typescript",
+            "../lib/store.js",
+            &["lib/store.ts", "src/app.ts"],
+            &["lib/store.ts"],
+        ),
+        (
+            "typescript",
+            "./store",
+            &["src/store/index.ts", "src/app.ts"],
+            &["src/store/index.ts"],
+        ),
+        (
+            "go",
+            "example.com/app/store",
+            &["store/disk.go", "cmd/main.go"],
+            &["store/disk.go"],
+        ),
+        (
+            "clojure",
+            "app.store-utils",
+            &["src/app/store_utils.clj", "src/app/core.clj"],
+            &["src/app/store_utils.clj"],
+        ),
+    ] {
+        let found: Vec<&str> = meant(
+            language,
+            &call("load", Some(module)),
+            "src/app.x",
+            candidates,
+            &locals,
+        )
+        .into_iter()
+        .map(|i| candidates[i])
+        .collect();
+        assert_eq!(found, expected, "{language} {module}");
+    }
+}
+
+#[test]
+fn the_list_folds_the_one_step_marks_under_a_count_and_says_a_wide_function_once() {
+    let step = |direction: &str, function: &str, wide: bool| {
+        serde_json::json!({
+            "direction": direction, "path": "src/main.rs", "function": function,
+            "effects": ["filesystem"], "wide": wide,
+        })
+    };
+    let functions = serde_json::json!([
+        { "name": "a", "wide": false,
+          "steps": [step("feeds", "run", true), step("triggers", "save", false)] },
+        { "name": "b", "wide": false, "steps": [step("feeds", "run", true)] },
+        { "name": "c", "wide": false, "steps": [] },
+        { "name": "dispatch", "wide": true,
+          "steps": [step("triggers", "save", false), step("triggers", "load", false)] },
+    ]);
+    // Folded: one line. A wide function counts once, however many
+    // functions are one step from it.
+    assert_eq!(
+        one_step(&functions, false),
+        "         3 one step from an effect\n"
+    );
+    assert_eq!(
+        one_step(&functions, true),
+        "         a triggers filesystem via save (src/main.rs)\n         \
+         dispatch, which most of the repository calls or is called by, \
+         is one step from 2 functions with an effect\n         \
+         2 functions feed filesystem via run (src/main.rs), \
+         which most of the repository calls or is called by\n"
+    );
+    // Nothing one step away: no line in either form.
+    let none = serde_json::json!([{ "name": "c", "wide": false, "steps": [] }]);
+    assert_eq!(one_step(&none, false), "");
+    assert_eq!(one_step(&none, true), "");
 }
 
 #[test]
@@ -686,16 +954,16 @@ fn the_page_lists_the_ranked_files_and_opens_on_the_list() {
     // boxes in the diff pane's rows.
     assert!(PAGE.contains("id=\"view-calls\" type=\"button\" aria-pressed=\"false\""));
     assert!(PAGE.contains("var cg = (doc.call_graph && doc.call_graph.functions) || [];"));
-    assert!(PAGE.contains("if (m[\"function\"]) { opens(div, m[\"function\"], m.line); }"));
+    assert!(PAGE.contains("if (m[\"function\"]) { opens(div, n.path, m[\"function\"], m.line); }"));
     assert!(PAGE.contains("b.addEventListener(\"click\", function () { focus(f.id); });"));
     assert!(PAGE.contains("body.className = \"diff box-body\";"));
     for column in ["called by", "function", "calls", "effects reached"] {
         assert!(PAGE.contains(&format!("column(\"{column}\"")), "{column}");
     }
-    // Expanded, it shows each function one step from an effect too.
-    assert!(
-        PAGE.contains("f.steps.forEach(function (s) { steps.push({ from: f.name, step: s }); });")
-    );
+    // Expanded, it holds each function one step from an effect too, in
+    // a fold under their count.
+    assert!(PAGE.contains("if (!s.wide) { steps.push({ from: f.name, step: s }); return; }"));
+    assert!(PAGE.contains("var count = away + \" one step from an effect\";"));
     // The open pane narrows the list as it does the graph.
     assert!(PAGE.contains("body.paned #list { right: calc(var(--pane) + 12px); }"));
 }
