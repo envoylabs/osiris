@@ -748,8 +748,32 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         && let Some(cfg) = &p.config.install
     {
         let l = p.load()?;
-        if let Some(line) = ris::install::catch_up(&p.root, cfg, &l.log) {
-            eprintln!("{line}");
+        match ris::install::catch_up(&p.root, cfg, &l.log) {
+            Some(Ok(line)) => {
+                eprintln!("{line}");
+                // The program running is older than the one just
+                // installed. A close commits to the main line (the
+                // closing merge, and the rules file rendered into it
+                // from the rules this program holds), so it is made by
+                // the build the phase's checks passed, never an older
+                // one. Nothing has been touched: running it again is
+                // the whole cost.
+                if matches!(
+                    cli.command,
+                    Cmd::Phase {
+                        action: PhaseCmd::Close
+                    }
+                ) {
+                    return Err(CliError::Other(
+                        "refused: this ris was older than the last merge, whose build has only now been installed; \
+                         the phase is closed by that build, since the closing merge carries what ris itself renders\n  \
+                         next: run `ris phase close` again"
+                            .into(),
+                    ));
+                }
+            }
+            Some(Err(warning)) => eprintln!("{warning}"),
+            None => {}
         }
     }
 

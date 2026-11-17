@@ -203,8 +203,11 @@ pub fn install(root: &Path, cfg: &InstallConfig, commit: &str) -> Result<String,
 
 /// Install the last good build when it is not what is installed and
 /// its build has not already failed. `None` when there is nothing to
-/// do: no `[install]`, no merge yet, or already current.
-pub fn catch_up(root: &Path, cfg: &InstallConfig, log: &[Event]) -> Option<String> {
+/// do: no `[install]`, no merge yet, or already current. Otherwise
+/// `Ok` with a line saying what was installed, which also says that
+/// the program now running is older than the one installed, or `Err`
+/// with a warning that the build failed.
+pub fn catch_up(root: &Path, cfg: &InstallConfig, log: &[Event]) -> Option<Result<String, String>> {
     let (item, commit) = last_merged(log)?;
     let paths = cfg.paths(root);
     let full = run(
@@ -219,12 +222,12 @@ pub fn catch_up(root: &Path, cfg: &InstallConfig, log: &[Event]) -> Option<Strin
         return None;
     }
     Some(match install(root, cfg, &full) {
-        Ok(_) => format!(
+        Ok(_) => Ok(format!(
             "installed ris from {} ({item}, the last merge) to {}",
             short(&full),
             cfg.to
-        ),
-        Err(e) => format!("warning: {e}"),
+        )),
+        Err(e) => Err(format!("warning: {e}")),
     })
 }
 

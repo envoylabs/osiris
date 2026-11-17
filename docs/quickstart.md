@@ -282,7 +282,10 @@ records its commit; your next command (or `ris install`) builds that
 commit in a checkout outside the repository and installs it where `to`
 says, so you never run a seat's work in progress. A build that fails is
 reported once and leaves the last good program in place; `ris install`
-tries it again.
+tries it again. A phase is closed by that build and no older one: when
+`ris phase close` is itself the command that installs it, the close is
+refused with nothing touched and asks to be run again, since the
+closing merge carries what `ris` renders (the rules file).
 
 ## 5. Step three: review
 

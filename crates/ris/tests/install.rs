@@ -4,6 +4,8 @@
 //! work in progress is never installed and the install never goes stale.
 //! A failed build leaves the last good program in place.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -24,6 +26,20 @@ fn ris(dir: &Path, agent: &str, args: &[&str]) -> Output {
         .args(args)
         .current_dir(dir)
         .env("RIS_AGENT", agent)
+        .env_remove("RIS_ROOT")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap()
+}
+
+/// `ris` as the person with a git identity in the environment, for a
+/// command that commits: a machine may have none configured.
+fn ris_with_identity(dir: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_ris"))
+        .args(args)
+        .current_dir(dir)
+        .envs(common::GIT_IDENTITY)
+        .env("RIS_AGENT", "person")
         .env_remove("RIS_ROOT")
         .env("NO_COLOR", "1")
         .output()
@@ -115,6 +131,46 @@ fn installed(base: &Path) -> Option<String> {
 
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// A close is made by the last merged build. When the close is the
+/// person's first command after a merge, the program running is older
+/// than the build that command installs: the close is refused with
+/// nothing touched, and goes through when run again.
+#[test]
+fn a_close_by_a_ris_older_than_the_last_merge_is_refused_once() {
+    let (dir, base) = setup();
+    ok(&dir, "heron", &["claim", "I-1"]);
+    ok(&dir, "heron", &["done", "I-1"]);
+    let first = commit(&dir, "first.txt", "I-1");
+    ok(&dir, "heron", &["merge", "I-1"]);
+    let main_before = git(&dir, &["rev-parse", "main"]);
+
+    let out = ris(&dir, "person", &["phase", "close"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("installed ris from"), "{err}");
+    assert!(
+        err.contains("refused: this ris was older than the last merge"),
+        "{err}"
+    );
+    assert!(err.contains("next: run `ris phase close` again"), "{err}");
+    // The build is installed, and nothing else moved.
+    assert_eq!(installed(&base).as_deref(), Some(first.as_str()));
+    assert_eq!(git(&dir, &["rev-parse", "main"]), main_before);
+    assert_eq!(git(&dir, &["rev-parse", "phase/P-1"]), first);
+    let report = ok(&dir, "person", &["report"]);
+    assert!(
+        String::from_utf8_lossy(&report.stdout).contains("P-1 open"),
+        "the phase stays open"
+    );
+
+    // Again, with the build current: the close goes through.
+    let out = ris_with_identity(&dir, &["phase", "close"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("installed"), "{}", stderr(&out));
+    assert_ne!(git(&dir, &["rev-parse", "main"]), main_before);
+    let _ = fs::remove_dir_all(&base);
 }
 
 #[test]
