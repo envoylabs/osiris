@@ -418,11 +418,15 @@ or reshaped.
   means the functions of the file or directory named as the module's
   last segment is; a name with a type in front means that type's
   method; and a name with neither means a function of the caller's own
-  file, or failing that its directory. A method called on a value is a
+  file, or in Go, where a package is a directory, failing that its
+  directory. A method called on a value is a
   call only where the text says the value's type (`self` or `this`, a
   Go method's receiver, a parameter or a `let` with its type, a `let`
   set to `Type::new(..)`, `Type::default()` or a struct written out),
-  and then means that type's method; on any other value it is not
+  and then means that type's method. A name the function binds more
+  than once (shadowed by another `let`, a loop or a pattern) says
+  nothing, since which binding a call sees takes the scopes. On any
+  other value it is not
   resolved, so a call is never matched to a method by its name alone
   and the hint errs toward missing a step. `marks` are the
   lines that touch the outside (an effect site), on a line the phase

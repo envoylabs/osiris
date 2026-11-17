@@ -340,8 +340,8 @@ fn a_method_on_a_value_is_a_call_only_where_the_text_says_its_type() {
          \x20       c.get();\n\
          \x20       let d = make();\n\
          \x20       d.get();\n\
-         \x20       let a = make();\n\
-         \x20       a.get();\n\
+         \x20       let e = make();\n\
+         \x20       e.get();\n\
          \x20       let each = |s: &Store, t| { s.get(); t.get(); };\n\
          \x20   }\n\
          }\n",
@@ -368,8 +368,7 @@ fn a_method_on_a_value_is_a_call_only_where_the_text_says_its_type() {
             // A `let` with its type written.
             (15, "make", None),
             (16, "Store::get", None),
-            // A `let` set to a call says nothing (line 18), and the last
-            // `let` of a name is the one that stands (line 20).
+            // A `let` set to a call says nothing (lines 18 and 20).
             (17, "make", None),
             (19, "make", None),
             // A closure's typed parameter; its untyped one says nothing.
@@ -427,6 +426,66 @@ fn a_method_on_a_value_is_a_call_only_where_the_text_says_its_type() {
             (8, "load", None),
         ]
     );
+}
+
+#[test]
+fn a_name_bound_more_than_once_says_nothing_of_its_type() {
+    // Each function binds `s` as a `Store` and binds it again, or binds
+    // it where the call is not: which `s` the call sees takes the
+    // scopes, so no `s.get()` is `Store::get`.
+    let rust = parse(
+        "rust",
+        "src/app.rs",
+        "fn a(s: Store) {\n    let s = s.name();\n    s.get();\n}\n\
+         fn b(names: Vec<Name>) {\n    let s: Store = make();\n    \
+         for s in names {\n        s.get();\n    }\n}\n\
+         fn c(s: Store, o: Option<Name>) {\n    if let Some(s) = o {\n        s.get();\n    }\n}\n\
+         fn d(s: Store, o: Option<Name>) {\n    match o {\n        Some(s) => s.get(),\n        \
+         None => {}\n    }\n}\n\
+         fn e() {\n    {\n        let s: Store = make();\n    }\n    s.get();\n}\n\
+         fn f(s: Store) {\n    let g = |s| s.get();\n}\n\
+         fn once(s: Store) {\n    s.get();\n}\n",
+    )
+    .unwrap();
+    let methods: Vec<(u64, &str)> = calls(&rust)
+        .into_iter()
+        .filter(|(_, name, _)| name.contains("::"))
+        .map(|(line, name, _)| (line, name))
+        .collect();
+    // In `a` the parameter is still the one meant at `s.name()`, but the
+    // text alone does not say so. Only `once` binds the name once.
+    assert_eq!(methods, [(32, "Store::get")], "{:?}", calls(&rust));
+
+    let go = parse(
+        "go",
+        "store/store.go",
+        "package store\n\n\
+         func (s *Store) A(names []Name) {\n\tif true {\n\t\ts := names[0]\n\t\ts.Get()\n\t}\n}\n\n\
+         func (s *Store) B(names []Name) {\n\tfor _, s := range names {\n\t\ts.Get()\n\t}\n}\n\n\
+         func (s *Store) Once() {\n\ts.Get()\n}\n",
+    )
+    .unwrap();
+    let methods: Vec<(u64, &str)> = calls(&go)
+        .into_iter()
+        .filter(|(_, name, _)| name.contains('.'))
+        .map(|(line, name, _)| (line, name))
+        .collect();
+    assert_eq!(methods, [(17, "Store.Get")], "{:?}", calls(&go));
+
+    let ts = parse(
+        "typescript",
+        "src/app.ts",
+        "function a(s: Store, names: Name[]) {\n  for (const s of names) {\n    s.get();\n  }\n}\n\
+         function b(s: Store) {\n  {\n    const s = make();\n    s.get();\n  }\n}\n\
+         function once(s: Store) {\n  s.get();\n}\n",
+    )
+    .unwrap();
+    let methods: Vec<(u64, &str)> = calls(&ts)
+        .into_iter()
+        .filter(|(_, name, _)| name.contains('.'))
+        .map(|(line, name, _)| (line, name))
+        .collect();
+    assert_eq!(methods, [(13, "Store.get")], "{:?}", calls(&ts));
 }
 
 #[test]

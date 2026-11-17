@@ -537,8 +537,8 @@ const WIDE_AT_LEAST: usize = 8;
 /// caller's file and `super` the caller's directory or the one above.
 /// A call that names no module and has a type in front means that
 /// type's method wherever it is written. One with neither is the
-/// caller's own: its file's, or failing that its directory's (a Go
-/// package is a directory). Anything else is left unresolved.
+/// caller's own file's, or in Go, where a package is a directory,
+/// failing that its directory's. Anything else is left unresolved.
 fn meant(
     language: &str,
     call: &crate::syntax::Call,
@@ -567,7 +567,10 @@ fn meant(
             return keep(&|_| true);
         }
         let own = keep(&|path| path == from);
-        return if own.is_empty() {
+        // A Go package is its directory. Elsewhere a name the file does
+        // not define is a local value, a glob import or the language's
+        // own, never another file's function.
+        return if own.is_empty() && language == "go" {
             keep(&|path| parent(path) == parent(from))
         } else {
             own

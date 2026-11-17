@@ -756,8 +756,9 @@ fn a_call_means_the_functions_its_path_or_its_file_says() {
     for (name, module, from, expected) in [
         // No module, no type: the caller's own file, never another's.
         ("get", None, "src/app.rs", &["src/app.rs"][..]),
-        // Not in its file: its directory's, and no further.
-        ("get", None, "src/other.rs", &["src/app.rs", "src/store.rs"]),
+        // Not in its file: a local value, a glob import or the
+        // language's own, and never a sibling file's function.
+        ("get", None, "src/other.rs", &[]),
         ("get", None, "elsewhere/x.rs", &[]),
         // A type in front: that method, wherever it is written.
         ("Store::get", None, "elsewhere/x.rs", &rust[..]),
@@ -793,6 +794,22 @@ fn a_call_means_the_functions_its_path_or_its_file_says() {
             .collect();
         assert_eq!(found, expected, "rust {name} {module:?} from {from}");
     }
+    // A Go package is its directory: a bare name the file does not
+    // define is another file's of the same directory, and no further.
+    let go = ["store/disk.go", "store/mem.go", "cmd/main.go"];
+    let bare = |language: &str, from: &str| -> Vec<&str> {
+        meant(language, &call("load", None), from, &go, &locals)
+            .into_iter()
+            .map(|i| go[i])
+            .collect()
+    };
+    assert_eq!(bare("go", "store/disk.go"), ["store/disk.go"]);
+    assert_eq!(
+        bare("go", "store/index.go"),
+        ["store/disk.go", "store/mem.go"]
+    );
+    assert_eq!(bare("typescript", "store/index.go"), [] as [&str; 0]);
+
     // The other languages name a module by a path or a namespace.
     for (language, module, candidates, expected) in [
         (

@@ -290,6 +290,86 @@ fn enclosing<'t>(node: Node<'t>, kinds: &[&str]) -> Option<Node<'t>> {
     None
 }
 
+/// The outermost enclosing node of one of `kinds`, if any.
+fn outermost<'t>(node: Node<'t>, kinds: &[&str]) -> Option<Node<'t>> {
+    let mut found = None;
+    let mut at = node.parent();
+    while let Some(n) = at {
+        if kinds.contains(&n.kind()) {
+            found = Some(n);
+        }
+        at = n.parent();
+    }
+    found
+}
+
+/// Where Rust binds a name: each kind of node that does, and the field
+/// of it that holds the pattern. An empty field is every child that is
+/// not a `parameter`, which is listed itself.
+const RUST_BINDERS: &[(&str, &str)] = &[
+    ("parameter", "pattern"),
+    ("closure_parameters", ""),
+    ("let_declaration", "pattern"),
+    ("let_condition", "pattern"),
+    ("for_expression", "pattern"),
+    ("match_arm", "pattern"),
+];
+/// Where Go binds a name.
+const GO_BINDERS: &[(&str, &str)] = &[
+    ("parameter_declaration", "name"),
+    ("short_var_declaration", "left"),
+    ("var_spec", "name"),
+    ("range_clause", "left"),
+    ("type_switch_statement", "alias"),
+];
+/// Where TypeScript binds a name.
+const TYPESCRIPT_BINDERS: &[(&str, &str)] = &[
+    ("required_parameter", "pattern"),
+    ("optional_parameter", "pattern"),
+    ("variable_declarator", "name"),
+    ("catch_clause", "parameter"),
+    ("for_in_statement", "left"),
+];
+
+/// How many times `scope` binds `name`, by the `binders` of its
+/// language: once is a name with one meaning throughout; more is a name
+/// shadowed or bound again, whose meaning at a line takes the scopes.
+fn bindings(scope: Node, name: &str, src: &[u8], binders: &[(&str, &str)]) -> usize {
+    let named = |pattern: Node| {
+        let mut n = 0;
+        walk(pattern, &mut |c| {
+            if c.kind().contains("identifier") && text(c, src) == name {
+                n += 1;
+            }
+            true
+        });
+        n
+    };
+    let mut count = 0;
+    walk(scope, &mut |n| {
+        for (kind, field) in binders {
+            if n.kind() != *kind {
+                continue;
+            }
+            let mut cursor = n.walk();
+            if field.is_empty() {
+                count += n
+                    .named_children(&mut cursor)
+                    .filter(|c| c.kind() != "parameter")
+                    .map(named)
+                    .sum::<usize>();
+            } else {
+                count += n
+                    .children_by_field_name(field, &mut cursor)
+                    .map(named)
+                    .sum::<usize>();
+            }
+        }
+        true
+    });
+    count
+}
+
 /// A type as a name: no generics, no pointer or reference marks.
 fn bare_type(t: &str) -> String {
     t.split('<')
@@ -555,7 +635,9 @@ fn rust_value_type(value: Node, src: &[u8]) -> Option<String> {
 /// function it is in says it: `self`, a parameter with its type, or a
 /// name a `let` above gave a type ([`rust_value_type`], or one written
 /// after the name). `None` for anything else (a field, the result of a
-/// call, a name bound by a pattern), whose type takes a type checker.
+/// call, a name bound by a pattern), whose type takes a type checker,
+/// and for a name the function binds more than once or binds in a block
+/// the call is not in, whose meaning at the call takes the scopes.
 fn rust_receiver(value: Node, src: &[u8]) -> Option<String> {
     if value.kind() == "self" {
         return rust_owner(value).map(|o| bare_type(text(o, src)));
@@ -564,8 +646,14 @@ fn rust_receiver(value: Node, src: &[u8]) -> Option<String> {
         return None;
     }
     let name = text(value, src);
+    // A name the function binds more than once is shadowed somewhere,
+    // and which binding the call sees takes the scopes: it says nothing.
+    let outermost = outermost(value, &["function_item"])?;
+    if bindings(outermost, name, src, RUST_BINDERS) != 1 {
+        return None;
+    }
     // The nearest closure or function that takes the name says its type;
-    // a closure's parameter with no type written hides any outside it.
+    // a closure's parameter with no type written says nothing.
     let mut at = value.parent();
     let mut function = None;
     while let Some(n) = at {
@@ -590,7 +678,12 @@ fn rust_receiver(value: Node, src: &[u8]) -> Option<String> {
         }
         at = n.parent();
     }
-    // The last `let` of the name above the call, in the same function.
+    // The `let` of the name above the call, in a block the call is in.
+    let around = |n: Node| {
+        n.parent().is_some_and(|b| {
+            b.start_byte() <= value.start_byte() && value.end_byte() <= b.end_byte()
+        })
+    };
     let mut found = None;
     walk(function?, &mut |n| {
         if n.start_byte() >= value.start_byte() {
@@ -598,6 +691,7 @@ fn rust_receiver(value: Node, src: &[u8]) -> Option<String> {
         }
         if n.kind() == "let_declaration"
             && n.end_byte() <= value.start_byte()
+            && around(n)
             && n.child_by_field_name("pattern")
                 .and_then(|b| rust_binding(b, src))
                 == Some(name)
@@ -696,6 +790,24 @@ fn member_chain(n: Node, src: &[u8]) -> Option<Vec<String>> {
 /// type is not one name.
 fn typescript_parameter(name: Node, src: &[u8]) -> Option<String> {
     let wanted = text(name, src);
+    // A name bound again in the function (a `const` over a parameter,
+    // say) says nothing.
+    let functions = [
+        "function_declaration",
+        "generator_function_declaration",
+        "method_definition",
+        "arrow_function",
+        "function_expression",
+    ];
+    if bindings(
+        outermost(name, &functions)?,
+        wanted,
+        src,
+        TYPESCRIPT_BINDERS,
+    ) != 1
+    {
+        return None;
+    }
     let mut at = name.parent();
     while let Some(n) = at {
         if let Some(parameters) = n.child_by_field_name("parameters") {
@@ -965,6 +1077,12 @@ fn go_package(path: &str) -> &str {
 /// package: `store.Store`). `None` when no function around it does.
 fn go_parameter(name: Node, src: &[u8]) -> Option<String> {
     let wanted = text(name, src);
+    // A name bound again in the function (`:=` in a nested block, a
+    // `range`) says nothing.
+    let functions = ["function_declaration", "method_declaration"];
+    if bindings(outermost(name, &functions)?, wanted, src, GO_BINDERS) != 1 {
+        return None;
+    }
     let mut at = name.parent();
     while let Some(n) = at {
         for field in ["receiver", "parameters"] {
