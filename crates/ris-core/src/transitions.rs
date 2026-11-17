@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub enum CommandKind {
     PhaseOpen,
     PhaseClose,
+    /// The person recording that they reviewed the open phase.
+    PhaseReview,
     ItemAdd,
     Claim,
     /// Raising a mechanical decision: logged, the item carries on.
@@ -67,6 +69,7 @@ impl CommandKind {
     pub const ALL: &[CommandKind] = &[
         Self::PhaseOpen,
         Self::PhaseClose,
+        Self::PhaseReview,
         Self::ItemAdd,
         Self::Claim,
         Self::RaiseMechanical,
@@ -208,6 +211,8 @@ pub const PHASE: &[(PhaseStateKind, CommandKind, Move<PhaseStateKind>)] = {
         // open it has no phase, or is tagged for a later one.
         (S::Closed, C::ItemAdd, Move::Stay),
         (S::Open, C::PhaseClose, Move::To(S::Closed)),
+        // A review is recorded, and recorded again; the phase stays open.
+        (S::Open, C::PhaseReview, Move::Stay),
         (S::Closed, C::PhaseOpen, Move::To(S::Open)),
     ]
 };

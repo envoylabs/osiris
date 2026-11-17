@@ -51,7 +51,7 @@ fn project(name: &str) -> std::path::PathBuf {
     fs::write(&config, c).unwrap();
     ok(&dir, "person", &["phase", "open", "first"]);
     ok(&dir, "person", &["item", "add", "old work"]);
-    ok(&dir, "person", &["phase", "close"]);
+    ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     ok(&dir, "person", &["phase", "open", "second"]);
     ok(&dir, "person", &["item", "add", "this phase's work"]);
     dir

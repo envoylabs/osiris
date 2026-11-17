@@ -50,10 +50,10 @@ fn closed_phases_export_verify_and_replay() {
     .unwrap();
     ok(&repo, &["phase", "open", "first"]);
     ok(&repo, &["item", "add", "one"]);
-    ok(&repo, &["phase", "close"]);
+    ok(&repo, &["phase", "close", "--unreviewed"]);
     ok(&repo, &["phase", "open", "second"]);
     ok(&repo, &["item", "add", "the acme thing"]);
-    ok(&repo, &["phase", "close"]);
+    ok(&repo, &["phase", "close", "--unreviewed"]);
     ok(&repo, &["phase", "open", "third, still open"]);
 
     let out = base.join("out");

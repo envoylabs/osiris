@@ -182,7 +182,7 @@ fn a_decision_about_a_superseded_item_is_in_its_replacements_brief() {
 fn a_carried_over_items_brief_names_the_open_phase() {
     let dir = project("carried");
     ok(&dir, None, &["item", "add", "left for later"]);
-    ok(&dir, None, &["phase", "close"]);
+    ok(&dir, None, &["phase", "close", "--unreviewed"]);
     ok(&dir, None, &["phase", "open", "the next goal"]);
     ok(&dir, None, &["item", "bring-in", "I-1"]);
     let brief = ok(&dir, Some("heron"), &["claim", "I-1"]);

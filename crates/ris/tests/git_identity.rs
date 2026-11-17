@@ -117,7 +117,7 @@ fn a_close_with_no_git_identity_is_refused_as_that() {
     ok(&dir, "person", &["merge", "I-1"]);
     let main_before = git(&dir, &["rev-parse", "main"]);
 
-    let out = ris_without_identity(&dir, &["phase", "close"]);
+    let out = ris_without_identity(&dir, &["phase", "close", "--unreviewed"]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -133,7 +133,7 @@ fn a_close_with_no_git_identity_is_refused_as_that() {
     assert!(!err.contains("conflict"), "{err}");
 
     // The same in the --json envelope: the message and the next step.
-    let out = ris_without_identity(&dir, &["--json", "phase", "close"]);
+    let out = ris_without_identity(&dir, &["--json", "phase", "close", "--unreviewed"]);
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["ok"], false, "{v}");
     let message = v["error"]["message"].as_str().unwrap();
@@ -151,6 +151,6 @@ fn a_close_with_no_git_identity_is_refused_as_that() {
     assert!(report.contains("P-1 open"), "{report}");
 
     // With an identity, the same close goes through.
-    ok(&dir, "person", &["phase", "close"]);
+    ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert_ne!(git(&dir, &["rev-parse", "main"]), main_before);
 }

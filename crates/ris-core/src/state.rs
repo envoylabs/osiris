@@ -44,6 +44,19 @@ pub struct State {
     /// is in the event's text, which the fold does not read.
     #[serde(default)]
     pub risks: BTreeMap<crate::ids::PhaseId, Vec<u64>>,
+    /// Each phase's latest review that still stands: the person's
+    /// review, and the tip it was taken at. A merge of one of the
+    /// phase's items after it moves the tip, and removes it.
+    #[serde(default)]
+    pub reviews: BTreeMap<crate::ids::PhaseId, Review>,
+}
+
+/// The person reviewed a phase: the event that recorded it, and the
+/// commit at the tip of the phase's work then, when it is in git.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Review {
+    pub at: u64,
+    pub tip: Option<crate::ids::CommitHash>,
 }
 
 /// The reverse index: links that events record in one direction, read
@@ -383,6 +396,12 @@ impl State {
             }
             Structure::ItemMerged { item, commit } => {
                 let i = self.item_mut(seq, *item)?;
+                // The phase's work moved on: a review before this no
+                // longer covers it.
+                if let Some(phase) = i.phase {
+                    self.reviews.remove(&phase);
+                }
+                let i = self.item_mut(seq, *item)?;
                 let evidence = match &i.state {
                     ItemState::Done { evidence } => evidence.clone(),
                     _ => Vec::new(),
@@ -458,6 +477,15 @@ impl State {
             }
             Structure::RiskJudged { phase, .. } => {
                 self.risks.entry(*phase).or_default().push(seq);
+            }
+            Structure::PhaseReviewed { phase, tip } => {
+                self.reviews.insert(
+                    *phase,
+                    Review {
+                        at: seq,
+                        tip: tip.clone(),
+                    },
+                );
             }
             Structure::RunStopped { seat, .. } => {
                 self.running.remove(seat);

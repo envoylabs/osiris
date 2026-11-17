@@ -129,7 +129,13 @@ the seats up, review, close the phase. There is no check-in in between.
 Between up and review the agents never wait for the person: a
 substantive decision sets its item aside and the agent takes another,
 so nothing raised while the phase runs stops it, and every queued
-decision is put to the person once, at review. An item's phase is a
+decision is put to the person once, at review. The review is one
+command, `ris phase review`: the phase's state, a walk of the queued
+decisions, and the change set ranked by risk, recorded as reviewed at
+the tip of the phase's work. The close refuses a tip that has not been
+reviewed, so whatever reaches the phase's branch after the review, by
+a merge or by hand, is read before the phase closes; the person may
+close unreviewed by saying so. An item's phase is a
 tag: the open phase, a later phase by number, or none, which is the
 backlog. Seats work only the open phase's items. Planning lives in the
 harness between phases: an item is added and tagged with no phase open,
@@ -151,7 +157,8 @@ most two a day.
    head, and the full checks run again on the result (Commits).
 5. **Review.** At phase end the person reads one generated report:
    decisions taken, diffs, evidence, deviations from the rules. Anything
-   the person overturns becomes a new item.
+   the person overturns becomes a new item. `ris phase review` is that
+   step, and the close waits for it.
 
 ### Window schedule
 
@@ -551,13 +558,17 @@ Functional core, imperative shell; hexagonal between components.
   the document is the contract and the picture only a renderer of it:
   `ris map` gives the phase's change set as a graph document (the
   source files, the lines the phase changed in each and their diffs,
-  how the code connects, which files touch the outside, and a risk
+  how the code connects (Rust's modules and paths, TypeScript's
+  relative imports, Go's imports of the repository's own packages,
+  Clojure's required namespaces), which files touch the outside, and a risk
   level for each changed file: one computed from those signals, and an
   auditor's judgement beside it where one is recorded, with the order
   to read the files in), and `ris map --html`
   writes one self-contained page that embeds that document and draws
   nothing else, so a later interface draws the same map from the same
-  JSON. The person's `ris map` at a terminal writes that page inside
+  JSON. Given a git range instead of a phase (`ris map A..B`), it maps
+  the change between two commits of any repository, a project or not.
+  The person's `ris map` at a terminal writes that page inside
   `.osiris` and opens it in the browser; a seat's never opens anything,
   and `ris map --list` prints the files ranked with their reasons. The
   page has three views of the one document: the ranked list, which it
@@ -568,10 +579,16 @@ Functional core, imperative shell; hexagonal between components.
   the lines that touch a database, the filesystem, the network or a
   process, by a list of names per language that a project extends; the
   functions the phase changed, each with a level of its own; and calls
-  resolved by name across the repository, so a changed function one
-  call from an effect (it triggers one, or feeds one) is marked. Names
-  alone over-flag: a method called on a value means every function so
-  named. A file of another language stays at file level.
+  resolved across the repository, so a changed function one call from
+  an effect (it triggers one, or feeds one) is marked. A call is
+  resolved only where the text says which function it means: by its
+  path, by its own file, or for a method by the type written for the
+  value it is called on; a method on any other value is left
+  unresolved, since its name alone means every method so named. A
+  function most of the repository calls or is called by is said once
+  for a file and adds nothing to a function's level. The list gives
+  the direct marks first and the one-step marks as a count. A file of
+  another language stays at file level.
 - **Language:** Rust for the core, daemon and CLI.
 
 ## Runtime and environments

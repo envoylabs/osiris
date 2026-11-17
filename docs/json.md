@@ -89,7 +89,10 @@ line of output per envelope, and ends once no seat is running; without
   open substantive decisions, which wait on the person), `faults` (the
   seats with a setup fault), `running` (the seats whose agent is
   running; a run whose process is gone is not counted) and
-  `ready_to_close` (every item merged, and at least one). `merged`,
+  `ready_to_close` (every item merged, and at least one) and
+  `reviewed` (the person's review with `ris phase review` stands at
+  the tip of the phase's work now, as `ris phase close` asks: nothing
+  has reached the phase's branch since). `merged`,
   `in_progress`, `set_aside` and `not_started` add up to `items`. It
   is the open phase's whether or not `--all` is given, though only the
   default text output shows the line. `seats` is every configured
@@ -104,6 +107,15 @@ line of output per envelope, and ends once no seat is running; without
   given, in which case nothing is left out and the `graph` is the work
   in motion in every phase: open decisions, open actions and unmerged
   items, where only nodes with an edge are listed.
+- `ris phase review`: `phase`, `tip` (the commit at the head of the
+  phase's work that was reviewed; `null` when the project is not in
+  git), `taken` (decisions taken during the review's walk of the
+  queue; with `--json` there is no walk, so none), `open` (substantive
+  decisions still open) and `map` (the change set, as `ris map --json`
+  gives it; `null` when it cannot be read). The review is recorded as a
+  `phase_reviewed` event carrying `phase` and `tip`. `ris phase close`
+  refuses unless the latest review stands at the tip of the phase's
+  work now; `--unreviewed` closes without one.
 - `ris report` (and `phase` in `ris phase close`'s data): `tally`,
   the items the phase `opened_with` (those tagged for it before it
   opened that `ris phase open` brought in, not those it moved on), the
@@ -260,8 +272,14 @@ The compatibility rule in schema terms. Within format 1:
 
 `ris map` gives the phase's change set as a graph over the source
 code: the open phase's, or with none open the last closed one's, or
-that of the phase named (`ris map P-3`). Its `data` is the graph
-document. The document is the contract and holds everything there is
+that of the phase named (`ris map P-3`). Given a git range in place of
+a phase, `ris map A..B` maps the files at `B` against `A`, and `ris map
+A...B` against where the two met, as `git diff` reads them; either end
+left out is `HEAD`. A range is read in any git repository, a project or
+not (outside one, with the default `[map]` configuration, and the page
+is written only with `--html`); its document has `phase` null, the
+range as `tip_ref`, and no auditor's judgements. Its `data` is the
+graph document. The document is the contract and holds everything there is
 to draw: `ris map --html <file>` writes a page that embeds the same
 document, as JSON in the element `<script id="map-data"
 type="application/json">`, and draws nothing that is not in it, so any
@@ -317,7 +335,7 @@ or reshaped.
   main line, and the phase's tip, whose files are the nodes. `tip_ref`
   says what named the tip: the phase's branch while it exists, `HEAD`
   for an open phase with no branch of its own, or the closing merge
-  for a closed phase. `base` is null when where the work left the main
+  for a closed phase, or the range as given. `base` is null when where the work left the main
   line is not known, and then no node carries a diff. `phase` is null
   in a project that has never opened one.
 - `nodes` are the repository's source files, sorted by `path`, which
@@ -328,9 +346,13 @@ or reshaped.
   Files that are neither are not on the map, whatever the phase did to
   them.
 - Test files are not on the map either: a file that would be a node
-  and matches a `[map] tests` pattern (by default `**/tests/**`, every
-  file under a `tests` directory) has no node and no edge, unless a
-  `contracts` pattern also names it. The tests verify the behaviour
+  and matches a `[map] tests` pattern has no node and no edge, unless a
+  `contracts` pattern also names it. By default the patterns are each
+  language's convention: every file under a `tests`, `test` or
+  `__tests__` directory, and every file named as a test beside its
+  source (`*_test.go`; `*.test.ts`, `*.spec.ts` and the same for
+  `.tsx`, `.js` and `.jsx`; `*_test.clj`, `.cljs` and `.cljc`). The
+  tests verify the behaviour
   that lands in the source; `totals.tests` says what the phase did to
   them.
 - `status` is `added`, `modified`, `deleted` or `unchanged` in the
@@ -377,17 +399,36 @@ or reshaped.
   `added` in it and `removed` from it, the kinds of `effects` on its
   lines, whether it is `direct` (holds an effect site itself), the
   functions of the repository it `calls` (`path` and `function`), its
-  `steps` one step from an effect, and its `risk`, computed from the
-  same signals as a file's (its effects and the size of its change),
-  with one point more and the signal `reach` when it has a step, as
-  `level` and `signals`. A step is a direct function it calls
-  (`direction` `triggers`) or one that calls it (`feeds`), with that
-  function's `path`, `function` and `effects`. Calls are resolved by
-  name over every file on the map of those languages: a call into a
-  module the repository does not hold (a standard library, a package,
-  another crate) is left out, a name with a type in front means that
-  method, and a bare name (a method called on a value, say) means every
-  function and method so named, so the hint errs toward flagging. `marks` are the
+  `steps` one step from an effect, whether it is `wide` itself, and
+  its `risk`, computed from the same signals as a file's (its effects
+  and the size of its change), with one point more and the signal
+  `reach` when it has a step that counts, as `level` and `signals`. A
+  step is a direct function it calls (`direction` `triggers`) or one
+  that calls it (`feeds`), with that function's `path`, `function` and
+  `effects`, and whether that function is `wide`. A function is wide
+  when the functions it calls, or those that call it, lie in more than
+  half of the files that hold functions, and in at least eight: a
+  command's dispatcher, a helper everything uses. Most functions are
+  one step from such a function, so a step to one does not count
+  toward the level, and no step of a function that is wide itself
+  does. Calls are resolved over every file on the map of those
+  languages, and only where the text says which function is meant: a
+  call into a module the repository does not hold (a standard library,
+  a package, another crate) is left out; a call that names a module
+  means the functions of the file or directory named as the module's
+  last segment is; a name with a type in front means that type's
+  method; and a name with neither means a function of the caller's own
+  file, or in Go, where a package is a directory, failing that its
+  directory. A method called on a value is a
+  call only where the text says the value's type (`self` or `this`, a
+  Go method's receiver, a parameter or a `let` with its type, a `let`
+  set to `Type::new(..)`, `Type::default()` or a struct written out),
+  and then means that type's method. A name the function binds more
+  than once (shadowed by another `let`, a loop or a pattern) says
+  nothing, since which binding a call sees takes the scopes. On any
+  other value it is not
+  resolved, so a call is never matched to a method by its name alone
+  and the hint errs toward missing a step. `marks` are the
   lines that touch the outside (an effect site), on a line the phase
   changed or in a function it changed, by line: `line` at `tip`,
   `kind` (`database`, `filesystem`, `network` or `process`), the
@@ -420,9 +461,17 @@ or reshaped.
   Rust: `mod` (a `mod name;` line, to the module's file) and `use` (a
   `use` line or a qualified path through `crate`, `self`, `super` or a
   package of the repository, to the deepest module file it names).
-  Edges are found by scanning the text, per language; a language with
-  no scanner yet has nodes and no edges, and gaining one adds edges
-  and `kind` values without changing the document's shape.
+  For TypeScript: `import` (an `import` or `export ... from`, a
+  `require` or an `import()` of a relative specifier, to the file it
+  names: with or without its extension, `./wire.js` for `wire.ts`, or
+  a directory's `index` file). For Go: `import` (an import path under
+  a module a `go.mod` in the repository declares, to every Go file in
+  that package's directory). For Clojure: `require` (a namespace an
+  `ns` form's `:require` or `:use` names, to every file whose `ns` form
+  declares it). Rust's edges are found by scanning the text, the
+  others' from their syntax trees; a language with no scanner yet has
+  nodes and no edges, and gaining one adds edges and `kind` values
+  without changing the document's shape.
 - `totals` counts the nodes (`files`), those not `unchanged`
   (`changed`), their lines `added` and `removed`, and the nodes that
   are external or a contract (`outside`). `tests` counts the test files

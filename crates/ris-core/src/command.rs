@@ -33,6 +33,13 @@ pub enum Command {
     /// head and the previous report, never over a rendering. Its items
     /// that have not merged lose their tag.
     PhaseClose,
+    /// Records that the person reviewed the open phase at `tip`, the
+    /// commit at the head of its work (none outside git). The person's
+    /// only.
+    PhaseReview {
+        by: Actor,
+        tip: Option<CommitHash>,
+    },
     /// Adds an item. With no phase open and no tag named it has no
     /// phase, which is the backlog; it is never refused for lack of an
     /// open phase.
@@ -223,6 +230,7 @@ impl Command {
         match self {
             Self::PhaseOpen { .. } => CommandKind::PhaseOpen,
             Self::PhaseClose => CommandKind::PhaseClose,
+            Self::PhaseReview { .. } => CommandKind::PhaseReview,
             Self::ItemAdd { .. } => CommandKind::ItemAdd,
             Self::Claim { .. } => CommandKind::Claim,
             Self::DecisionRaise {
@@ -442,6 +450,17 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                     }),
             );
             Ok(effects)
+        }
+
+        Command::PhaseReview { by, tip } => {
+            if *by != Actor::Person {
+                return Err(Refusal::ReviewIsForThePerson);
+            }
+            let phase = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
+            Ok(vec![Effect::new(Structure::PhaseReviewed {
+                phase,
+                tip: tip.clone(),
+            })])
         }
 
         Command::ItemAdd {

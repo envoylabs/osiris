@@ -231,7 +231,7 @@ fn the_open_phases_scope_is_the_persons_and_a_closed_phase_takes_nothing() {
     assert!(err.contains("claimed"), "{err}");
 
     // Closing clears the tag of what has not merged, and says so.
-    let closed = ok(&dir, "person", &["phase", "close"]);
+    let closed = ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert!(
         closed.contains("2 item(s) not merged have no phase now"),
         "{closed}"

@@ -123,3 +123,39 @@ fn a_denylisted_agent_name_is_refused() {
     .unwrap();
     assert!(c.check_agent_names().is_err());
 }
+
+/// Each language's convention for its tests is a test file by default,
+/// and the source beside it is not.
+#[test]
+fn the_default_test_patterns_cover_each_languages_convention() {
+    let tests = default_map_tests();
+    let is_test = |path: &str| tests.iter().any(|t| crate::map::glob(t, path));
+    for path in [
+        "tests/map.rs",
+        "crates/ris/src/tests/map.rs",
+        "store/store_test.go",
+        "store_test.go",
+        "src/app.test.ts",
+        "src/ui/button.test.tsx",
+        "src/app.spec.ts",
+        "web/app.spec.js",
+        "src/__tests__/app.ts",
+        "test/shop/core_test.clj",
+        "src/shop/core_test.cljs",
+        "src/shop/wire_test.cljc",
+    ] {
+        assert!(is_test(path), "{path} is a test file");
+    }
+    for path in [
+        "src/map.rs",
+        "store/store.go",
+        "store/testdata.go",
+        "src/app.ts",
+        "src/latest.ts",
+        "src/contest.spec-helper.ts",
+        "src/shop/core.clj",
+        "src/shop/test_util.clj",
+    ] {
+        assert!(!is_test(path), "{path} is source");
+    }
+}

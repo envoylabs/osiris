@@ -219,9 +219,12 @@ enum Cmd {
     /// files connect. With no phase named, the open phase, or the last
     /// one closed. Run by the person at a terminal with no flags, it
     /// writes the page inside .osiris and opens it in the browser.
+    /// Given a git range instead, the change set between two commits of
+    /// any repository, in a project or not.
     Map {
-        /// The phase, such as P-3.
-        phase: Option<ris_core::ids::PhaseId>,
+        /// The phase, such as P-3; or a git range, A..B (the files at B
+        /// against A) or A...B (against where the two met).
+        phase: Option<MapTarget>,
         /// Write one self-contained page that draws the map here.
         #[arg(long, value_name = "FILE")]
         html: Option<PathBuf>,
@@ -229,6 +232,10 @@ enum Cmd {
         /// with its reasons, and open nothing.
         #[arg(long, conflicts_with = "html")]
         list: bool,
+        /// With --list, print each function one step from an effect
+        /// under its file, where the list alone gives their count.
+        #[arg(long, requires = "list")]
+        steps: bool,
     },
     /// Where each seat is: role, worktree, branch, claim, commits ahead
     /// of and behind the phase branch, uncommitted changes.
@@ -300,9 +307,40 @@ enum PhaseCmd {
         #[arg(long)]
         move_on: bool,
     },
+    /// The review step before closing, the person's: the phase's state,
+    /// a walk of the open decisions as `ris decide` gives it, and the
+    /// change set ranked by risk; then the review is recorded at the
+    /// tip of the phase's work. Run at any point while the phase is
+    /// open, it covers what has merged so far.
+    Review,
     /// Close the open phase. Its items that have not merged lose their
-    /// tag: they are in the backlog until tagged again.
-    Close,
+    /// tag: they are in the backlog until tagged again. Refused unless
+    /// the phase was reviewed at the tip of its work.
+    Close {
+        /// Close without a review standing at the tip.
+        #[arg(long)]
+        unreviewed: bool,
+    },
+}
+
+/// What `ris map` reads: a phase, or a git range.
+#[derive(Clone, Debug)]
+enum MapTarget {
+    Phase(PhaseId),
+    Range(String),
+}
+
+impl std::str::FromStr for MapTarget {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.contains("..") {
+            return Ok(Self::Range(s.to_owned()));
+        }
+        s.parse::<PhaseId>()
+            .map(Self::Phase)
+            .map_err(|_| format!("`{s}` is neither a phase (P-n) nor a git range (A..B or A...B)"))
+    }
 }
 
 /// A phase tag as it is typed: `P-n`, or `none`.
@@ -733,6 +771,26 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
             },
         ));
     }
+    // A range is any repository's history: outside a project it is read
+    // with the default configuration, and printed or written, never
+    // opened, since there is no project to keep the page in.
+    if let Cmd::Map {
+        phase: Some(MapTarget::Range(spec)),
+        html,
+        list,
+        steps,
+    } = &cli.command
+        && matches!(Project::find(&cwd), Err(CliError::NotAProject(_)))
+    {
+        let range = ris::map::git_range(&cwd, spec)?;
+        let map = ris::map::build_range(&cwd, &ris::config::MapConfig::default(), &range)?;
+        use ris::map::Show;
+        return match (html, list) {
+            (Some(file), _) => ris::map::output(map, Show::Write(file)),
+            (None, true) => ris::map::output(map, Show::List { steps: *steps }),
+            (None, false) => ris::map::output(map, Show::Text),
+        };
+    }
     if let Cmd::Schema = cli.command {
         // The contract is the program's, not a project's: it prints
         // anywhere, for anyone.
@@ -761,7 +819,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 if matches!(
                     cli.command,
                     Cmd::Phase {
-                        action: PhaseCmd::Close
+                        action: PhaseCmd::Close { .. }
                     }
                 ) {
                     return Err(CliError::Other(
@@ -782,7 +840,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         if matches!(
             cli.command,
             Cmd::Phase {
-                action: PhaseCmd::Close
+                action: PhaseCmd::Close { .. }
             }
         ) && ris::install::is_installed(&p.root, cfg, std::env::current_exe().ok().as_deref())
             == Some(false)
@@ -1064,7 +1122,26 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     },
                 ))
             }
-            PhaseCmd::Close => {
+            PhaseCmd::Review => {
+                // The state as `ris summary` gives it, printed first.
+                let state = if cli.json {
+                    String::new()
+                } else {
+                    let l = p.load()?;
+                    let running: Vec<AgentName> = l
+                        .state
+                        .running
+                        .keys()
+                        .filter(|seat| run_alive(&p, &seat.0))
+                        .cloned()
+                        .collect();
+                    let seats = ris::status::summary_seats(&p, &l, &|seat| run_alive(&p, seat));
+                    let reviewed = ris::review::stands(&l, ris::review::tip(&p, &l).as_ref());
+                    render::summary(&l, &actor, false, Vec::new(), &running, seats, reviewed).text
+                };
+                ris::review::run(&mut p, &actor, &state, !cli.json, &mut std::io::stdout())
+            }
+            PhaseCmd::Close { unreviewed } => {
                 let l = p.load()?;
                 let phase = l
                     .state
@@ -1093,6 +1170,14 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         docs.id, docs.id
                     )));
                 }
+                // The person read the change set at this tip, or chose
+                // to close without.
+                if !*unreviewed
+                    && let Some(why) =
+                        ris::review::unreviewed(&l, phase_id, ris::review::tip(&p, &l).as_ref())
+                {
+                    return Err(CliError::Other(why));
+                }
                 let closing = closing_merge(&mut p, phase_id, &goal)?;
                 let (l, events) = p.run(&Command::PhaseClose)?;
                 // The close, then one event for each item it untagged.
@@ -1112,7 +1197,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 let (text, phase) = render::report_data(&l);
                 Ok(Output::of(
                     format!(
-                        "{text}\n{closing}{left}\nthe change set as a map of the source: `ris map`, or `ris map --html <file>`"
+                        "{text}\n{closing}{left}\n{phase_id}'s change set stays readable: `ris map {phase_id}`, or `ris map {phase_id} --html <file>`"
                     ),
                     &schema::PhaseClosed {
                         report,
@@ -1803,15 +1888,32 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 .cloned()
                 .collect();
             let seats = ris::status::summary_seats(&p, &l, &|seat| run_alive(&p, seat));
-            Ok(render::summary(&l, &actor, *all, closed, &running, seats))
+            // As the close reads it: the review stands at the tip now.
+            let reviewed = ris::review::stands(&l, ris::review::tip(&p, &l).as_ref());
+            Ok(render::summary(
+                &l, &actor, *all, closed, &running, seats, reviewed,
+            ))
         }
 
         Cmd::Report => Ok(render::report(&p.load()?)),
 
-        Cmd::Map { phase, html, list } => {
+        Cmd::Map {
+            phase,
+            html,
+            list,
+            steps,
+        } => {
             let l = p.load()?;
-            let range = ris::map::range(&p, &l, *phase)?;
-            let map = ris::map::build(&p, &l, &range)?;
+            let map = match phase {
+                Some(MapTarget::Range(spec)) => {
+                    let range = ris::map::git_range(&p.work, spec)?;
+                    ris::map::build_range(&p.work, &p.config.map, &range)?
+                }
+                Some(MapTarget::Phase(id)) => {
+                    ris::map::build(&p, &l, &ris::map::range(&p, &l, Some(*id))?)?
+                }
+                None => ris::map::build(&p, &l, &ris::map::range(&p, &l, None)?)?,
+            };
             let terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
             use ris::map::{Form, Show};
             match (
@@ -1830,7 +1932,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         },
                     )
                 }
-                (Form::List, _) => ris::map::output(map, Show::List),
+                (Form::List, _) => ris::map::output(map, Show::List { steps: *steps }),
                 _ => ris::map::output(map, Show::Text),
             }
         }

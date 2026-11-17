@@ -196,6 +196,7 @@ fn item_command(kind: CommandKind) -> Option<Command> {
         | CommandKind::Explain
         | CommandKind::PhaseOpen
         | CommandKind::PhaseClose
+        | CommandKind::PhaseReview
         | CommandKind::ItemAdd
         | CommandKind::Pause
         | CommandKind::Resume
@@ -1063,6 +1064,62 @@ fn phases_follow_their_table() {
         )
         .is_none()
     );
+}
+
+/// A review is the person's, of the open phase, at a tip; it stands
+/// until one of the phase's items merges, and a later review replaces
+/// it.
+#[test]
+fn a_review_stands_until_the_phase_merges_again() {
+    let review = |by: Actor, tip: &str| Command::PhaseReview {
+        by,
+        tip: Some(CommitHash(tip.into())),
+    };
+    let mut h = Harness::new();
+    assert_eq!(
+        h.run(review(Actor::Person, "a1")),
+        Err(Refusal::NoOpenPhase)
+    );
+    let mut h = with_phase_and_item();
+    assert_eq!(
+        h.run(review(Actor::Agent(agent("heron")), "a1")),
+        Err(Refusal::ReviewIsForThePerson)
+    );
+    h.must(review(Actor::Person, "a1"));
+    let r = &h.state.reviews[&PhaseId(1)];
+    assert_eq!(r.tip, Some(CommitHash("a1".into())));
+    assert!(matches!(
+        h.log.last().unwrap().structure,
+        Structure::PhaseReviewed {
+            phase: PhaseId(1),
+            ..
+        }
+    ));
+    assert_eq!(r.at, h.state.len);
+    // Reviewed again, the later one stands.
+    h.must(review(Actor::Person, "b2"));
+    assert_eq!(
+        h.state.reviews[&PhaseId(1)].tip,
+        Some(CommitHash("b2".into()))
+    );
+    // A merge moves the phase on: the review no longer covers it.
+    h.must(Command::Claim {
+        item: ItemId(1),
+        agent: agent("heron"),
+    });
+    h.must(Command::Done {
+        item: ItemId(1),
+        by: agent("heron"),
+        evidence: vec![evidence(1)],
+    });
+    assert!(h.state.reviews.contains_key(&PhaseId(1)));
+    h.must(Command::Merge {
+        item: ItemId(1),
+        commit: CommitHash("c3".into()),
+    });
+    assert!(!h.state.reviews.contains_key(&PhaseId(1)));
+    // The fold gives the same from the log alone.
+    assert_eq!(State::fold(&h.log).unwrap().reviews, h.state.reviews);
 }
 
 fn add(tag: Tag) -> Command {

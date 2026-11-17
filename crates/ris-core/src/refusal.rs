@@ -129,6 +129,8 @@ pub enum Refusal {
     /// Moving an item into or out of the open phase is the person's to
     /// do: it changes the scope of the work in hand.
     ScopeIsForThePerson(ItemId),
+    /// Reviewing the phase is the person's step before closing it.
+    ReviewIsForThePerson,
 }
 
 impl Refusal {
@@ -238,6 +240,9 @@ impl Refusal {
             Self::AlreadyTagged { item, .. } => format!("nothing to do; `ris show {item}`"),
             Self::ScopeIsForThePerson(item) => {
                 format!("raise it with the person, who runs `ris item phase {item} <P-n|none>`")
+            }
+            Self::ReviewIsForThePerson => {
+                "leave it to the person, who runs `ris phase review` before closing".into()
             }
         }
     }
@@ -385,6 +390,7 @@ impl fmt::Display for Refusal {
                 f,
                 "refused: only the person moves {item} into or out of the open phase"
             ),
+            Self::ReviewIsForThePerson => f.write_str("refused: only the person reviews the phase"),
         }
     }
 }

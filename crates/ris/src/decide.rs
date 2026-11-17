@@ -164,11 +164,19 @@ impl Input for Terminal {
 /// Walk the queue with input from the terminal, or from stdin's lines
 /// when it is not one.
 pub fn walk_stdin(p: &mut Project, actor: &Actor) -> Result<Output, CliError> {
-    let mut out = io::stdout();
+    walk_stdin_to(p, actor, &mut io::stdout())
+}
+
+/// [`walk_stdin`], writing to `out`.
+pub fn walk_stdin_to(
+    p: &mut Project,
+    actor: &Actor,
+    out: &mut dyn Write,
+) -> Result<Output, CliError> {
     if io::stdin().is_terminal() {
-        walk(p, actor, &mut Terminal, &mut out)
+        walk(p, actor, &mut Terminal, out)
     } else {
-        walk(p, actor, &mut Lines(io::stdin().lock()), &mut out)
+        walk(p, actor, &mut Lines(io::stdin().lock()), out)
     }
 }
 

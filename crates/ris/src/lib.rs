@@ -4,6 +4,7 @@
 pub mod brief;
 pub mod checks;
 pub mod config;
+pub mod connect;
 pub mod decide;
 pub mod drill;
 pub mod evidence;
@@ -16,6 +17,7 @@ pub mod map;
 pub mod preflight;
 pub mod project;
 pub mod render;
+pub mod review;
 pub mod rules_file;
 pub mod runner;
 pub mod schema;

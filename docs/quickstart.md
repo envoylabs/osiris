@@ -151,9 +151,17 @@ Once the harness is declared, the work runs in four steps, each yours:
 
 1. **Open a phase**: `ris phase open`, and load its items.
 2. **Bring it up**: `ris up`; the seats work until nothing is left.
-3. **Review**: `ris summary`, then `ris decide` for every decision
-   queued while the phase ran.
-4. **Close the phase**: `ris phase close`.
+3. **Review**: `ris phase review`. It shows the phase's state as `ris
+   summary` does, walks every decision queued while the phase ran as
+   `ris decide` does, then lists the change set ranked by risk, as
+   `ris map --list` does, and records the review at the tip of the
+   phase's work. It may be run at any point while the phase is open,
+   on what has merged so far.
+4. **Close the phase**: `ris phase close`. It refuses a phase whose
+   work has moved since it was reviewed (an item merged, or a commit
+   landed on its branch), and names the review; `ris phase close
+   --unreviewed` closes without one. Once closed, the phase's change
+   set stays readable with `ris map P-n`.
 
 There is no check-in in between. A seat that needs a judgement only you
 can make queues it as a substantive decision: its item is set aside and
@@ -310,7 +318,8 @@ aside to ready: a seat still running takes them, and `ris up` starts
 the seats that have stopped.
 
 The summary opens with the phase's state in one line, for a glance:
-that all of its items are merged and it is ready to close with `ris
+that all of its items are merged and it is ready to review with `ris
+phase review`, then once reviewed that it is ready to close with `ris
 phase close`, or how many of the phase's items are merged, how many are in progress and
 with which seats, how many are set aside and how many not started,
 then whatever waits on you with the command for it (open decisions:
@@ -337,8 +346,10 @@ Where the summary draws the phase's items, `ris map` draws what the
 phase did to the code. Its nodes are the repository's source files,
 each with the lines the phase added and removed, read from git as the
 phase branch against the main line; unchanged files are there too,
-faint. Its edges are how the code connects (for Rust, `mod` and `use`
-lines, found by scanning). A file that touches the outside (a
+faint. Its edges are how the code connects: for Rust, `mod` and `use`
+lines, found by scanning; for TypeScript, relative imports; for Go,
+imports of the repository's own packages; for Clojure, required
+namespaces. A file that touches the outside (a
 database, the filesystem, the network, starting a process), found from
 what it imports, is ringed, and so is one you list as a contract or
 format:
@@ -352,7 +363,9 @@ tests = ["**/tests/**", "**/*_test.go"]
 Test files are left off the map, since the behaviour lands in the
 source and the tests only verify it; one line counts the test files
 the phase changed and the lines added and removed in them. `tests`
-names them, and by default it is every file under a `tests` directory.
+names them, and by default it is each language's convention: every
+file under a `tests`, `test` or `__tests__` directory, and every file
+named as a test (`*_test.go`, `*.test.ts`, `*.spec.ts`, `*_test.clj`).
 A node is larger the more the phase changed it, so the eye lands first
 on the large changes, and the ring picks out those at the edges of the
 system. An amber diamond beside a changed file is its risk: hollow for
@@ -384,10 +397,18 @@ a database, the filesystem, the network or a process, with the function
 it sits in and that function's level. It also follows calls one step:
 a changed function that calls a function touching the outside triggers
 that effect, and one called by such a function feeds it; each is
-listed with the function and effect it reaches. Calls are matched by
-name, so a common method name can flag more than it should. `ris map
---list` prints a file's marked lines and its one-step functions under
-its reasons, and on the page a file with any expands to show them.
+listed with the function and effect it reaches. A call is followed only
+where the text says which function it means: by its path, by its own
+file, or for a method by the type of the value it is called on (`self`,
+a parameter or a `let` with its type). A method on any other value is
+not followed, so a step can be missed and a common method name flags
+nothing. A function most of the repository calls or is called by (a
+command's dispatcher, say) is said once for a file, and a step to it
+does not raise a function's level. `ris map --list` prints a file's
+marked lines under its reasons and then the count of its one-step
+functions; `ris map --list --steps` names each. On the page a file
+with any expands to show its marked lines, with the one-step functions
+folded under their count.
 Click one of those lines, or the page's calls view, to see one function
 laid out left to right as execution flows: what calls it, the function,
 what it calls, and the effects reached, each a box with its own lines,
@@ -400,7 +421,9 @@ database, say) under `[map.effects.<language>]` in
 `ris map --html map.html` writes the page to a file you name and opens
 nothing, and `ris map --json` prints the graph document the page draws
 (`docs/json.md`). After `ris phase close` the same commands show the
-phase just closed, and `ris map P-n` an earlier one.
+phase just closed, and `ris map P-n` an earlier one. `ris map A..B`
+maps a git range instead (`ris map main..feature`, `ris map
+v1.2..v1.3`), in any repository's history, a project or not.
 
 Person actions (A-n) are your own to-do list: only you raise them
 (`ris action raise "..." --done-when "..." --blocks I-7`), linked to

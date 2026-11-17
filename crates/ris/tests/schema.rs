@@ -468,7 +468,8 @@ fn every_command_s_real_output_fits_the_committed_schema() {
         stop(seat);
     }
 
-    // Close, then what reads the closed phase and the log.
+    // Review and close, then what reads the closed phase and the log.
+    r.ok(None, &["phase", "review"]);
     r.ok(None, &["phase", "close"]);
     r.ok(None, &["report"]);
     r.ok(None, &["export", r.base.join("export").to_str().unwrap()]);

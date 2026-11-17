@@ -87,7 +87,7 @@ fn summary_shows_the_open_phase_and_counts_the_rest() {
             "b",
         ],
     );
-    ok(&dir, "person", &["phase", "close"]);
+    ok(&dir, "person", &["phase", "close", "--unreviewed"]);
 
     // With no phase open, summary says so and names the next step.
     let text = ok(&dir, "person", &["summary"]);

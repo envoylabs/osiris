@@ -577,7 +577,7 @@ fn an_auditor_s_judgement_of_a_file_stands_on_the_map_over_the_computed_level() 
 
     // The closed phase's map keeps its judgements, and with no phase
     // open there is no change set to judge.
-    ok(&dir, "person", &["phase", "close"]);
+    ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert_eq!(data(&dir, &["map"])["nodes"], doc["nodes"]);
     refused("wren", &judge, "no phase is open");
 }
@@ -648,8 +648,9 @@ fn a_changed_file_s_functions_and_marked_lines_are_on_the_map() {
     assert_eq!(
         store["functions"][2]["steps"],
         json!([{"direction": "triggers", "path": "src/store.rs", "function": "wipe",
-                "effects": ["database", "process"]}])
+                "effects": ["database", "process"], "wide": false}])
     );
+    assert_eq!(store["functions"][2]["wide"], false);
     assert_eq!(
         store["functions"][2]["calls"],
         json!([{"path": "src/store.rs", "function": "wipe"}])
@@ -715,19 +716,40 @@ fn a_changed_file_s_functions_and_marked_lines_are_on_the_map() {
     assert!(node(&doc, "tools/x.py")["marks"].is_null());
     assert!(node(&doc, "src/wire.rs")["functions"].is_null());
 
-    // The list shows a file's marked lines under its reasons.
+    // The list shows a file's marked lines under its reasons, and
+    // under them the count of its functions one step from an effect.
     let text = ok(&dir, "person", &["map", "--list"]);
     assert!(
-        text.contains("\n         line 12: database in wipe (low)\n"),
+        text.contains(
+            "\n         line 12: database in wipe (low)\n         1 one step from an effect\n"
+        ),
         "{text}"
     );
-    assert!(
-        text.contains("\n         tidy triggers database, process via wipe (src/store.rs)\n"),
-        "{text}"
-    );
+    assert!(!text.contains("tidy triggers"), "{text}");
     assert!(
         text.contains("\n         line 6: network in fetch (low)\n"),
         "{text}"
+    );
+    assert!(
+        text.contains("\n  next: `ris map --list --steps` names each one step from an effect\n"),
+        "{text}"
+    );
+    // `--steps` names each, in place of the count.
+    let text = ok(&dir, "person", &["map", "--list", "--steps"]);
+    assert!(
+        text.contains(
+            "\n         line 12: database in wipe (low)\n         \
+             tidy triggers database, process via wipe (src/store.rs)\n"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("one step from an effect"), "{text}");
+    // It is the list's flag: alone it is refused.
+    let alone = ris(&dir, "person", &["map", "--steps"]);
+    assert!(!alone.status.success());
+    assert!(
+        String::from_utf8_lossy(&alone.stderr).contains("--list"),
+        "{alone:?}"
     );
     // The page carries them, being the same document.
     let page = dir.join("map.html");
@@ -973,9 +995,11 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
 
     // Closing names the command, and the closed phase's map is read
     // from its closing merge: the same files with the same numbers.
-    let closed = ok(&dir, "person", &["phase", "close"]);
+    let closed = ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert!(
-        closed.contains("`ris map`, or `ris map --html <file>`"),
+        closed.contains(
+            "P-1's change set stays readable: `ris map P-1`, or `ris map P-1 --html <file>`"
+        ),
         "{closed}"
     );
     assert!(
