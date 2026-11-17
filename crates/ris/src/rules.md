@@ -2,9 +2,10 @@
 
 This project's work goes through `ris`, the osiris command, not through
 status documents. The work runs in four steps, all the person's: open
-a phase, `ris up`, review, close the phase. Between up and review the
-agents build and test, and never wait for the person: nothing raised
-while the phase runs stops it, and there is no check-in in between.
+a phase, `ris up`, review (`ris phase review`), close the phase.
+Between up and review the agents build and test, and never wait for
+the person: nothing raised while the phase runs stops it, and there is
+no check-in in between.
 
 ## Your seat
 
