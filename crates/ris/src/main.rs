@@ -3132,7 +3132,8 @@ fn logs(p: &Project, seat: &str, follow: bool, json: bool) -> Result<Output, Cli
 }
 
 /// `ris logs` with no seat: every configured seat's latest run, each
-/// line prefixed with its seat as `docker compose logs` does. Followed,
+/// line prefixed with its seat as `docker compose logs` does, the
+/// prefix in the seat's own colour when styling is on. Followed,
 /// each seat is read from where it was left, a seat's newer run is
 /// picked up when it starts, and it ends once no seat is running and
 /// what they wrote has been read.
@@ -3171,7 +3172,10 @@ fn logs_all(p: &Project, follow: bool, json: bool) -> Result<Output, CliError> {
                     continue;
                 };
                 for part in shown.lines() {
-                    let prefixed = format!("{seat:<width$} | {part}");
+                    // The prefix takes the seat's colour, when styling
+                    // is on; the name stays in it either way.
+                    let prefix = ris::style::seat(seat, &format!("{seat:<width$} |"));
+                    let prefixed = format!("{prefix} {part}");
                     let line = schema::SeatLine {
                         seat: seat.clone(),
                         line: part.to_owned(),
