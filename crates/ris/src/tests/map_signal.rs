@@ -150,3 +150,32 @@ fn the_one_step_marks_of_a_real_phase_carry_signal() {
     // The git helper is reached only by the functions that call it.
     assert!(reaching("git") <= 5, "{m:?}");
 }
+
+/// The marked lines of a map that sit inside a function.
+fn marks_in_functions(map: &crate::schema::Map) -> usize {
+    map.nodes
+        .iter()
+        .flat_map(|n| n.marks.iter().flatten())
+        .filter(|m| m.function.is_some())
+        .count()
+}
+
+/// P-12 holds lines inside functions that touch the outside, so a
+/// change that stops the map marking them fails here, in a whole clone,
+/// rather than letting the page test's walk back over closed phases pass
+/// over every phase without a word.
+#[test]
+fn a_known_phase_still_holds_marked_lines_inside_functions() {
+    let Some(map) = super::history::closed_phase("chore: close P-12: ") else {
+        return;
+    };
+    let n = marks_in_functions(&map);
+    println!("P-12: {n} marked line(s) inside functions");
+    assert!(n >= 10, "P-12's map marks lines inside functions: {n}");
+    // The falsifier: the same map with its marks taken away is caught.
+    let mut emptied = map.clone();
+    for node in &mut emptied.nodes {
+        node.marks = None;
+    }
+    assert_eq!(marks_in_functions(&emptied), 0);
+}
