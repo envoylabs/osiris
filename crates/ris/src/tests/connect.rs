@@ -66,6 +66,30 @@ fn typescript_resolves_relative_imports_as_tsc_does() {
     assert!(!scan.contains_key("src/config.js"));
 }
 
+/// A barrel file's `.` and `..`: the directory's index, at the root as
+/// well as below it.
+#[test]
+fn typescript_reads_a_bare_dot_as_the_directorys_index() {
+    let t = tree(&[
+        ("index.ts", "export const top = 1;\n"),
+        ("src/index.ts", "export { top } from \"..\";\n"),
+        (
+            "src/ui/button.ts",
+            "import { top } from \"..\";\nimport { b } from \".\";\n",
+        ),
+        ("src/ui/index.ts", "export const b = 1;\n"),
+    ]);
+    let scan = TypeScript.scan(&t);
+    assert_eq!(edges(&scan, "src/index.ts"), vec![to("index.ts", "import")]);
+    assert_eq!(
+        edges(&scan, "src/ui/button.ts"),
+        vec![
+            to("src/index.ts", "import"),
+            to("src/ui/index.ts", "import")
+        ]
+    );
+}
+
 #[test]
 fn typescript_never_climbs_above_the_root() {
     let t = tree(&[("a.ts", "import x from \"../b\";\n"), ("b.ts", "")]);

@@ -81,6 +81,9 @@ fn repository(name: &str, language: &str, later: &[&str]) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ris-map-languages-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
+    // Named in its canonical form: the temporary directory may be
+    // reached through a link.
+    let dir = dir.canonicalize().unwrap();
     copy(&fixture, &dir);
     git(&dir, &["init", "-q", "-b", "main"]);
     git(&dir, &["add", "-A"]);

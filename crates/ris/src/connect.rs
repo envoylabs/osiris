@@ -83,7 +83,9 @@ impl TypeScript {
     /// The file a relative specifier from `file` names, if it is in
     /// `tree`.
     fn target(file: &str, spec: &str, tree: &Tree) -> Option<String> {
-        if !spec.starts_with("./") && !spec.starts_with("../") {
+        // `.` and `..` alone are a directory, read for its index.
+        let relative = matches!(spec, "." | "..");
+        if !relative && !spec.starts_with("./") && !spec.starts_with("../") {
             return None;
         }
         let base = resolve(parent(file), spec)?;
@@ -97,7 +99,12 @@ impl TypeScript {
             candidates.extend([".ts", ".tsx", ".mts", ".cts"].map(|e| format!("{stem}{e}")));
         }
         candidates.extend(TS_EXTENSIONS.iter().map(|e| format!("{base}{e}")));
-        candidates.extend(TS_EXTENSIONS.iter().map(|e| format!("{base}/index{e}")));
+        let index = if base.is_empty() {
+            "index".to_owned()
+        } else {
+            format!("{base}/index")
+        };
+        candidates.extend(TS_EXTENSIONS.iter().map(|e| format!("{index}{e}")));
         candidates.into_iter().find(|c| tree.contains_key(c))
     }
 }
