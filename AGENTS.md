@@ -152,6 +152,9 @@ system tool or configuration that differs between systems. A test that
 needs one sets it up itself: it makes its own directory and names it
 in its canonical form, waits for a condition and never for a fixed
 time, and writes the configuration it reads.
+The one fixed wait a test may keep is a wait whose length is itself
+what the test checks (that nothing happens within it, or that a limit
+is passed), with a comment beside it saying so.
 
 ## Messages
 
@@ -223,9 +226,10 @@ Working model and Confidentiality sections for background, but never
 take work from it.
 
 What follows is this repository's own, beside the rules above. The file
-the seats read is rendered from both by the person (`ris rules
---render`); to change a rule, change the rules in `crates/ris/src/rules.md`
-or this file, and merge that.
+the seats read is rendered from both when a phase closes (`ris phase
+close` renders it into the closing merge); to change a rule, change the
+rules in `crates/ris/src/rules.md` or this file, and merge that. Leave
+the rendered file as it is: no check of yours reads it.
 
 ## The seats and the harness
 
