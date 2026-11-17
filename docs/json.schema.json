@@ -2770,7 +2770,7 @@
           "type": "boolean"
         },
         "reviewed": {
-          "description": "The person has reviewed the phase (`ris phase review`) and no\nitem of it has merged since.",
+          "description": "The person's review (`ris phase review`) stands at the tip of\nthe phase's work now, as `ris phase close` asks: nothing has\nreached the phase's branch since, by a merge or otherwise.",
           "type": "boolean"
         },
         "running": {

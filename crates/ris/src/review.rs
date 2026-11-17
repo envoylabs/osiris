@@ -24,6 +24,15 @@ pub fn tip(p: &Project, l: &Loaded) -> Option<CommitHash> {
         .map(|r| CommitHash(r.tip))
 }
 
+/// Whether the open phase's latest review stands at `now`, the tip of
+/// its work as [`tip`] reads it: what the summary says and the close
+/// asks for, so the two agree.
+pub fn stands(l: &Loaded, now: Option<&CommitHash>) -> bool {
+    l.state
+        .open_phase()
+        .is_some_and(|p| unreviewed(l, p.id, now).is_none())
+}
+
 /// Why the open phase may not close unreviewed, or `None` when its
 /// latest review stands at the tip of its work now.
 pub fn unreviewed(l: &Loaded, phase: PhaseId, now: Option<&CommitHash>) -> Option<String> {

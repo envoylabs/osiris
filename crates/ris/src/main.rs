@@ -1131,7 +1131,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         .cloned()
                         .collect();
                     let seats = ris::status::summary_seats(&p, &l, &|seat| run_alive(&p, seat));
-                    render::summary(&l, &actor, false, Vec::new(), &running, seats).text
+                    let reviewed = ris::review::stands(&l, ris::review::tip(&p, &l).as_ref());
+                    render::summary(&l, &actor, false, Vec::new(), &running, seats, reviewed).text
                 };
                 ris::review::run(&mut p, &actor, &state, !cli.json, &mut std::io::stdout())
             }
@@ -1882,7 +1883,11 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 .cloned()
                 .collect();
             let seats = ris::status::summary_seats(&p, &l, &|seat| run_alive(&p, seat));
-            Ok(render::summary(&l, &actor, *all, closed, &running, seats))
+            // As the close reads it: the review stands at the tip now.
+            let reviewed = ris::review::stands(&l, ris::review::tip(&p, &l).as_ref());
+            Ok(render::summary(
+                &l, &actor, *all, closed, &running, seats, reviewed,
+            ))
         }
 
         Cmd::Report => Ok(render::report(&p.load()?)),

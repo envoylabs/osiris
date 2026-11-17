@@ -90,8 +90,9 @@ line of output per envelope, and ends once no seat is running; without
   seats with a setup fault), `running` (the seats whose agent is
   running; a run whose process is gone is not counted) and
   `ready_to_close` (every item merged, and at least one) and
-  `reviewed` (the person reviewed the phase with `ris phase review`,
-  and none of its items has merged since). `merged`,
+  `reviewed` (the person's review with `ris phase review` stands at
+  the tip of the phase's work now, as `ris phase close` asks: nothing
+  has reached the phase's branch since). `merged`,
   `in_progress`, `set_aside` and `not_started` add up to `items`. It
   is the open phase's whether or not `--all` is given, though only the
   default text output shows the line. `seats` is every configured

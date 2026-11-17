@@ -343,8 +343,9 @@ pub struct PhaseState {
     pub running: Vec<AgentName>,
     /// Every item is merged, and there is at least one.
     pub ready_to_close: bool,
-    /// The person has reviewed the phase (`ris phase review`) and no
-    /// item of it has merged since.
+    /// The person's review (`ris phase review`) stands at the tip of
+    /// the phase's work now, as `ris phase close` asks: nothing has
+    /// reached the phase's branch since, by a merge or otherwise.
     pub reviewed: bool,
 }
 

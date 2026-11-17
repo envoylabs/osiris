@@ -211,6 +211,12 @@ fn the_close_waits_for_a_review_at_the_tip_of_the_phases_work() {
     )
     .unwrap();
     git(&dir, &["commit", "-q", "-am", "chore: by hand"]);
+    // The summary reads it as the close does.
+    assert_eq!(
+        first_line(&dir),
+        "all 2 items merged: ready to review with `ris phase review`"
+    );
+    assert_eq!(data(&dir, &["summary"])["phase_state"]["reviewed"], false);
     let why = refused_close(&dir);
     assert!(
         why.contains(&format!(

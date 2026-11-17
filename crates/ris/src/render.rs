@@ -1197,13 +1197,19 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
 
 /// The open phase's state, counted, and said in one line: what
 /// `ris summary` opens with. `running` is the seats whose agent is
-/// running now. `None` with no phase open.
+/// running now; `reviewed`, whether the person's review stands at the
+/// tip of the phase's work now ([`crate::review::stands`]). `None` with
+/// no phase open.
 ///
 /// Every item of the phase that is not superseded is in exactly one of
 /// `merged`, `in_progress` (claimed, or done and not yet merged),
 /// `set_aside` (blocked) and `not_started`, so the four add up to
 /// `items` and can be checked against the item list.
-pub fn phase_state(l: &Loaded, running: &[AgentName]) -> Option<schema::PhaseState> {
+pub fn phase_state(
+    l: &Loaded,
+    running: &[AgentName],
+    reviewed: bool,
+) -> Option<schema::PhaseState> {
     let phase = l.state.open_phase()?.id;
     let scope = Scope::Open(Some(phase));
     let (mut items, mut merged, mut not_started) = (0, 0, 0);
@@ -1239,7 +1245,6 @@ pub fn phase_state(l: &Loaded, running: &[AgentName]) -> Option<schema::PhaseSta
         .map(|(seat, _)| seat.clone())
         .collect();
     let ready_to_close = items > 0 && merged == items;
-    let reviewed = l.state.reviews.contains_key(&phase);
 
     let mut parts = Vec::new();
     if items == 0 {
@@ -1324,10 +1329,11 @@ pub fn summary(
     checks: Vec<String>,
     running: &[AgentName],
     seats: Vec<schema::SummarySeat>,
+    reviewed: bool,
 ) -> Output {
     use crate::graph::Node;
     let scope = Scope::of(l, all);
-    let state = phase_state(l, running);
+    let state = phase_state(l, running, reviewed);
     let (queue_text, queue) = inbox_in(l, actor, scope);
     let (rep_text, rep) = report_in(l, scope);
     let (rdy_text, rdy) = ready_in(l, scope);
