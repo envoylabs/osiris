@@ -925,9 +925,14 @@ pub fn tally(l: &Loaded, phase: PhaseId) -> Tally {
 /// superseded, in the state just before its `PhaseOpened` event, which
 /// is what `ris phase open` reads, less those whose tag the open moved
 /// on to the next phase. The open writes those moves straight after
-/// its `PhaseOpened` event, so they are the run of `ItemScoped` events
-/// there that move a tagged item to the next phase. Zero for a phase
-/// not opened.
+/// its `PhaseOpened` event, and it moves every tagged item or none, so
+/// the open moved them on only when the run of `ItemScoped` events
+/// there moves every tagged item to the next phase. A shorter run is
+/// the person retagging some of them afterwards, which does not change
+/// what the phase opened with. The log does not mark which events an
+/// open wrote, so the person retagging every one of them, one command
+/// each with nothing between, reads as a move-on. Zero for a phase not
+/// opened.
 fn opened_with(l: &Loaded, phase: PhaseId) -> usize {
     use ris_core::event::Structure;
     let Some(opened) = l.state.phases.get(&phase).map(|p| p.at) else {
@@ -937,15 +942,16 @@ fn opened_with(l: &Loaded, phase: PhaseId) -> usize {
     let Ok(before) = ris_core::state::State::fold(&l.log[..at]) else {
         return 0;
     };
-    let mut tagged: std::collections::BTreeSet<_> = before.tagged(phase).map(|i| i.id).collect();
+    let tagged: std::collections::BTreeSet<_> = before.tagged(phase).map(|i| i.id).collect();
     let next = Some(PhaseId(phase.0.saturating_add(1)));
+    let mut unmoved = tagged.clone();
     for e in l.log.iter().skip(at + 1) {
         match &e.structure {
-            Structure::ItemScoped { item, phase: to } if *to == next && tagged.remove(item) => {}
+            Structure::ItemScoped { item, phase: to } if *to == next && unmoved.remove(item) => {}
             _ => break,
         }
     }
-    tagged.len()
+    if unmoved.is_empty() { 0 } else { tagged.len() }
 }
 
 /// The report hash of the phase closed before `phase`, or zero.

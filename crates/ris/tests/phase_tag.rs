@@ -270,3 +270,20 @@ fn the_open_phases_scope_is_the_persons_and_a_closed_phase_takes_nothing() {
     assert_eq!(v["tally"]["opened_with"], 0, "{v}");
     ok(&dir, "person", &["verify"]);
 }
+
+#[test]
+fn a_retag_straight_after_the_open_does_not_shrink_what_the_phase_opened_with() {
+    // With no docs item, nothing lands between the open and the
+    // person's next command, so a retag of one item the phase opened
+    // with follows PhaseOpened directly. The open moves every tagged
+    // item or none, so a retag of some of them is the person's own.
+    let dir = project("retag");
+    ok(&dir, "person", &["item", "add", "one", "--phase", "P-1"]);
+    ok(&dir, "person", &["item", "add", "two", "--phase", "P-1"]);
+    ok(&dir, "person", &["phase", "open", "first"]);
+    ok(&dir, "person", &["item", "phase", "I-1", "P-2"]);
+    assert_eq!(phase_of(&dir, "I-1"), "P-2");
+    let v = json(&dir, "person", &["report"]);
+    assert_eq!(v["tally"]["opened_with"], 2, "{v}");
+    ok(&dir, "person", &["verify"]);
+}
