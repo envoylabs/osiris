@@ -156,7 +156,22 @@ function __rows() {
   });
 }
 
+// The lines an expanded row shows: each marked line and each step.
+function __marks() {
+  var out = [];
+  document.getElementById("list-rows").childNodes.forEach(function (tr) {
+    if (!tr.classList.contains("marks")) { return; }
+    tr.childNodes.forEach(function (td) { out = out.concat(td.childNodes); });
+  });
+  return out;
+}
+// Those of them that open a function in the calls view.
+function __opening() {
+  return __marks().filter(function (div) { return div.classList.contains("go"); });
+}
+
 function __click(id) { __fire(document.getElementById(id), "click"); }
+function __clickMark(i) { __fire(__opening()[i], "click"); }
 function __clickRow(i) { __fire(__rows()[i], "click"); }
 function __key(key) {
   (__window.listeners.keydown || []).forEach(function (fn) { fn({ key: key }); });
@@ -178,6 +193,10 @@ function __state() {
         picked: tr.classList.contains("picked")
       };
     }),
+    marks: __marks().map(function (div) {
+      return { text: div.textContent, opens: div.classList.contains("go") };
+    }),
+    list_top: document.getElementById("list").style.top || "",
     pane_path: document.getElementById("pane-path").textContent,
     pane_rows: body.all().filter(function (e) {
       return e.className.indexOf("row ") === 0;

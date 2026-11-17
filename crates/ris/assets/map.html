@@ -701,6 +701,23 @@
     if (wasOpen !== (n !== null)) { room(); fit(); placeList(); }
   };
 
+  // The document's `call_graph`, which the list's marked lines and the
+  // calls view both read. The list looks functions up as it is built,
+  // so these stand before it.
+  var cg = (doc.call_graph && doc.call_graph.functions) || [];
+  var byId = new Map(cg.map(function (f) { return [f.id, f]; }));
+  // The innermost function of the file at `path` named `name` (any name
+  // when null) that holds `line` (any line when null).
+  var functionAt = function (path, name, line) {
+    var hit = null;
+    cg.forEach(function (f) {
+      var named = name === null || f.name === name;
+      var holds = line === null || (f.start <= line && line <= f.end);
+      if (f.path === path && named && holds && (hit === null || f.start > hit.start)) { hit = f; }
+    });
+    return hit;
+  };
+
   // The list: the changed files in the document's `ranked` order, the
   // order `ris map --list` prints, each with its level, its numbers and
   // the reasons for its level. A row opens its diff in the pane, as a
@@ -827,20 +844,7 @@
   // and those one call from them in full, and those one call further by
   // name only.
   var callsView = document.getElementById("calls");
-  var cg = (doc.call_graph && doc.call_graph.functions) || [];
-  var byId = new Map(cg.map(function (f) { return [f.id, f]; }));
   var focused = null;
-  // The innermost function of the file at `path` named `name` (any name
-  // when null) that holds `line` (any line when null).
-  var functionAt = function (path, name, line) {
-    var hit = null;
-    cg.forEach(function (f) {
-      var named = name === null || f.name === name;
-      var holds = line === null || (f.start <= line && line <= f.end);
-      if (f.path === path && named && holds && (hit === null || f.start > hit.start)) { hit = f; }
-    });
-    return hit;
-  };
   var box = function (f, role) {
     var b = document.createElement("div");
     b.className = "box " + role + (f.direct ? " direct" : "");

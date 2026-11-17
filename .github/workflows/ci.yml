@@ -25,6 +25,10 @@ jobs:
       RIS_AGENT: person
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history: a test draws the map page over the last
+          # closed phase, which it reads from the closing merge.
+          fetch-depth: 0
 
       - name: toolchain
         # Installs what rust-toolchain.toml names, then prints it.

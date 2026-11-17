@@ -1268,28 +1268,43 @@ pub fn judgements(l: &Loaded, phase: Option<PhaseId>) -> BTreeMap<String, Judged
 /// The graph document for `range`, read from git, with each changed
 /// file's diff.
 pub fn build(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::Map, CliError> {
-    let (mut map, tree) = read(p, l, range)?;
+    build_in(&p.work, &p.config.map, &judgements(l, range.phase), range)
+}
+
+/// [`build`] over the repository at `dir`, given what was `judged`:
+/// all of it is read from git, and none from the store.
+fn build_in(
+    dir: &Path,
+    config: &crate::config::MapConfig,
+    judged: &BTreeMap<String, Judged>,
+    range: &Range,
+) -> Result<crate::schema::Map, CliError> {
+    let (mut map, tree) = read(dir, config, judged, range)?;
     if let Some(base) = &range.base {
         for node in map.nodes.iter().filter(|n| n.status != "unchanged") {
             map.diffs.insert(
                 node.path.clone(),
-                unified_diff(&p.work, base, &range.tip, &node.path)?,
+                unified_diff(dir, base, &range.tip, &node.path)?,
             );
         }
     }
-    annotate(&mut map, &tree, &p.config.map);
+    annotate(&mut map, &tree, config);
     Ok(map)
 }
 
 /// The graph document for `range` without its diffs: the nodes, the
 /// edges and the totals.
 pub fn survey(p: &Project, l: &Loaded, range: &Range) -> Result<crate::schema::Map, CliError> {
-    Ok(read(p, l, range)?.0)
+    Ok(read(&p.work, &p.config.map, &judgements(l, range.phase), range)?.0)
 }
 
 /// [`survey`], with the files it read at the tip.
-fn read(p: &Project, l: &Loaded, range: &Range) -> Result<(crate::schema::Map, Tree), CliError> {
-    let dir = &p.work;
+fn read(
+    dir: &Path,
+    config: &crate::config::MapConfig,
+    judged: &BTreeMap<String, Judged>,
+    range: &Range,
+) -> Result<(crate::schema::Map, Tree), CliError> {
     let listed =
         git(dir, &["ls-tree", "-r", "-z", "--name-only", &range.tip]).map_err(CliError::Other)?;
     let paths: Vec<String> = listed
@@ -1348,14 +1363,7 @@ fn read(p: &Project, l: &Loaded, range: &Range) -> Result<(crate::schema::Map, T
             }
         }
     }
-    let map = document(
-        range,
-        &paths,
-        &tree,
-        &diff,
-        &p.config.map,
-        &judgements(l, range.phase),
-    );
+    let map = document(range, &paths, &tree, &diff, config, judged);
     Ok((map, tree))
 }
 
