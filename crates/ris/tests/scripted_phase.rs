@@ -511,8 +511,15 @@ fn scripted_phase_matches_the_golden_transcript() {
     sb.ok(None, &["report"]);
     sb.ok(None, &["summary"]);
     sb.ok(None, &["verify"]);
+    // Close waits for the person's review, which is theirs alone.
+    let r = sb.ris(None, &["phase", "close"]);
+    assert_eq!(r.status, 1);
+    assert!(r.stderr.contains("`ris phase review`"), "{}", r.stderr);
+    sb.refused(heron, &["phase", "review"]);
+    sb.ok(None, &["phase", "review"]);
+    sb.ok(None, &["summary"]);
     sb.ok(None, &["phase", "close"]);
-    sb.refused(None, &["phase", "close"]);
+    sb.refused(None, &["phase", "close", "--unreviewed"]);
     let r = sb.ok(None, &["--json", "report"]);
     let v: serde_json::Value =
         serde_json::from_str::<serde_json::Value>(&r.stdout).unwrap()["data"].clone();

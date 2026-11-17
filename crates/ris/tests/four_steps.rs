@@ -155,7 +155,7 @@ fn a_phase_runs_through_a_queued_decision_and_closes_with_its_tally() {
 
     // Step four, without step three: the queued decision is still open,
     // and close carries it and its item over.
-    let closed = data(&dir, &["phase", "close"]);
+    let closed = data(&dir, &["phase", "close", "--unreviewed"]);
     assert_eq!(tally(&closed["phase"]), (3, 1, 2));
     let report = ok(&dir, "person", &["report"]);
     assert!(

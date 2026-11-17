@@ -798,6 +798,11 @@
           "type": "string"
         },
         {
+          "const": "PhaseReview",
+          "description": "The person recording that they reviewed the open phase.",
+          "type": "string"
+        },
+        {
           "const": "RaiseMechanical",
           "description": "Raising a mechanical decision: logged, the item carries on.",
           "type": "string"
@@ -2666,6 +2671,54 @@
       ],
       "type": "object"
     },
+    "PhaseReviewed": {
+      "description": "`ris phase review`: the review recorded, and what it covered.",
+      "properties": {
+        "map": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Map"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The change set, as `ris map --json` gives it; null when it\ncannot be read (the project is not in git)."
+        },
+        "open": {
+          "description": "Substantive decisions still open after it.",
+          "items": {
+            "$ref": "#/$defs/DecisionId"
+          },
+          "type": "array"
+        },
+        "phase": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "taken": {
+          "description": "Decisions taken during the review's walk of the queue.",
+          "items": {
+            "$ref": "#/$defs/DecisionId"
+          },
+          "type": "array"
+        },
+        "tip": {
+          "description": "The commit at the head of the phase's work that was reviewed;\nnull when the project is not in git.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "phase",
+        "tip",
+        "taken",
+        "open",
+        "map"
+      ],
+      "type": "object"
+    },
     "PhaseState": {
       "description": "Where the open phase stands. Its items that are not superseded are\neach in one of `merged`, `in_progress`, `set_aside` and\n`not_started`, which add up to `items`.",
       "properties": {
@@ -2716,6 +2769,10 @@
           "description": "Every item is merged, and there is at least one.",
           "type": "boolean"
         },
+        "reviewed": {
+          "description": "The person has reviewed the phase (`ris phase review`) and no\nitem of it has merged since.",
+          "type": "boolean"
+        },
         "running": {
           "description": "Seats whose agent is running.",
           "items": {
@@ -2742,7 +2799,8 @@
         "open_decisions",
         "faults",
         "running",
-        "ready_to_close"
+        "ready_to_close",
+        "reviewed"
       ],
       "type": "object"
     },
@@ -3374,6 +3432,11 @@
             "scope_is_for_the_person"
           ],
           "type": "object"
+        },
+        {
+          "const": "review_is_for_the_person",
+          "description": "Reviewing the phase is the person's step before closing it.",
+          "type": "string"
         }
       ]
     },
@@ -3946,6 +4009,35 @@
             "event",
             "phase",
             "report"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The person reviewed the open phase: read its state, walked the\nopen decisions and read its change set, at `tip`, the commit at\nthe head of the phase's work, or null when the project is not in\ngit. A merge of one of the phase's items after it means the\nreview no longer covers the phase.",
+          "properties": {
+            "event": {
+              "const": "phase_reviewed",
+              "type": "string"
+            },
+            "phase": {
+              "$ref": "#/$defs/PhaseId"
+            },
+            "tip": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CommitHash"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "event",
+            "phase",
+            "tip"
           ],
           "type": "object"
         },
@@ -4910,6 +5002,9 @@
     "data.phase_open": {
       "$ref": "#/$defs/PhaseOpened"
     },
+    "data.phase_review": {
+      "$ref": "#/$defs/PhaseReviewed"
+    },
     "data.ready": {
       "$ref": "#/$defs/Ready"
     },
@@ -5034,6 +5129,9 @@
             },
             {
               "$ref": "#/$defs/data.phase_open"
+            },
+            {
+              "$ref": "#/$defs/data.phase_review"
             },
             {
               "$ref": "#/$defs/data.phase_close"

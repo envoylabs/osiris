@@ -34,9 +34,8 @@ cd your-repo && ris init --local         # nothing tracked changes
 ris phase open "the goal"               # 1. branches phase/P-1 from main
 ris item add "a task"                    #    or: ris import backlog.toml
 ris up                                   # 2. worktrees, then every seat's agent
-ris summary && ris decide                # 3. review: the phase in one picture, then each queued decision
+ris phase review                         # 3. review: the phase, each queued decision, its changes ranked by risk
 ris map                                  #    and what the phase did to the code, as one page in the browser
-ris map --list                           #    or its changed files ranked by risk, in the terminal
 ris down && ris phase close              # 4. merges the phase; the rest carries over
 ```
 

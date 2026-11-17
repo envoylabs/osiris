@@ -84,6 +84,15 @@ pub enum Structure {
         /// Taken over the log's head at close, not over the rendering.
         report: Hash,
     },
+    /// The person reviewed the open phase: read its state, walked the
+    /// open decisions and read its change set, at `tip`, the commit at
+    /// the head of the phase's work, or null when the project is not in
+    /// git. A merge of one of the phase's items after it means the
+    /// review no longer covers the phase.
+    PhaseReviewed {
+        phase: PhaseId,
+        tip: Option<CommitHash>,
+    },
     /// `phase` is the phase open when the item was added, or null when
     /// none was: the item then has no phase, which is the backlog.
     ItemAdded {

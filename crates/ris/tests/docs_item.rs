@@ -52,7 +52,7 @@ fn a_phase_closes_only_with_its_docs_item_settled() {
         "every declared check: {item}"
     );
 
-    let r = ris(&dir, "person", &["phase", "close"]);
+    let r = ris(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert!(!r.status.success());
     assert!(
         String::from_utf8_lossy(&r.stderr).contains("I-1 (the docs) is not merged"),
@@ -67,7 +67,7 @@ fn a_phase_closes_only_with_its_docs_item_settled() {
         &["item", "add", "docs, rewritten", "--no-checks"],
     );
     ok(&dir, "person", &["item", "supersede", "I-1", "--by", "I-2"]);
-    ok(&dir, "person", &["phase", "close"]);
+    ok(&dir, "person", &["phase", "close", "--unreviewed"]);
 
     // Turned off, a phase opens with no docs item.
     let c = fs::read_to_string(&config).unwrap();
@@ -78,5 +78,5 @@ fn a_phase_closes_only_with_its_docs_item_settled() {
     .unwrap();
     let out = ok(&dir, "person", &["phase", "open", "without docs"]);
     assert!(!out.contains("docs up to date"), "{out}");
-    ok(&dir, "person", &["phase", "close"]);
+    ok(&dir, "person", &["phase", "close", "--unreviewed"]);
 }

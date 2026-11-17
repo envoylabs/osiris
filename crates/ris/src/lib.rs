@@ -16,6 +16,7 @@ pub mod map;
 pub mod preflight;
 pub mod project;
 pub mod render;
+pub mod review;
 pub mod rules_file;
 pub mod runner;
 pub mod schema;

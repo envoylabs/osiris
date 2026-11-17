@@ -343,6 +343,9 @@ pub struct PhaseState {
     pub running: Vec<AgentName>,
     /// Every item is merged, and there is at least one.
     pub ready_to_close: bool,
+    /// The person has reviewed the phase (`ris phase review`) and no
+    /// item of it has merged since.
+    pub reviewed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -708,6 +711,22 @@ pub struct PhaseOpened {
     pub moved_on: Vec<ItemId>,
 }
 
+/// `ris phase review`: the review recorded, and what it covered.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct PhaseReviewed {
+    pub phase: PhaseId,
+    /// The commit at the head of the phase's work that was reviewed;
+    /// null when the project is not in git.
+    pub tip: Option<String>,
+    /// Decisions taken during the review's walk of the queue.
+    pub taken: Vec<DecisionId>,
+    /// Substantive decisions still open after it.
+    pub open: Vec<DecisionId>,
+    /// The change set, as `ris map --json` gives it; null when it
+    /// cannot be read (the project is not in git).
+    pub map: Option<Box<Map>>,
+}
+
 /// `ris phase close`.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct PhaseClosed {
@@ -919,6 +938,7 @@ pub fn commands(g: &mut SchemaGenerator) -> Vec<(&'static str, Schema)> {
         ("seat resume", g.subschema_for::<SeatsSet>()),
         ("seat fault", g.subschema_for::<SeatRef>()),
         ("phase open", g.subschema_for::<PhaseOpened>()),
+        ("phase review", g.subschema_for::<PhaseReviewed>()),
         ("phase close", g.subschema_for::<PhaseClosed>()),
         ("item add", g.subschema_for::<ItemAdded>()),
         ("item phase", g.subschema_for::<ItemTagged>()),

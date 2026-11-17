@@ -236,12 +236,13 @@ fn summary_opens_with_the_phases_state_in_one_line() {
     );
     assert_eq!(v["faults"], json!(["heron"]));
 
-    // Everything merged: ready to close, and no call for `ris up`.
+    // Everything merged: ready for the review before the close, and no
+    // call for `ris up`.
     work(&dir, "I-1");
     work(&dir, "I-3");
     let (line, v) = state(&dir);
     assert!(
-        line.starts_with("all 3 items merged: ready to close with `ris phase close`"),
+        line.starts_with("all 3 items merged: ready to review with `ris phase review`"),
         "{line}"
     );
     assert!(

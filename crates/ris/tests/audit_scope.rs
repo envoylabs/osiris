@@ -70,7 +70,7 @@ fn the_audit_queue_is_the_open_phases_unless_all_is_asked_for() {
     ok(&dir, "person", &["item", "add", "old work", "--no-checks"]);
     ok(&dir, "heron", &["claim", "I-1"]);
     ok(&dir, "heron", &["done", "I-1", "--evidence", "note.txt"]);
-    ok(&dir, "person", &["phase", "close"]);
+    ok(&dir, "person", &["phase", "close", "--unreviewed"]);
 
     // P-2 finishes one of its own.
     ok(&dir, "person", &["phase", "open", "second"]);

@@ -1062,6 +1062,55 @@ ok: 35 events, head <hash>
 [exit 0]
 
 $ ris phase close
+[stderr] refused: P-1 has not been reviewed: its change set is closed unread
+  next: `ris phase review` shows its state, its open decisions and its change set, and records the review; `ris phase close --unreviewed` closes it without one
+[exit 1]
+
+$ RIS_AGENT=heron ris phase review
+[stderr] refused: only the person reviews the phase
+  next: leave it to the person, who runs `ris phase review` before closing
+[exit 2]
+
+$ ris phase review
+2 of 4 items merged; 1 in progress (wren on I-4); 1 not started; no seat is running: start them with `ris up`
+  heron      not started, idle; `ris up heron`
+  rook       not started, idle; `ris up rook`
+  wren       not started, on I-4; `ris up wren`
+P-1 open: first slice
+items: 1 claimed, 2 merged, 1 ready
+
+I-1  merged  the event envelope
+└── I-2  ready  the fold
+I-3  merged  the cli
+I-4  claimed (wren)  a lint fix
+--
+the report, decisions taken and failed checks: `ris report`
+
+P-1: 0 of 0 source file(s) changed (+0 -0), 0 touch the outside or are contracts
+0 test file(s) left off the map: 0 changed (+0 -0)
+  next: `ris map` draws the same files as a graph beside this list, each with its diff
+
+reviewed P-1 at <hash>
+  next: `ris phase close`; a merge before then moves the phase on, and the close asks for the review again
+[exit 0]
+
+$ ris summary
+2 of 4 items merged; 1 in progress (wren on I-4); 1 not started; no seat is running: start them with `ris up`
+  heron      not started, idle; `ris up heron`
+  rook       not started, idle; `ris up rook`
+  wren       not started, on I-4; `ris up wren`
+P-1 open: first slice
+items: 1 claimed, 2 merged, 1 ready
+
+I-1  merged  the event envelope
+└── I-2  ready  the fold
+I-3  merged  the cli
+I-4  claimed (wren)  a lint fix
+--
+the report, decisions taken and failed checks: `ris report`
+[exit 0]
+
+$ ris phase close
 P-1 closed: first slice
 items: 1 claimed, 2 merged, 1 ready
   I-1   merged   the event envelope (<hash>)
@@ -1086,15 +1135,15 @@ failed checks:
   I-4 lint failed (E-<hash>)
 audited: 1 of 2 done or merged
 messages: 1
-log: 38 events, head <hash>
+log: 39 events, head <hash>
 report: <hash>
 previous report: <hash>
 closing merge: none needed; the phase's work is already on main
 2 item(s) not merged have no phase now: tag one for a phase with `ris item phase <item> <P-n>`
-the change set as a map of the source: `ris map`, or `ris map --html <file>`
+P-1's change set stays readable: `ris map P-1`, or `ris map P-1 --html <file>`
 [exit 0]
 
-$ ris phase close
+$ ris phase close --unreviewed
 [stderr] refused: no phase is open
   next: open a phase first: `ris phase open`
 [exit 2]
@@ -1163,7 +1212,7 @@ $ ris --json report
     ],
     "log": {
       "head": "<hash>",
-      "len": 38
+      "len": 39
     },
     "mechanical": [
       {

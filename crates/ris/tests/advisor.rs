@@ -127,7 +127,7 @@ fn an_advisor_adds_sends_and_raises_and_does_nothing_else() {
             "b",
         ],
         &["check"],
-        &["phase", "close"],
+        &["phase", "close", "--unreviewed"],
         &["item", "supersede", "I-1", "--by", "I-1"],
         &["action", "raise", "x", "--done-when", "y"],
         &["worktree", "kite"],

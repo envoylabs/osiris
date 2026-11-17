@@ -145,7 +145,7 @@ fn a_close_is_made_only_by_the_installed_build_of_the_last_merge() {
     };
     let close = |program: &Path| {
         Command::new(program)
-            .args(["phase", "close"])
+            .args(["phase", "close", "--unreviewed"])
             .current_dir(&dir)
             .envs(common::GIT_IDENTITY)
             .env("RIS_UNDER_TEST", env!("CARGO_BIN_EXE_ris"))

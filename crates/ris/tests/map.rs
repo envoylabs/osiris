@@ -577,7 +577,7 @@ fn an_auditor_s_judgement_of_a_file_stands_on_the_map_over_the_computed_level() 
 
     // The closed phase's map keeps its judgements, and with no phase
     // open there is no change set to judge.
-    ok(&dir, "person", &["phase", "close"]);
+    ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert_eq!(data(&dir, &["map"])["nodes"], doc["nodes"]);
     refused("wren", &judge, "no phase is open");
 }
@@ -973,9 +973,11 @@ fn the_page_embeds_the_document_and_a_closed_phase_keeps_its_map() {
 
     // Closing names the command, and the closed phase's map is read
     // from its closing merge: the same files with the same numbers.
-    let closed = ok(&dir, "person", &["phase", "close"]);
+    let closed = ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert!(
-        closed.contains("`ris map`, or `ris map --html <file>`"),
+        closed.contains(
+            "P-1's change set stays readable: `ris map P-1`, or `ris map P-1 --html <file>`"
+        ),
         "{closed}"
     );
     assert!(

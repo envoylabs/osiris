@@ -151,9 +151,17 @@ Once the harness is declared, the work runs in four steps, each yours:
 
 1. **Open a phase**: `ris phase open`, and load its items.
 2. **Bring it up**: `ris up`; the seats work until nothing is left.
-3. **Review**: `ris summary`, then `ris decide` for every decision
-   queued while the phase ran.
-4. **Close the phase**: `ris phase close`.
+3. **Review**: `ris phase review`. It shows the phase's state as `ris
+   summary` does, walks every decision queued while the phase ran as
+   `ris decide` does, then lists the change set ranked by risk, as
+   `ris map --list` does, and records the review at the tip of the
+   phase's work. It may be run at any point while the phase is open,
+   on what has merged so far.
+4. **Close the phase**: `ris phase close`. It refuses a phase whose
+   work has moved since it was reviewed (an item merged, or a commit
+   landed on its branch), and names the review; `ris phase close
+   --unreviewed` closes without one. Once closed, the phase's change
+   set stays readable with `ris map P-n`.
 
 There is no check-in in between. A seat that needs a judgement only you
 can make queues it as a substantive decision: its item is set aside and
@@ -310,7 +318,8 @@ aside to ready: a seat still running takes them, and `ris up` starts
 the seats that have stopped.
 
 The summary opens with the phase's state in one line, for a glance:
-that all of its items are merged and it is ready to close with `ris
+that all of its items are merged and it is ready to review with `ris
+phase review`, then once reviewed that it is ready to close with `ris
 phase close`, or how many of the phase's items are merged, how many are in progress and
 with which seats, how many are set aside and how many not started,
 then whatever waits on you with the command for it (open decisions:

@@ -189,7 +189,7 @@ fn closing_a_phase_renders_the_rules_file_into_the_closing_merge() {
         fs::read_to_string(dir.join(RULES_FILE)).unwrap(),
         rendered("The first rule.")
     );
-    let out = ok(&dir, "person", &["phase", "close"]);
+    let out = ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert!(
         out.contains(
             "closing merge: rendered AGENTS.md from the rules and docs/project-rules.md, which the phase changed; the merge carries it"
@@ -216,7 +216,7 @@ fn closing_a_phase_renders_the_rules_file_into_the_closing_merge() {
     // A phase that leaves the rules alone renders nothing.
     ok(&dir, "person", &["phase", "open", "two"]);
     phase_commit("phase/P-2", &[("a.txt", "a\n")]);
-    let out = ok(&dir, "person", &["phase", "close"]);
+    let out = ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert!(out.contains("closing merge: phase/P-2 into main"), "{out}");
     assert!(!out.contains("rendered"), "{out}");
     assert_eq!(git(&dir, &["diff", "--name-only", "main^2", "main"]), "");
@@ -229,7 +229,7 @@ fn closing_a_phase_renders_the_rules_file_into_the_closing_merge() {
         &[(SOURCE, "# Ours\n\nThe third rule.\n"), ("stop", "")],
     );
     let before = git(&dir, &["rev-parse", "main"]);
-    let out = ris(&dir, "person", &["phase", "close"]);
+    let out = ris(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert!(!out.status.success(), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("the merge was undone"), "{err}");

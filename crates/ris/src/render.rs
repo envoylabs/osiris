@@ -1239,13 +1239,18 @@ pub fn phase_state(l: &Loaded, running: &[AgentName]) -> Option<schema::PhaseSta
         .map(|(seat, _)| seat.clone())
         .collect();
     let ready_to_close = items > 0 && merged == items;
+    let reviewed = l.state.reviews.contains_key(&phase);
 
     let mut parts = Vec::new();
     if items == 0 {
         parts.push("no items yet: add one with `ris item add \"<goal>\"`".to_owned());
+    } else if ready_to_close && reviewed {
+        parts.push(format!(
+            "all {items} items merged and reviewed: ready to close with `ris phase close`"
+        ));
     } else if ready_to_close {
         parts.push(format!(
-            "all {items} items merged: ready to close with `ris phase close`"
+            "all {items} items merged: ready to review with `ris phase review`"
         ));
     } else {
         parts.push(format!("{merged} of {items} items merged"));
@@ -1294,6 +1299,7 @@ pub fn phase_state(l: &Loaded, running: &[AgentName]) -> Option<schema::PhaseSta
         faults,
         running: running.to_vec(),
         ready_to_close,
+        reviewed,
     })
 }
 

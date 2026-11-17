@@ -300,9 +300,20 @@ enum PhaseCmd {
         #[arg(long)]
         move_on: bool,
     },
+    /// The review step before closing, the person's: the phase's state,
+    /// a walk of the open decisions as `ris decide` gives it, and the
+    /// change set ranked by risk; then the review is recorded at the
+    /// tip of the phase's work. Run at any point while the phase is
+    /// open, it covers what has merged so far.
+    Review,
     /// Close the open phase. Its items that have not merged lose their
-    /// tag: they are in the backlog until tagged again.
-    Close,
+    /// tag: they are in the backlog until tagged again. Refused unless
+    /// the phase was reviewed at the tip of its work.
+    Close {
+        /// Close without a review standing at the tip.
+        #[arg(long)]
+        unreviewed: bool,
+    },
 }
 
 /// A phase tag as it is typed: `P-n`, or `none`.
@@ -761,7 +772,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 if matches!(
                     cli.command,
                     Cmd::Phase {
-                        action: PhaseCmd::Close
+                        action: PhaseCmd::Close { .. }
                     }
                 ) {
                     return Err(CliError::Other(
@@ -782,7 +793,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         if matches!(
             cli.command,
             Cmd::Phase {
-                action: PhaseCmd::Close
+                action: PhaseCmd::Close { .. }
             }
         ) && ris::install::is_installed(&p.root, cfg, std::env::current_exe().ok().as_deref())
             == Some(false)
@@ -1064,7 +1075,25 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     },
                 ))
             }
-            PhaseCmd::Close => {
+            PhaseCmd::Review => {
+                // The state as `ris summary` gives it, printed first.
+                let state = if cli.json {
+                    String::new()
+                } else {
+                    let l = p.load()?;
+                    let running: Vec<AgentName> = l
+                        .state
+                        .running
+                        .keys()
+                        .filter(|seat| run_alive(&p, &seat.0))
+                        .cloned()
+                        .collect();
+                    let seats = ris::status::summary_seats(&p, &l, &|seat| run_alive(&p, seat));
+                    render::summary(&l, &actor, false, Vec::new(), &running, seats).text
+                };
+                ris::review::run(&mut p, &actor, &state, !cli.json, &mut std::io::stdout())
+            }
+            PhaseCmd::Close { unreviewed } => {
                 let l = p.load()?;
                 let phase = l
                     .state
@@ -1093,6 +1122,14 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         docs.id, docs.id
                     )));
                 }
+                // The person read the change set at this tip, or chose
+                // to close without.
+                if !*unreviewed
+                    && let Some(why) =
+                        ris::review::unreviewed(&l, phase_id, ris::review::tip(&p, &l).as_ref())
+                {
+                    return Err(CliError::Other(why));
+                }
                 let closing = closing_merge(&mut p, phase_id, &goal)?;
                 let (l, events) = p.run(&Command::PhaseClose)?;
                 // The close, then one event for each item it untagged.
@@ -1112,7 +1149,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 let (text, phase) = render::report_data(&l);
                 Ok(Output::of(
                     format!(
-                        "{text}\n{closing}{left}\nthe change set as a map of the source: `ris map`, or `ris map --html <file>`"
+                        "{text}\n{closing}{left}\n{phase_id}'s change set stays readable: `ris map {phase_id}`, or `ris map {phase_id} --html <file>`"
                     ),
                     &schema::PhaseClosed {
                         report,

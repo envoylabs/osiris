@@ -411,7 +411,7 @@ fn closing_a_phase_merges_its_branch_into_the_main_line() {
     ok(h, Some("heron"), &["merge", "I-1"]);
     let phase_tip = rev(&main, "phase/P-1");
 
-    let out = ok(&main, None, &["phase", "close"]);
+    let out = ok(&main, None, &["phase", "close", "--unreviewed"]);
     assert!(out.contains("closing merge: phase/P-1 into main"), "{out}");
     assert!(out.contains("phase/P-1 deleted"), "{out}");
     assert_eq!(branch(&main), "main");
@@ -447,7 +447,7 @@ fn a_closing_merge_that_fails_the_checks_changes_nothing() {
     git(&main, &["commit", "-q", "-m", "elsewhere"]);
     let main_before = rev(&main, "main");
 
-    let r = ris(&main, None, &["phase", "close"]);
+    let r = ris(&main, None, &["phase", "close", "--unreviewed"]);
     assert_eq!(r.status.code(), Some(1));
     let err = String::from_utf8_lossy(&r.stderr);
     assert!(
@@ -475,12 +475,12 @@ fn phase_branches_follow_the_phase_and_can_be_turned_off() {
         "setup's phase open created the branch"
     );
     assert_eq!(branch(&main), "main", "and left the main checkout alone");
-    ok(&main, None, &["phase", "close"]);
+    ok(&main, None, &["phase", "close", "--unreviewed"]);
     assert_eq!(branch(&main), "main");
     let out = ok(&main, None, &["phase", "open", "second"]);
     assert!(out.contains("on branch phase/P-2"), "{out}");
     assert_eq!(branch(&main), "main");
-    ok(&main, None, &["phase", "close"]);
+    ok(&main, None, &["phase", "close", "--unreviewed"]);
 
     let config = main.join(".osiris/config.toml");
     let c = fs::read_to_string(&config).unwrap();
@@ -488,7 +488,7 @@ fn phase_branches_follow_the_phase_and_can_be_turned_off() {
     let out = ok(&main, None, &["phase", "open", "third"]);
     assert!(!out.contains("branch"), "{out}");
     assert_eq!(branch(&main), "main");
-    let out = ok(&main, None, &["phase", "close"]);
+    let out = ok(&main, None, &["phase", "close", "--unreviewed"]);
     assert!(out.contains("already on main"), "{out}");
 }
 
@@ -572,7 +572,7 @@ fn trailers_and_the_closing_merge_can_be_left_to_the_git_server() {
     );
     ok(h, Some("heron"), &["merge", "I-1"]);
     let main_before = rev(&main, "main");
-    let out = ok(&main, None, &["phase", "close"]);
+    let out = ok(&main, None, &["phase", "close", "--unreviewed"]);
     assert!(out.contains("left to the git server"), "{out}");
     assert_eq!(rev(&main, "main"), main_before, "main did not move");
     assert_eq!(branch(&main), "main");

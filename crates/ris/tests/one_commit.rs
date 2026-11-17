@@ -156,7 +156,7 @@ fn a_carried_over_items_merge_counts_for_the_next_item() {
     commit(&dir, "a.txt", "I-1");
     ok(&dir, None, &["merge", "I-1"]);
     // I-2 is left ready and carries over.
-    ok(&dir, None, &["phase", "close"]);
+    ok(&dir, None, &["phase", "close", "--unreviewed"]);
     ok(&dir, None, &["phase", "open", "the next phase"]);
     git(&dir, &["switch", "-q", "phase/P-2"]);
     ok(&dir, None, &["item", "add", "third", "--check", "ok"]);
