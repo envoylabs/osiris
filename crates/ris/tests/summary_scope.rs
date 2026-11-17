@@ -122,10 +122,11 @@ fn summary_shows_the_open_phase_and_counts_the_rest() {
     assert!(!text.contains("an old question"), "{text}");
     assert!(!text.contains("left over"), "{text}");
     assert!(
-        text.split_once('\n')
-            .unwrap()
-            .1
-            .starts_with("P-2 open: second\nitems: 1 ready\n\nI-3  ready  this phase's work\n--\n"),
+        text.split_once('\n').unwrap().1.starts_with(
+            "  heron      not started, idle; `ris up heron`\n  \
+             wren       not started, idle; `ris up wren`\n\
+             P-2 open: second\nitems: 1 ready\n\nI-3  ready  this phase's work\n--\n"
+        ),
         "{text}"
     );
     // The footer counts what is left out and names where it is.
@@ -291,7 +292,8 @@ fn a_merged_item_stays_on_the_picture_with_its_link() {
     assert!(
         text.starts_with(
             "1 of 2 items merged; 1 in progress (heron on I-2); 0 not started; \
-             no seat is running: start them with `ris up`\n\
+             no seat is running: start them with `ris up`\n  \
+             heron      not started, on I-2; `ris up heron`\n\
              P-1 open: merged\nitems: 1 claimed, 1 merged\n\n\
              I-1  merged  first\n\
              └── I-2  claimed (heron)  second\n--\n"

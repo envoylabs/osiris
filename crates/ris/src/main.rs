@@ -1802,7 +1802,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 .filter(|seat| run_alive(&p, &seat.0))
                 .cloned()
                 .collect();
-            Ok(render::summary(&l, &actor, *all, closed, &running))
+            let seats = ris::status::summary_seats(&p, &l, &|seat| run_alive(&p, seat));
+            Ok(render::summary(&l, &actor, *all, closed, &running, seats))
         }
 
         Cmd::Report => Ok(render::report(&p.load()?)),

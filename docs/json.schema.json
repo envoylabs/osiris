@@ -4613,6 +4613,13 @@
         },
         "report": {
           "$ref": "#/$defs/Report"
+        },
+        "seats": {
+          "description": "Every seat: whether it is running, what it holds, and for one\nthat is not running why it stopped and what brings it back.",
+          "items": {
+            "$ref": "#/$defs/SummarySeat"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -4624,7 +4631,74 @@
         "phase_state",
         "next_phase",
         "carried_over",
-        "checks"
+        "checks",
+        "seats"
+      ],
+      "type": "object"
+    },
+    "SummarySeat": {
+      "description": "A seat as `ris summary` shows it.",
+      "properties": {
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Activity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a running seat: what it last did and how long ago."
+        },
+        "attended": {
+          "description": "An attended seat: the person runs it, and `ris up` does not\nstart it.",
+          "type": "boolean"
+        },
+        "claim": {
+          "description": "The item it holds; null when it is idle.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next": {
+          "description": "The command that brings a seat that is not running back; null\nwhile it runs, and for an attended seat.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "running": {
+          "description": "Its agent is running now. A run whose process is gone is not\nrunning, whatever the log says.",
+          "type": "boolean"
+        },
+        "seat": {
+          "type": "string"
+        },
+        "stopped": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Stopped"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a seat not running that has run: why it stopped, as\n`ris status` gives it. Null while it runs and before its first\nrun."
+        }
+      },
+      "required": [
+        "seat",
+        "role",
+        "running",
+        "claim",
+        "activity",
+        "stopped",
+        "attended",
+        "next"
       ],
       "type": "object"
     },

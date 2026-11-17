@@ -109,3 +109,74 @@ fn a_stopped_seat_says_why_beside_it() {
     s.stopped = None;
     assert!(!seat_lines(&s, "../rook").contains("stopped"));
 }
+
+/// A seat's line in the summary: running and on what, or why it
+/// stopped with the command that brings it back and what comes before
+/// that command. A running seat and an attended one name no command.
+#[test]
+fn a_summary_line_says_what_brings_a_stopped_seat_back() {
+    use crate::schema::SummarySeat;
+    let seat = |stopped: Option<&'static str>| SummarySeat {
+        seat: "rook".into(),
+        role: Role::Builder,
+        running: false,
+        claim: None,
+        activity: None,
+        stopped: stopped.map(|reason| Stopped {
+            reason,
+            resets: None,
+        }),
+        attended: false,
+        next: Some("ris up rook".into()),
+    };
+    for (reason, line) in [
+        (
+            "usage_limit",
+            "stopped: usage limit, idle; `ris up rook` once the limit resets",
+        ),
+        (
+            "setup_fault",
+            "stopped: setup fault, idle; `ris status` says what is missing: \
+             allow it in [runner], then `ris up rook`",
+        ),
+        (
+            "paused",
+            "stopped: paused by the person, idle; `ris up rook`",
+        ),
+        (
+            "nothing_left",
+            "stopped: nothing left to claim, idle; `ris up rook` once there is more for it",
+        ),
+        (
+            "ended",
+            "stopped: ended, idle; `ris logs rook` shows how it ended, `ris up rook` starts it again",
+        ),
+    ] {
+        assert_eq!(
+            summary_line(&seat(Some(reason))),
+            format!("{:<10} {line}", "rook")
+        );
+    }
+
+    // Running: what it holds, no command; a quiet one is marked.
+    let mut s = seat(None);
+    s.running = true;
+    s.next = None;
+    s.claim = Some("I-7".into());
+    assert_eq!(summary_line(&s), "rook       running, on I-7");
+    s.activity = Some(Activity {
+        last: None,
+        quiet_seconds: 900,
+        stuck: true,
+    });
+    assert_eq!(
+        summary_line(&s),
+        "rook       running, on I-7; possibly stuck: quiet 15m, `ris logs rook` shows its output"
+    );
+
+    // Attended and not running: the person's to run, so no command.
+    let mut s = seat(None);
+    s.attended = true;
+    s.next = None;
+    assert_eq!(summary_line(&s), "rook       attended, idle");
+}

@@ -717,6 +717,119 @@ fn summary_says_when_no_seat_is_running() {
     let s = state(&rig);
     assert!(s["line"].as_str().unwrap().ends_with(none), "{s}");
     assert_eq!(rig.events("run_stopped").len(), 0, "nothing was recorded");
+    // The seat's own line says it stopped and what starts it again,
+    // though the log still has it as running.
+    let text = rig.ok(None, &["summary"]);
+    assert!(
+        text.lines().any(|l| l.trim_start().starts_with("rook")
+            && l.contains("stopped: ended")
+            && l.ends_with("`ris up rook` starts it again")),
+        "{text}"
+    );
+}
+
+/// `ris summary` shows the seats under its first line, one line each:
+/// running and on what, or why it stopped and the command that brings
+/// it back. `--json` carries the same as `seats`.
+#[test]
+fn summary_shows_each_seat_under_its_first_line() {
+    let rig = Rig::new("summary-seats", ENDING_AGENT);
+    rig.ok(None, &["item", "add", "something to do"]);
+    let seats = |r: &Rig| -> Value {
+        let out = r.ris(None, &["--json", "summary"]).stdout;
+        common::validate_output(&["summary"], &String::from_utf8(out.clone()).unwrap());
+        serde_json::from_slice::<Value>(&out).unwrap()["data"]["seats"].clone()
+    };
+    let seat = |v: &Value, name: &str| -> Value {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["seat"] == name)
+            .unwrap_or_else(|| panic!("{name} in {v}"))
+            .clone()
+    };
+    // The seats' lines: those between the first line and the header.
+    let lines = |r: &Rig| -> Vec<String> {
+        let text = r.ok(None, &["summary"]);
+        text.lines()
+            .skip(1)
+            .take_while(|l| !l.starts_with("P-1 open"))
+            .map(|l| l.trim().to_owned())
+            .collect()
+    };
+
+    // Before any run: every seat is there, not started, with its command.
+    let v = seats(&rig);
+    assert_eq!(v.as_array().unwrap().len(), 3, "{v}");
+    for name in ["heron", "rook", "wren"] {
+        let s = seat(&v, name);
+        assert_eq!(s["running"], false, "{s}");
+        assert_eq!(s["stopped"], Value::Null, "{s}");
+        assert_eq!(s["next"], format!("ris up {name}"), "{s}");
+    }
+    assert_eq!(
+        lines(&rig),
+        [
+            "heron      not started, idle; `ris up heron`",
+            "rook       not started, idle; `ris up rook`",
+            "wren       not started, idle; `ris up wren`",
+        ]
+    );
+
+    // Each run ends its own way, heron's while it holds an item.
+    rig.ok(Some("heron"), &["claim", "I-1"]);
+    rig.ok(None, &["up"]);
+    rig.until("every seat's run has ended", |r| {
+        seats(r)
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["running"] == false && !s["stopped"].is_null())
+    });
+    let v = seats(&rig);
+    assert_eq!(seat(&v, "heron")["claim"], "I-1");
+    assert_eq!(seat(&v, "heron")["stopped"]["reason"], "ended");
+    assert_eq!(seat(&v, "rook")["stopped"]["reason"], "usage_limit");
+    assert_eq!(seat(&v, "rook")["next"], "ris up rook");
+    assert_eq!(
+        lines(&rig),
+        [
+            "heron      stopped: ended, on I-1; `ris logs heron` shows how it ended, `ris up heron` starts it again",
+            "rook       stopped: usage limit, resets 3:20am (UTC), idle; `ris up rook` once the limit resets",
+            "wren       stopped: ended, idle; `ris logs wren` shows how it ended, `ris up wren` starts it again",
+        ]
+    );
+}
+
+/// A running seat's line in `ris summary` says so and names the item it
+/// holds, and has no command to bring it back.
+#[test]
+fn summary_shows_a_running_seat_and_what_it_holds() {
+    let rig = Rig::new("summary-running", WAITING_AGENT);
+    rig.ok(None, &["item", "add", "something to do"]);
+    rig.ok(Some("rook"), &["claim", "I-1"]);
+    rig.ok(None, &["up", "rook"]);
+    let rook = |r: &Rig| -> Value {
+        let v: Value = serde_json::from_slice(&r.ris(None, &["--json", "summary"]).stdout).unwrap();
+        v["data"]["seats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["seat"] == "rook")
+            .unwrap()
+            .clone()
+    };
+    rig.until("rook running", |r| rook(r)["running"] == true);
+    let s = rook(&rig);
+    assert_eq!(s["claim"], "I-1", "{s}");
+    assert_eq!(s["next"], Value::Null, "{s}");
+    assert_eq!(s["stopped"], Value::Null, "{s}");
+    let text = rig.ok(None, &["summary"]);
+    assert_eq!(
+        text.lines().nth(2).map(str::trim),
+        Some("rook       running, on I-1"),
+        "{text}"
+    );
 }
 
 /// A start that fails is reported as failing, with why, not as started.

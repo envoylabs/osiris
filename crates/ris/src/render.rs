@@ -1317,6 +1317,7 @@ pub fn summary(
     all: bool,
     checks: Vec<String>,
     running: &[AgentName],
+    seats: Vec<schema::SummarySeat>,
 ) -> Output {
     use crate::graph::Node;
     let scope = Scope::of(l, all);
@@ -1390,6 +1391,11 @@ pub fn summary(
         if let Some(state) = &state {
             s.push_str(&format!("{}\n", state.line));
         }
+        // The seats, under the first line: whether to wait, look into
+        // one, or run `ris up` again is read from here.
+        for seat in &seats {
+            s.push_str(&format!("  {}\n", crate::status::summary_line(seat)));
+        }
         s.push_str(&format!(
             "{} open: {}\n",
             phase.id,
@@ -1451,6 +1457,7 @@ pub fn summary(
             ready: rdy,
             all,
             phase_state: state,
+            seats,
             next_phase: next.map(|(phase, items)| schema::NextPhase {
                 phase,
                 items: items.iter().map(|i| item_json(l, i)).collect(),

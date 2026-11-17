@@ -290,6 +290,33 @@ pub struct Summary {
     pub carried_over: CarriedOver,
     /// What running the person's action checks did.
     pub checks: Vec<String>,
+    /// Every seat: whether it is running, what it holds, and for one
+    /// that is not running why it stopped and what brings it back.
+    pub seats: Vec<SummarySeat>,
+}
+
+/// A seat as `ris summary` shows it.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct SummarySeat {
+    pub seat: String,
+    pub role: Role,
+    /// Its agent is running now. A run whose process is gone is not
+    /// running, whatever the log says.
+    pub running: bool,
+    /// The item it holds; null when it is idle.
+    pub claim: Option<String>,
+    /// For a running seat: what it last did and how long ago.
+    pub activity: Option<crate::status::Activity>,
+    /// For a seat not running that has run: why it stopped, as
+    /// `ris status` gives it. Null while it runs and before its first
+    /// run.
+    pub stopped: Option<crate::status::Stopped>,
+    /// An attended seat: the person runs it, and `ris up` does not
+    /// start it.
+    pub attended: bool,
+    /// The command that brings a seat that is not running back; null
+    /// while it runs, and for an attended seat.
+    pub next: Option<String>,
 }
 
 /// Where the open phase stands. Its items that are not superseded are

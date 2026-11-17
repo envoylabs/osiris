@@ -217,12 +217,7 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
         .agents
         .iter()
         .map(|(name, cfg)| {
-            let claim = l
-                .state
-                .items
-                .values()
-                .find(|i| matches!(&i.state, ItemState::Claimed { agent } if agent.0 == *name))
-                .map(|i| i.id.to_string());
+            let claim = claim_of(l, name);
             // Its own worktree if it writes and has one. Otherwise an
             // auditor, an advisor, and a lead working at width one, use
             // the main checkout; a builder without one has nowhere to
@@ -287,6 +282,110 @@ pub fn seats(p: &Project, l: &Loaded) -> Vec<Seat> {
             }
         })
         .collect()
+}
+
+/// The item `seat` holds, if any.
+fn claim_of(l: &Loaded, seat: &str) -> Option<String> {
+    l.state
+        .items
+        .values()
+        .find(|i| matches!(&i.state, ItemState::Claimed { agent } if agent.0 == seat))
+        .map(|i| i.id.to_string())
+}
+
+/// Every seat as `ris summary` shows it: whether its agent is running,
+/// what it holds, and for one that is not running why it stopped and
+/// the command that brings it back. Read from the configuration, the
+/// log and the seats' run files, with no call to git.
+///
+/// `alive` says whether a seat's run still has its process. A run
+/// whose process is gone stays in the log as running until `ris up`
+/// clears it; here it is a seat that stopped, with the reason its run
+/// file gives.
+pub fn summary_seats(
+    p: &Project,
+    l: &Loaded,
+    alive: &dyn Fn(&str) -> bool,
+) -> Vec<crate::schema::SummarySeat> {
+    let runs = p.root.join(crate::project::DIR).join("runs");
+    let now = SystemTime::now();
+    p.config
+        .agents
+        .iter()
+        .map(|(name, cfg)| {
+            let seat = AgentName(name.clone());
+            let claim = claim_of(l, name);
+            let running = l.state.running.contains_key(&seat) && alive(name);
+            let faulted = l.state.faults.get(&seat).is_some_and(|f| !f.is_empty());
+            let stopped = if running {
+                None
+            } else {
+                stop_of(
+                    &runs,
+                    name,
+                    faulted,
+                    l.state.paused.contains(&seat),
+                    claim.is_some(),
+                )
+            };
+            crate::schema::SummarySeat {
+                seat: name.clone(),
+                role: cfg.role,
+                running,
+                activity: running
+                    .then(|| activity(&runs, name, p.config.runner.quiet_after_seconds, now))
+                    .flatten(),
+                stopped,
+                attended: !cfg.start,
+                // `ris up` starts no attended seat: the person runs it.
+                next: (!running && cfg.start).then(|| format!("ris up {name}")),
+                claim,
+            }
+        })
+        .collect()
+}
+
+/// A seat's line in `ris summary`: its name, whether it is running and
+/// what it holds, and for a seat that is not running why it stopped
+/// and the command that brings it back, with what comes before that
+/// command when something does.
+pub fn summary_line(s: &crate::schema::SummarySeat) -> String {
+    let doing = match &s.claim {
+        Some(item) => format!("on {item}"),
+        None => "idle".to_owned(),
+    };
+    let mut line = format!("{:<10} ", s.seat);
+    if s.running {
+        line.push_str(&format!("running, {doing}"));
+        if let Some(a) = s.activity.as_ref().filter(|a| a.stuck) {
+            line.push_str(&format!(
+                "; possibly stuck: quiet {}, `ris logs {}` shows its output",
+                ago(a.quiet_seconds),
+                s.seat
+            ));
+        }
+        return line;
+    }
+    line.push_str(&match &s.stopped {
+        Some(st) => format!("stopped: {}, {doing}", stopped_words(st)),
+        None if s.attended => format!("attended, {doing}"),
+        None => format!("not started, {doing}"),
+    });
+    if let Some(next) = &s.next {
+        line.push_str(&match s.stopped.as_ref().map(|st| st.reason) {
+            Some("usage_limit") => format!("; `{next}` once the limit resets"),
+            Some("setup_fault") => {
+                format!("; `ris status` says what is missing: allow it in [runner], then `{next}`")
+            }
+            Some("nothing_left") => format!("; `{next}` once there is more for it"),
+            Some("ended") => format!(
+                "; `ris logs {}` shows how it ended, `{next}` starts it again",
+                s.seat
+            ),
+            _ => format!("; `{next}`"),
+        });
+    }
+    line
 }
 
 fn role_word(r: Role) -> &'static str {

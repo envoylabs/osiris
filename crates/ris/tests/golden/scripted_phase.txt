@@ -1043,6 +1043,9 @@ previous report: <hash>
 
 $ ris summary
 2 of 4 items merged; 1 in progress (wren on I-4); 1 not started; no seat is running: start them with `ris up`
+  heron      not started, idle; `ris up heron`
+  rook       not started, idle; `ris up rook`
+  wren       not started, on I-4; `ris up wren`
 P-1 open: first slice
 items: 1 claimed, 2 merged, 1 ready
 

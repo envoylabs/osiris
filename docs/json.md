@@ -92,7 +92,15 @@ line of output per envelope, and ends once no seat is running; without
   `ready_to_close` (every item merged, and at least one). `merged`,
   `in_progress`, `set_aside` and `not_started` add up to `items`. It
   is the open phase's whether or not `--all` is given, though only the
-  default text output shows the line. `all` says whether `--all` was
+  default text output shows the line. `seats` is every configured
+  seat, as the text shows them under that line: `seat`, `role`,
+  `running` (its agent is running now; a run whose process is gone is
+  not), `claim` (the item it holds, or `null`), `activity` (for a
+  running seat, as in `ris status`), `stopped` (for a seat that has
+  run and is not running, why, as in `ris status`), `attended` (the
+  person runs it, and `ris up` does not start it) and `next` (the
+  command that brings a seat that is not running back; `null` while
+  it runs and for an attended seat). `all` says whether `--all` was
   given, in which case nothing is left out and the `graph` is the work
   in motion in every phase: open decisions, open actions and unmerged
   items, where only nodes with an edge are listed.

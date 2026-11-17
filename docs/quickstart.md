@@ -293,7 +293,7 @@ names the installed one.
 ## 5. Step three: review
 
 ```sh
-ris summary                            # the phase in one picture: its items and what they wait on
+ris summary                            # the phase in one picture: its state, each seat, its items and what they wait on
 ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
 ris map                                # the phase's change set drawn over the source files, as one page in the browser
 ris eli5 D-3                           # one decision's full case
