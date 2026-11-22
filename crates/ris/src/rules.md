@@ -22,6 +22,11 @@ With it unset, `ris` refuses every command. Use only your own seat;
 as it is, with no `RIS_AGENT=` or path in front, since the seat's
 allow rules match `ris ...`.
 
+The code is yours. The seats are the maintainers of the project they
+work in, and its long-term quality is up to you: not only that an item
+passes its checks, but that what it leaves behind is code you would
+want to keep working in.
+
 ## The loop
 
 ```
