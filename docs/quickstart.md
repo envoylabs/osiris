@@ -179,6 +179,7 @@ ris import backlog.toml                # then import
 ris item bring-in I-7                  # an unstarted item from the backlog, into this phase
 ris item add "later" --phase P-2       # planned for a phase not open yet
 ris item phase I-7 P-2                 # the same for an item there already; `none` untags it
+ris item retire I-7 I-8 --reason "..." # out of the work for good, with nothing to replace them
 ```
 
 Every phase gets an item to bring the docs up to date, and `ris phase
@@ -325,7 +326,7 @@ with which seats, how many are set aside and how many not started,
 then whatever waits on you with the command for it (open decisions:
 `ris decide`; a seat's setup fault: `ris status`, then `ris up
 <seat>`), and, when items remain and no seat is running, that `ris up`
-starts them. Superseded items are not counted.
+starts them. Superseded and retired items are not counted.
 
 Below that line the summary is one picture of the open phase and
 nothing else: its
@@ -456,8 +457,12 @@ ris phase close                        # merges phase/P-1 into main
 `ris phase close` merges what is merged into the main line and carries
 the rest over: an item not merged loses its phase tag and stays open,
 in the backlog, until you tag it for a later phase with `ris item
-phase` or bring it into the open one with `ris item bring-in`. The
-report it prints says how many items the phase opened with (those
+phase` or bring it into the open one with `ris item bring-in`. An
+item that will not be built, and that nothing replaces, you retire
+with `ris item retire I-n --reason "<why>"`: it leaves the work for
+good, is never carried over again, and `ris show I-n` gives the
+reason. An item still in the work that waits on it is retired in the
+same command, or the retirement is refused. The report it prints says how many items the phase opened with (those
 tagged for it before it opened), how many were added while it was
 open (planned), how many were merged while it was open, and how many
 carry over; `ris report` shows the same line for the open phase, as

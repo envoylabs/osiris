@@ -843,6 +843,11 @@
           "type": "string"
         },
         {
+          "const": "Retire",
+          "description": "The person taking an item that will not be built out of the\nwork, with a reason and no replacement.",
+          "type": "string"
+        },
+        {
           "const": "BringIn",
           "description": "The person bringing an item that has not been started from the\nbacklog into the open phase.",
           "type": "string"
@@ -1824,8 +1829,15 @@
           ],
           "description": "Its phase tag: the phase it is in or is planned for; null when\nit has none, which is the backlog."
         },
+        "retired_reason": {
+          "description": "Why the person retired it, when retired.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "state": {
-          "description": "`ready`, `claimed`, `blocked`, `done`, `merged` or `superseded`.",
+          "description": "`ready`, `claimed`, `blocked`, `done`, `merged`, `superseded` or\n`retired`.",
           "type": "string"
         },
         "superseded_by": {
@@ -2651,6 +2663,12 @@
         "report": {
           "$ref": "#/$defs/Hash"
         },
+        "retired": {
+          "description": "How many items the person has retired, in the whole project.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
         "substantive": {
           "items": {
             "$ref": "#/$defs/Decision"
@@ -2670,6 +2688,7 @@
         "messages",
         "answered_outside_options",
         "merged_ahead",
+        "retired",
         "log",
         "report",
         "previous_report"
@@ -3442,6 +3461,62 @@
           "const": "review_is_for_the_person",
           "description": "Reviewing the phase is the person's step before closing it.",
           "type": "string"
+        },
+        {
+          "const": "retire_is_for_the_person",
+          "description": "Retiring items is the person's to do: it is final.",
+          "type": "string"
+        },
+        {
+          "const": "retire_needs_reason",
+          "description": "A retirement records why; the reason given was empty.",
+          "type": "string"
+        },
+        {
+          "const": "nothing_to_retire",
+          "description": "A retirement names at least one item.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Items left in the work wait on this one, so it would hold them\nfor ever; it is retired only with them, in the same command.",
+          "properties": {
+            "retire_waited_on": {
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemId"
+                },
+                "waiting": {
+                  "items": {
+                    "$ref": "#/$defs/ItemId"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "item",
+                "waiting"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "retire_waited_on"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A new item cannot depend on a retired one, which never merges.",
+          "properties": {
+            "depends_on_retired": {
+              "$ref": "#/$defs/ItemId"
+            }
+          },
+          "required": [
+            "depends_on_retired"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3464,6 +3539,22 @@
         }
       ],
       "description": "`ris report`: the phase report, or that there is no phase yet."
+    },
+    "Retired": {
+      "description": "`ris item retire`.",
+      "properties": {
+        "items": {
+          "description": "The items retired, each once, in the order named.",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
     },
     "Risk": {
       "description": "How closely one changed file should be read: where to look first.",
@@ -4256,6 +4347,27 @@
         },
         {
           "additionalProperties": false,
+          "description": "The person took items that will not be built out of the work,\nfor good, with nothing to replace them. The text part carries\n`reason`, one for every item named.",
+          "properties": {
+            "event": {
+              "const": "items_retired",
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/ItemId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "items"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A person action. The text part carries `what` and `done_when`.\nItems it blocks are set aside by `ItemBlocked` events emitted\nwith it.",
           "properties": {
             "action": {
@@ -4821,7 +4933,7 @@
       "type": "object"
     },
     "Tally": {
-      "description": "What a phase came to: the items it opened with, the items planned\nin it, the merges made while it was open (an item carried in from an\nearlier phase counts where it merged), and the items left unsettled,\nneither merged nor superseded, which the next phase inherits.",
+      "description": "What a phase came to: the items it opened with, the items planned\nin it, the merges made while it was open (an item carried in from an\nearlier phase counts where it merged), and the items left unsettled,\nneither merged, superseded nor retired, which the next phase\ninherits.",
       "properties": {
         "carried_over": {
           "format": "uint",
@@ -4991,6 +5103,9 @@
     "data.item_phase": {
       "$ref": "#/$defs/ItemTagged"
     },
+    "data.item_retire": {
+      "$ref": "#/$defs/Retired"
+    },
     "data.item_supersede": {
       "$ref": "#/$defs/Superseded"
     },
@@ -5154,6 +5269,9 @@
             },
             {
               "$ref": "#/$defs/data.item_supersede"
+            },
+            {
+              "$ref": "#/$defs/data.item_retire"
             },
             {
               "$ref": "#/$defs/data.item_bring-in"

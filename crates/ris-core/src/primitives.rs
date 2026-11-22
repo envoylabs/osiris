@@ -98,6 +98,10 @@ pub enum ItemState {
     /// superseded decision is. A dependency on it is a dependency on
     /// its replacement.
     Superseded { by: ItemId },
+    /// Taken out of the work by the person, with nothing to replace it;
+    /// final. `at` is the event that retired it, whose text part holds
+    /// the reason.
+    Retired { at: u64 },
 }
 
 /// What an item can be blocked on.

@@ -195,6 +195,15 @@ pub enum Command {
         by: ItemId,
         actor: Actor,
     },
+    /// Take items that will not be built out of the work for good, with
+    /// one reason for them all and nothing to replace them. Each must be
+    /// unmerged and held by no seat, and none may be waited on by an
+    /// item left unretired. The person's only.
+    Retire {
+        items: Vec<ItemId>,
+        reason: Text,
+        actor: Actor,
+    },
     /// Bring an unstarted item from the backlog into the open phase.
     /// The person's only.
     BringIn {
@@ -250,6 +259,7 @@ impl Command {
             Self::Release { .. } => CommandKind::Release,
             Self::Audit { .. } => CommandKind::Audit,
             Self::Supersede { .. } => CommandKind::Supersede,
+            Self::Retire { .. } => CommandKind::Retire,
             Self::BringIn { .. } => CommandKind::BringIn,
             Self::Tag { .. } => CommandKind::Tag,
             Self::RunStart { .. } => CommandKind::RunStart,
@@ -305,6 +315,7 @@ fn item_state_kind(s: &ItemState) -> ItemStateKind {
         ItemState::Done { .. } => ItemStateKind::Done,
         ItemState::Merged { .. } => ItemStateKind::Merged,
         ItemState::Superseded { .. } => ItemStateKind::Superseded,
+        ItemState::Retired { .. } => ItemStateKind::Retired,
     }
 }
 
@@ -316,6 +327,7 @@ fn item_state_name(k: ItemStateKind) -> &'static str {
         ItemStateKind::Done => "done",
         ItemStateKind::Merged => "merged",
         ItemStateKind::Superseded => "superseded",
+        ItemStateKind::Retired => "retired",
     }
 }
 
@@ -477,8 +489,11 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                 Tag::Phase(p) => return Err(Refusal::PhaseIsClosed(*p)),
             };
             for d in depends_on {
-                if !state.items.contains_key(d) {
-                    return Err(Refusal::UnknownItem(*d));
+                let dep = state.items.get(d).ok_or(Refusal::UnknownItem(*d))?;
+                // A retired item never merges: depending on it would wait
+                // for ever.
+                if let ItemState::Retired { .. } = state.items[&state.current(dep.id)].state {
+                    return Err(Refusal::DependsOnRetired(*d));
                 }
             }
             let item = state.next_item_id();
@@ -829,7 +844,9 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                 let i = state.items.get(item).ok_or(Refusal::UnknownItem(*item))?;
                 if matches!(
                     i.state,
-                    ItemState::Merged { .. } | ItemState::Superseded { .. }
+                    ItemState::Merged { .. }
+                        | ItemState::Superseded { .. }
+                        | ItemState::Retired { .. }
                 ) {
                     return Err(Refusal::SettledItem(*item));
                 }
@@ -956,6 +973,60 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                 item: *item,
                 by: *by,
             })])
+        }
+
+        Command::Retire {
+            items,
+            reason,
+            actor,
+        } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::RetireIsForThePerson);
+            }
+            if reason.as_str().trim().is_empty() {
+                return Err(Refusal::RetireNeedsReason);
+            }
+            // Each item once, in the order named.
+            let mut named = Vec::new();
+            for item in items {
+                if !named.contains(item) {
+                    named.push(*item);
+                }
+            }
+            if named.is_empty() {
+                return Err(Refusal::NothingToRetire);
+            }
+            for item in &named {
+                item_move(state, *item, kind)?;
+            }
+            // An item still in the work that waits on one named here would
+            // wait for ever: refuse, unless it is named too.
+            for item in &named {
+                let waiting: Vec<ItemId> = state
+                    .items
+                    .values()
+                    .filter(|w| {
+                        !named.contains(&w.id)
+                            && !matches!(
+                                w.state,
+                                ItemState::Merged { .. }
+                                    | ItemState::Superseded { .. }
+                                    | ItemState::Retired { .. }
+                            )
+                            && w.depends_on.iter().any(|d| state.current(*d) == *item)
+                    })
+                    .map(|w| w.id)
+                    .collect();
+                if !waiting.is_empty() {
+                    return Err(Refusal::RetireWaitedOn {
+                        item: *item,
+                        waiting,
+                    });
+                }
+            }
+            Ok(vec![
+                Effect::new(Structure::ItemsRetired { items: named }).with("reason", reason),
+            ])
         }
 
         Command::BringIn { item, actor } => {

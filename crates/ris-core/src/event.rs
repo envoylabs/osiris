@@ -140,6 +140,12 @@ pub enum Structure {
         item: ItemId,
         by: ItemId,
     },
+    /// The person took items that will not be built out of the work,
+    /// for good, with nothing to replace them. The text part carries
+    /// `reason`, one for every item named.
+    ItemsRetired {
+        items: Vec<ItemId>,
+    },
     /// A person action. The text part carries `what` and `done_when`.
     /// Items it blocks are set aside by `ItemBlocked` events emitted
     /// with it.

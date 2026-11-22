@@ -370,6 +370,19 @@ enum ItemCmd {
         #[arg(long)]
         by: ItemId,
     },
+    /// Take items that will not be built out of the work for good, with
+    /// nothing to replace them (the person's only). Each must be
+    /// unmerged and held by no seat; an item still in the work that
+    /// waits on one is retired with it in the same command, or the
+    /// retirement is refused. Final.
+    Retire {
+        #[arg(required = true)]
+        items: Vec<ItemId>,
+        /// Why they will not be built; one reason covers every item
+        /// named.
+        #[arg(long)]
+        reason: String,
+    },
     /// Bring an item nobody has started from the backlog into the open
     /// phase, so a seat may claim it (the person's only).
     BringIn {
@@ -1154,7 +1167,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     .check_index()
                     .map_err(|e| CliError::Other(e.to_string()))?;
                 // The docs item, if this phase has one, is merged (or
-                // superseded) before the phase closes.
+                // superseded, or retired by the person) before the phase
+                // closes.
                 if let Some(docs) = l.state.items.values().find(|i| {
                     i.phase == Some(phase_id)
                         && l.text(i.at, "goal") == DOCS_GOAL
@@ -1162,11 +1176,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                             i.state,
                             ris_core::primitives::ItemState::Merged { .. }
                                 | ris_core::primitives::ItemState::Superseded { .. }
+                                | ris_core::primitives::ItemState::Retired { .. }
                         )
                 }) {
                     return Err(CliError::Other(format!(
                         "refused: {} (the docs) is not merged, so the docs may not describe what this phase built\n  \
-                         next: bring them up to date and merge {}, or supersede it",
+                         next: bring them up to date and merge {}, or supersede or retire it",
                         docs.id, docs.id
                     )));
                 }
@@ -1302,6 +1317,31 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         item: *item,
                         superseded_by: *by,
                     },
+                ))
+            }
+            ItemCmd::Retire { items, reason } => {
+                let reason = p.text("reason", reason)?;
+                p.run(&Command::Retire {
+                    items: items.clone(),
+                    reason,
+                    actor: actor.clone(),
+                })?;
+                let mut named: Vec<ItemId> = Vec::new();
+                for i in items {
+                    if !named.contains(i) {
+                        named.push(*i);
+                    }
+                }
+                Ok(Output::of(
+                    format!(
+                        "retired {}",
+                        named
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    &schema::Retired { items: named },
                 ))
             }
             ItemCmd::BringIn { item } => {

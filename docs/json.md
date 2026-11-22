@@ -82,8 +82,8 @@ line of output per envelope, and ends once no seat is running; without
   with a phase open; with none open it is the `phase` that opens next
   and the `items` tagged for it. `phase_state` is where the open
   phase stands, `null` with no phase open: `line` (the one line the
-  text output opens with), `items` (the phase's items, superseded ones
-  left out), `merged`, `in_progress` (claimed, or done and not yet
+  text output opens with), `items` (the phase's items, superseded and
+  retired ones left out), `merged`, `in_progress` (claimed, or done and not yet
   merged; each an `item` and the `seat` on it), `set_aside` (the
   blocked items' ids), `not_started`, `open_decisions` (the phase's
   open substantive decisions, which wait on the person), `faults` (the
@@ -121,8 +121,11 @@ line of output per envelope, and ends once no seat is running; without
   opened that `ris phase open` brought in, not those it moved on), the
   phase's `planned` items (added while it was open), the `merged` count (merges made while it
   was open, carried-in items included) and `carried_over` (items, from
-  any phase up to it, neither merged nor superseded; for an open phase,
-  what would carry over if it closed now).
+  any phase up to it, neither merged, superseded nor retired; for an
+  open phase, what would carry over if it closed now). `retired` counts
+  the items the person has retired in the whole project; the report
+  lists none of them, and its text gives the count on a `retired:` line
+  when there is at least one.
 - `ris ready`: for a seat, the open phase's items it may claim and no
   other. For the person, those first and then every other item that
   could be claimed were it in the phase: the backlog, and what is
@@ -153,6 +156,22 @@ line of output per envelope, and ends once no seat is running; without
   refused with `{"not_in_open_phase": {"item", "phase"}}`, `phase`
   being `null` when the item has none, and an agent's bring-in with
   `{"bring_in_is_for_the_person": "I-n"}`.
+- `ris item retire I-n [I-m ...] --reason "<why>"`, the person's only:
+  `items`, those retired, each once, in the order named. One
+  `items_retired` event records them all, its text part carrying the
+  one `reason`. A retired item's `state` is `retired` and its record
+  carries `retired_reason`; it is final, never offered, claimed,
+  brought in or tagged, and `ris summary --all` leaves it out. It takes
+  an item that is ready, blocked or done and never merged; a claimed,
+  merged, superseded or retired one is refused with
+  `illegal_item_transition`, and one refusal refuses the whole command.
+  The other refusals: `retire_is_for_the_person`, `retire_needs_reason`
+  (an empty reason), `nothing_to_retire`,
+  `{"retire_waited_on": {"item", "waiting"}}` when an item that is not
+  merged, superseded or retired, and not named in the same command,
+  waits on it (directly, or through an item it replaced), and
+  `{"depends_on_retired": "I-n"}` for `ris item add --depends` naming a
+  retired item.
 - `ris inbox` as the person: `decisions` waiting, `actions` for the
   person, and `checks`.
 - `ris audit`: `queue`, the open phase's done and merged items the

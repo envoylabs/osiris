@@ -43,7 +43,8 @@ pub struct Item {
     /// it has none, which is the backlog.
     pub phase: Option<PhaseId>,
     pub goal: String,
-    /// `ready`, `claimed`, `blocked`, `done`, `merged` or `superseded`.
+    /// `ready`, `claimed`, `blocked`, `done`, `merged`, `superseded` or
+    /// `retired`.
     pub state: &'static str,
     pub checks: Vec<CheckId>,
     pub depends_on: Vec<ItemId>,
@@ -62,6 +63,9 @@ pub struct Item {
     pub commit: Option<CommitHash>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub superseded_by: Option<ItemId>,
+    /// Why the person retired it, when retired.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retired_reason: Option<String>,
     /// The unmerged items a ready item depends on, when there are any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waiting_on: Option<Vec<ItemId>>,
@@ -246,6 +250,8 @@ pub struct PhaseReport {
     pub messages: usize,
     pub answered_outside_options: usize,
     pub merged_ahead: Vec<MergedAhead>,
+    /// How many items the person has retired, in the whole project.
+    pub retired: usize,
     pub log: LogHead,
     pub report: Hash,
     pub previous_report: Hash,
@@ -494,6 +500,13 @@ pub struct ItemTagged {
 pub struct Superseded {
     pub item: ItemId,
     pub superseded_by: ItemId,
+}
+
+/// `ris item retire`.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct Retired {
+    /// The items retired, each once, in the order named.
+    pub items: Vec<ItemId>,
 }
 
 /// `ris item bring-in`.
@@ -944,6 +957,7 @@ pub fn commands(g: &mut SchemaGenerator) -> Vec<(&'static str, Schema)> {
         ("item add", g.subschema_for::<ItemAdded>()),
         ("item phase", g.subschema_for::<ItemTagged>()),
         ("item supersede", g.subschema_for::<Superseded>()),
+        ("item retire", g.subschema_for::<Retired>()),
         ("item bring-in", g.subschema_for::<BroughtIn>()),
         ("ready", g.subschema_for::<Ready>()),
         ("claim", g.subschema_for::<Brief>()),

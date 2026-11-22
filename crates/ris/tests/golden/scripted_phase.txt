@@ -444,6 +444,7 @@ $ ris --json report
     },
     "previous_report": "<hash>",
     "report": "<hash>",
+    "retired": 0,
     "substantive": [
       {
         "about": "I-3",
@@ -579,6 +580,7 @@ $ ris --json report
     },
     "previous_report": "<hash>",
     "report": "<hash>",
+    "retired": 0,
     "substantive": [
       {
         "about": "I-3",
@@ -724,6 +726,7 @@ $ ris --json report
     },
     "previous_report": "<hash>",
     "report": "<hash>",
+    "retired": 0,
     "substantive": [
       {
         "about": "I-3",
@@ -1249,6 +1252,7 @@ $ ris --json report
     },
     "previous_report": "<hash>",
     "report": "<hash>",
+    "retired": 0,
     "substantive": [
       {
         "about": "I-3",

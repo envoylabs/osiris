@@ -154,11 +154,15 @@ impl State {
         self.open_phase().is_some_and(|p| p.id == phase) || phase.0 as usize > self.phases.len()
     }
 
-    /// The items tagged for `phase` that are not superseded, in id
-    /// order.
+    /// The items tagged for `phase` that are neither superseded nor
+    /// retired, in id order.
     pub fn tagged(&self, phase: PhaseId) -> impl Iterator<Item = &Item> {
         self.items.values().filter(move |i| {
-            i.phase == Some(phase) && !matches!(i.state, ItemState::Superseded { .. })
+            i.phase == Some(phase)
+                && !matches!(
+                    i.state,
+                    ItemState::Superseded { .. } | ItemState::Retired { .. }
+                )
         })
     }
 
@@ -502,6 +506,11 @@ impl State {
                 let r = self.index.replaced.entry(*by).or_default();
                 r.push(*item);
                 r.sort();
+            }
+            Structure::ItemsRetired { items } => {
+                for item in items {
+                    self.item_mut(seq, *item)?.state = ItemState::Retired { at: seq };
+                }
             }
             Structure::DecisionRaised {
                 decision,

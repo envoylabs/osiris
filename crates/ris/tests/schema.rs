@@ -489,6 +489,11 @@ fn every_command_s_real_output_fits_the_committed_schema() {
         &["item", "add", "for a later phase", "--phase", "P-9"],
     );
     r.ok(None, &["show", backlog]);
+    // And one that will not be built, retired, then shown and counted.
+    r.ok(None, &["item", "retire", backlog, "--reason", "not wanted"]);
+    let shown = r.ok(None, &["show", backlog]);
+    assert_eq!(shown["retired_reason"], "not wanted", "{shown}");
+    r.ok(None, &["report"]);
 
     // Nothing was left out: every command the schema has data for was
     // run and validated here.
