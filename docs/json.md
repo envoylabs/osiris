@@ -304,7 +304,8 @@ document, as JSON in the element `<script id="map-data"
 type="application/json">`, and draws nothing that is not in it, so any
 other renderer draws the same map from either source. `ris map` with
 no flags, run by the person at a terminal, writes that page to
-`.osiris/map.html` and opens it in the browser; with `--json` or
+`.osiris/map.html` and opens it, in a window of its own or in the
+browser; with `--json` or
 `--list`, run by a seat, or with output that is not a terminal,
 nothing is written or opened. `ris map --list --json` gives the same
 document as `ris map --json`. It follows the

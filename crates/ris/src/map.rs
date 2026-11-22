@@ -1637,8 +1637,8 @@ pub enum Show<'a> {
     List { steps: bool },
     /// Write it to the file named (`--html`).
     Write(&'a Path),
-    /// Write it to `file`, which is said as `shown`, and open it in the
-    /// browser with `opener`.
+    /// Write it to `file`, which is said as `shown`, and open it with
+    /// `opener`: in a window of its own, or in the browser.
     Open {
         file: &'a Path,
         shown: &'a str,
@@ -1660,7 +1660,8 @@ pub fn opens_page(actor: &Actor, json: bool, html: bool, terminal: bool) -> bool
 pub enum Form {
     /// The page, written to the file `--html` names.
     Write,
-    /// The page, written to its fixed file and opened in the browser.
+    /// The page, written to its fixed file and opened, in a window of
+    /// its own or in the browser.
     Open,
     /// The ranked list with each file's reasons (`--list`).
     List,
@@ -1683,15 +1684,46 @@ pub fn form(actor: &Actor, json: bool, html: bool, list: bool, terminal: bool) -
     }
 }
 
-/// How a file is opened in the browser: a program, and the arguments
-/// that go before the file.
+/// How the page's file is opened: a program, and the arguments that go
+/// before the file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Opener {
     pub program: String,
     pub args: Vec<String>,
+    /// Whether the program is the window itself, which stays for as
+    /// long as the page is shown, and not a program that hands the file
+    /// to a browser and ends. A window is not waited for: it says it is
+    /// showing the page with [`SHOWN`] as the first line of its
+    /// output, or says there why it is not.
+    pub stays: bool,
 }
 
+/// The first line of output of a window that is showing the page.
+pub const SHOWN: &str = "shown";
+
+/// The command of `ris` that holds the page's window.
+pub const WINDOW_COMMAND: &str = "window";
+
 impl Opener {
+    /// A window of the page's own, held by `ris` run again as
+    /// [`WINDOW_COMMAND`], which serves the page from the file.
+    pub fn window(ris: &Path) -> Self {
+        Self {
+            program: ris.to_string_lossy().into_owned(),
+            args: vec![WINDOW_COMMAND.to_owned()],
+            stays: true,
+        }
+    }
+
+    /// Where the page is opened, as the output says it.
+    pub fn place(&self) -> &'static str {
+        if self.stays {
+            "a window of its own"
+        } else {
+            "the browser"
+        }
+    }
+
     /// The platform's own way to open a file with whatever handles it,
     /// which for a page is the person's browser.
     pub fn platform() -> Self {
@@ -1706,33 +1738,50 @@ impl Opener {
         Self {
             program: program.to_owned(),
             args: args.iter().map(|a| (*a).to_owned()).collect(),
+            stays: false,
         }
     }
 
     /// Open `file`, or say in a few words why it did not open: the
-    /// program could not be started, or it reported a failure.
+    /// program could not be started, or it reported a failure. A window
+    /// is left running once it says the page is shown.
     pub fn open(&self, file: &Path) -> Result<(), String> {
-        let status = Command::new(&self.program)
+        let mut command = Command::new(&self.program);
+        command
             .args(&self.args)
             .arg(file)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|e| format!("`{}` could not be started: {}", self.program, e.kind()))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("`{}` reported a failure", self.program))
+            .stderr(Stdio::null());
+        let started =
+            |e: std::io::Error| format!("`{}` could not be started: {}", self.program, e.kind());
+        if !self.stays {
+            let status = command.stdout(Stdio::null()).status().map_err(started)?;
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("`{}` reported a failure", self.program))
+            };
+        }
+        let mut child = command.stdout(Stdio::piped()).spawn().map_err(started)?;
+        let mut line = String::new();
+        if let Some(out) = child.stdout.take() {
+            // Its first line, or the end of its output when it ends
+            // with none: a wait for the window, never for its closing.
+            let _ = std::io::BufRead::read_line(&mut std::io::BufReader::new(out), &mut line);
+        }
+        match line.trim() {
+            SHOWN => Ok(()),
+            "" => Err(format!("`{}` ended with the page not shown", self.program)),
+            why => Err(why.to_owned()),
         }
     }
 }
 
 /// `ris map`: the document, and in text its totals and the changed
 /// files, each with its risk level, the highest risk first and within a
-/// level the heaviest. `show` says what becomes of the page. A browser
-/// that does not open is said, with the file to open by hand, and is
-/// not an error: the page is written either way.
+/// level the heaviest. `show` says what becomes of the page. A window
+/// or a browser that does not open is said, with the file to open by
+/// hand, and is not an error: the page is written either way.
 pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
     let doc = serde_json::to_value(&map).expect("the map serialises");
     let t = &doc["totals"];
@@ -1841,10 +1890,11 @@ pub fn output(map: crate::schema::Map, show: Show) -> Result<Output, CliError> {
             opener,
         } => {
             std::fs::write(file, page(&doc))?;
+            let place = opener.place();
             match opener.open(file) {
-                Ok(()) => text.push_str(&format!("wrote {shown} and opened it in the browser")),
+                Ok(()) => text.push_str(&format!("wrote {shown} and opened it in {place}")),
                 Err(why) => text.push_str(&format!(
-                    "wrote {shown}; it did not open in the browser: {why}\n  \
+                    "wrote {shown}; it did not open in {place}: {why}\n  \
                      next: open that file in a browser yourself; it needs no network"
                 )),
             }

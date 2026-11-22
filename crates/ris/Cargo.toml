@@ -10,7 +10,15 @@ rust-version.workspace = true
 name = "ris"
 path = "src/main.rs"
 
+[features]
+# `ris map` opens its page in a native window (D-138). Off by default,
+# so the command line builds with no web view and none of the system
+# packages one needs; the person's ris is built with it by `--features
+# window` in the build command of `[install]`.
+window = ["dep:ris-window"]
+
 [dependencies]
+ris-window = { workspace = true, optional = true }
 # With the schema of its serialised types: the `--json` contract's
 # schema is generated from them.
 ris-core = { workspace = true, features = ["schema"] }

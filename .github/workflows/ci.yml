@@ -36,6 +36,14 @@ jobs:
           rustup toolchain install
           rustup show active-toolchain
 
+      - name: system packages
+        # The map page's window (crates/ris-window) holds the system's
+        # web view, which on Linux is WebKitGTK: its development package
+        # brings GTK's with it.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libwebkit2gtk-4.1-dev
+
       - name: build
         run: cargo build --workspace
 
@@ -49,8 +57,19 @@ jobs:
       - name: fmt
         run: cargo fmt --all --check
 
-      - name: scan
+      - name: with the window
+        # ris opens the window only when built with its `window`
+        # feature, which the steps above leave off: here that build is
+        # linted and tested too. No test opens a window.
         run: |
+          cargo clippy -p ris --features window --all-targets -- -D warnings
+          cargo test -p ris --features window --no-fail-fast
+
+      - name: scan
+        # The step above built ris again with the window: build the
+        # plain one, which is what the workspace's checks cover.
+        run: |
+          cargo build -p ris
           ./target/debug/ris init --local
           ./target/debug/ris scan
 

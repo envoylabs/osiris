@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/ris-core", "crates/ris-store-sqlite", "crates/ris"]
+members = [
+    "crates/ris-core",
+    "crates/ris-store-sqlite",
+    "crates/ris",
+    "crates/ris-window",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -32,3 +37,8 @@ tree-sitter-go = "0.25"
 tree-sitter-clojure-orchard = "0.2"
 # Runs the map page's script in a test, with no browser (D-115).
 boa_engine = "0.22"
+# The map page's window (D-138): the system's web view, and the window
+# that holds it. On Linux the build needs libwebkit2gtk-4.1-dev.
+ris-window = { path = "crates/ris-window" }
+wry = "0.57"
+tao = "0.37"

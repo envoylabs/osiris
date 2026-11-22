@@ -6,7 +6,7 @@
 //! failed check exits 3 with the failures and their evidence ids; any
 //! other error exits 1.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -218,7 +218,8 @@ enum Cmd {
     /// file with the lines the phase added and removed, and how the
     /// files connect. With no phase named, the open phase, or the last
     /// one closed. Run by the person at a terminal with no flags, it
-    /// writes the page inside .osiris and opens it in the browser.
+    /// writes the page inside .osiris and opens it: in a window of its
+    /// own where ris is built with one, in the browser where not.
     /// Given a git range instead, the change set between two commits of
     /// any repository, in a project or not.
     Map {
@@ -237,6 +238,14 @@ enum Cmd {
         #[arg(long, requires = "list")]
         steps: bool,
     },
+    /// Hold a window showing the page in FILE until it is closed.
+    /// `ris map` starts it and leaves it running, so it is not listed
+    /// in help. The person's: a seat never opens a window. Only in a
+    /// ris built with the `window` feature. It has no `--json` data:
+    /// its one line of output says the page is shown, or why not, and
+    /// it ends with the window.
+    #[command(hide = true)]
+    Window { file: PathBuf },
     /// Where each seat is: role, worktree, branch, claim, commits ahead
     /// of and behind the phase branch, uncommitted changes.
     Status,
@@ -812,6 +821,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     let mut p = Project::find(&cwd)?;
     let actor = p.actor()?;
     forbidden_by_role(&p, &actor, &cli.command)?;
+    if let Cmd::Window { file } = &cli.command {
+        return window(&actor, file);
+    }
     // D-48: the person's ris catches up with the last merge before it
     // does anything else. A seat's never does: it runs in a sandbox.
     if actor == Actor::Person
@@ -868,7 +880,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     }
 
     match &cli.command {
-        Cmd::Init { .. } | Cmd::Schema => unreachable!(),
+        Cmd::Init { .. } | Cmd::Schema | Cmd::Window { .. } => unreachable!(),
 
         Cmd::Rules { render, to, check } => {
             let (Some(source), Some(to)) = (render, to) else {
@@ -1968,7 +1980,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         Show::Open {
                             file: &file,
                             shown: &shown_beside(&p, &file),
-                            opener: &ris::map::Opener::platform(),
+                            opener: &page_opener(),
                         },
                     )
                 }
@@ -2630,6 +2642,48 @@ fn make_worktree(p: &Project, seat: &str) -> Result<PathBuf, CliError> {
 /// agent is not running. Seats in the log but not in the file are
 /// reported and left alone.
 /// `ris install`: the person's, outside any sandbox (D-48).
+/// How `ris map` opens its page: in a window held by this program run
+/// again, where it is built with one and can name itself; otherwise in
+/// the browser.
+fn page_opener() -> ris::map::Opener {
+    match std::env::current_exe() {
+        Ok(exe) if cfg!(feature = "window") => ris::map::Opener::window(&exe),
+        _ => ris::map::Opener::platform(),
+    }
+}
+
+/// `ris window FILE`: serve the page in FILE to a window of its own and
+/// stay until the window is closed. Its first line of output is what
+/// `ris map` waits for: [`ris::map::SHOWN`], or why there is no window.
+fn window(actor: &Actor, file: &Path) -> Result<Output, CliError> {
+    if *actor != Actor::Person {
+        return Err(CliError::Other(
+            "refused: a window is the person's; a seat never opens one\n  \
+             next: `ris map --list` prints the same files, and `ris map --html FILE` writes the page"
+                .into(),
+        ));
+    }
+    #[cfg(feature = "window")]
+    {
+        use std::io::Write;
+        let page = std::fs::read_to_string(file)?;
+        // A reader that has gone is not this command's failure.
+        let say = |line: &str| {
+            let mut out = std::io::stdout();
+            let _ = writeln!(out, "{line}").and_then(|()| out.flush());
+        };
+        let Err(why) = ris_window::show("ris map", page, || say(ris::map::SHOWN));
+        say(&why);
+        Err(CliError::Other(why))
+    }
+    #[cfg(not(feature = "window"))]
+    Err(CliError::Other(format!(
+        "this ris is built without a window, so {} is not shown in one\n  \
+         next: build ris with `--features window`, or open the file in a browser",
+        file.display()
+    )))
+}
+
 fn install(p: &Project, actor: &Actor) -> Result<Output, CliError> {
     if *actor != Actor::Person {
         return Err(CliError::Other(

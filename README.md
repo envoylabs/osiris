@@ -35,7 +35,7 @@ ris phase open "the goal"               # 1. branches phase/P-1 from main
 ris item add "a task"                    #    or: ris import backlog.toml
 ris up                                   # 2. worktrees, then every seat's agent
 ris phase review                         # 3. review: the phase, each queued decision, its changes ranked by risk
-ris map                                  #    and what the phase did to the code, as one page in the browser
+ris map                                  #    and what the phase did to the code, as one page in a window or the browser
 ris map main..feature                    #    or any git range, in any repository: Rust, TypeScript, Go, Clojure
 ris down && ris phase close              # 4. merges the phase; the rest carries over
 ```

@@ -1042,6 +1042,83 @@ fn the_platform_opener_is_the_systems_own() {
         "xdg-open"
     };
     assert_eq!(opener.program, want);
+    assert!(!opener.stays, "it hands the file over and ends");
+    assert_eq!(opener.place(), "the browser");
+}
+
+#[test]
+fn the_window_is_ris_run_again_and_stays() {
+    let opener = Opener::window(Path::new("bin/ris"));
+    assert_eq!(opener.program, "bin/ris");
+    assert_eq!(opener.args, [WINDOW_COMMAND]);
+    assert!(opener.stays);
+    assert_eq!(opener.place(), "a window of its own");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_window_is_waited_for_until_it_shows_the_page_and_no_longer() {
+    let dir = std::env::temp_dir().join(format!("ris-map-window-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(PAGE_FILE);
+    let window = |script: &str| Opener {
+        program: "sh".to_owned(),
+        args: vec!["-c".to_owned(), script.to_owned(), "sh".to_owned()],
+        stays: true,
+    };
+    let open = |script: &str| {
+        output(
+            empty_map(),
+            Show::Open {
+                file: &file,
+                shown: ".osiris/map.html",
+                opener: &window(script),
+            },
+        )
+        .expect("a window that does not open is not an error")
+        .text
+    };
+
+    // It says the page is shown and stays: the open ends there, with
+    // the window still up. This one stays until the test lets it go,
+    // so an open that waited for it to close would never return.
+    let closed = dir.join(format!("{PAGE_FILE}.closed"));
+    let text = open(
+        "test -s \"$1\" || exit 1; echo shown; \
+         until test -e \"$1.close\"; do sleep 1; done; : > \"$1.closed\"",
+    );
+    assert!(
+        text.ends_with("wrote .osiris/map.html and opened it in a window of its own"),
+        "{text}"
+    );
+    assert!(!closed.exists(), "the window is still up");
+    std::fs::write(dir.join(format!("{PAGE_FILE}.close")), "").unwrap();
+    while !closed.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    // It says why there is no window: that is passed on, with the file.
+    let text = open("echo 'the window could not be made: no display'; exit 1");
+    assert!(
+        text.contains(
+            "wrote .osiris/map.html; it did not open in a window of its own: \
+             the window could not be made: no display"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("next: open that file in a browser yourself"),
+        "{text}"
+    );
+
+    // It ends having said nothing: the same, in the opener's words.
+    let text = open("exit 2");
+    assert!(
+        text.contains("it did not open in a window of its own: `sh` ended with the page not shown"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// An empty map, for what `output` does with the page.
@@ -1085,6 +1162,7 @@ fn the_page_is_written_to_its_file_and_opened_and_a_failure_to_open_is_said_not_
     let sh = |script: &str| Opener {
         program: "sh".to_owned(),
         args: vec!["-c".to_owned(), script.to_owned(), "sh".to_owned()],
+        stays: false,
     };
 
     // Opened: the opener is given the file, already written.
@@ -1121,6 +1199,7 @@ fn the_page_is_written_to_its_file_and_opened_and_a_failure_to_open_is_said_not_
     let none = Opener {
         program: "ris-no-such-opener".to_owned(),
         args: vec![],
+        stays: false,
     };
     let text = show(&none);
     assert!(

@@ -304,7 +304,7 @@ names the installed one.
 ```sh
 ris summary                            # the phase in one picture: its state, each seat, its items and what they wait on
 ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
-ris map                                # the phase's change set drawn over the source files, as one page in the browser
+ris map                                # the phase's change set drawn over the source files, as one page in a window or the browser
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
@@ -379,7 +379,14 @@ stands where there is one, and hovering shows both and the reasons.
 `ris map`, run by you at a terminal, writes one page to
 `.osiris/map.html` (which git ignores), replacing the last one, opens
 it in your browser and prints where it is; if the browser does not
-open, it says so and you open the file yourself. The page needs no
+open, it says so and you open the file yourself. A `ris` built with
+its `window` feature (`cargo build --release -p ris --features window`;
+put the same command in `build` under `[install]` and the installed
+`ris` has it) opens the page in a native window of its own instead:
+`ris map` returns once the page is shown, and the window stays until
+you close it. That build needs the system's web view: on macOS it is
+part of the system, and on Linux it is the package
+`libwebkit2gtk-4.1-dev`. The page needs no
 network (d3 is inlined) and has two views of the same files, switched
 in its header. It opens on the list: the changed files ranked by risk,
 the highest first, each with its lines added and removed and the

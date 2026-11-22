@@ -1,0 +1,11 @@
+[package]
+name = "ris-window"
+description = "osiris: a native window holding the system's web view, for a page ris serves."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wry.workspace = true
+tao.workspace = true

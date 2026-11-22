@@ -569,7 +569,14 @@ Functional core, imperative shell; hexagonal between components.
   JSON. Given a git range instead of a phase (`ris map A..B`), it maps
   the change between two commits of any repository, a project or not.
   The person's `ris map` at a terminal writes that page inside
-  `.osiris` and opens it in the browser; a seat's never opens anything,
+  `.osiris` and opens it: in a native window of its own where `ris` is
+  built with its `window` feature, in the browser where not. The window
+  holds the system's web view (wry with tao, in the crate `ris-window`,
+  which the command line builds without) and is held by `ris` run again
+  as a process of its own, which serves the page to it under a scheme
+  of its own, with no port and no server, and stays until the window is
+  closed, so `ris map` returns as soon as the page is shown. A seat's
+  never opens anything,
   and `ris map --list` prints the files ranked with their reasons. The
   page has three views of the one document: the ranked list, which it
   opens on; the graph of files; and one changed function laid out as
