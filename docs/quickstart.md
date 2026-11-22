@@ -37,6 +37,7 @@ export RIS_AGENT=person
 
 ```sh
 cargo install --path crates/ris        # from the osiris repository
+                                       # --features window: `ris map` in a native window
 cd your-repo
 ris init --local
 ```

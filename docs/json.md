@@ -123,7 +123,10 @@ line of output per envelope, and ends once no seat is running; without
   on the main line where the work starts and ends (the same commit
   when one carries all of it). `ris map P-n` for that phase reads them:
   its `tip` is `last`, its `base` the commit before `first`, and its
-  `tip_ref` says `the work of P-n on <main line>`.
+  `tip_ref` says `the work of P-n on <main line>`. Until the work is
+  found the close fails with an `other` error and the phase stays open;
+  `--merged-at <commit>` names the commit for a merge it does not
+  recognise.
 - `ris report` (and `phase` in `ris phase close`'s data): `tally`,
   the items the phase `opened_with` (those tagged for it before it
   opened that `ris phase open` brought in, not those it moved on), the
@@ -133,7 +136,9 @@ line of output per envelope, and ends once no seat is running; without
   open phase, what would carry over if it closed now). `retired` counts
   the items the person has retired in the whole project; the report
   lists none of them, and its text gives the count on a `retired:` line
-  when there is at least one.
+  when there is at least one. `phase.branch` is the name the phase's
+  branch was given when it opened, or `null` where it took the default,
+  `phase/P-n`; the text gives it on a `branch:` line when there is one.
 - `ris ready`: for a seat, the open phase's items it may claim and no
   other. For the person, those first and then every other item that
   could be claimed were it in the phase: the backlog, and what is
@@ -212,6 +217,9 @@ line of output per envelope, and ends once no seat is running; without
   "path"}` or `{"kind": "network", "tool", "host"}`; empty when nothing
   is missing or `[runner] preflight` is off. `ris up` refuses with the
   same findings, as a `config` error, before it starts any seat.
+  `branch` is the phase's branch: `phase/P-n`, or the name `--branch
+  <name>` gave it, which the `phase_opened` event then carries as its
+  `branch` text beside `goal`; `null` when phase branches are off.
 - `ris show A-n`: a person action, with `blocks`, `informs`, `state`
   and, when it has one, its `check`.
 - `ris rules`: `rules`, the agents' rules as text. With `--render
@@ -270,7 +278,10 @@ The schema is generated from the Rust types that produce the output
 (`crates/ris/src/schema.rs`, and the core's event and refusal types):
 no command can build its output from anything else, so the two cannot
 drift apart. Tests hold the rest: the committed file is regenerated and
-compared, every command of the CLI must have a definition, and every
+compared, every command of the CLI must have a definition (all but
+`ris window`, which `ris map` runs to hold the page's window: it has no
+data, prints one line saying the page is shown or why not, and ends
+with the window), and every
 command's real output, and every error kind a run can reach, is
 validated against the committed file (`crates/ris/tests/schema.rs`).
 
