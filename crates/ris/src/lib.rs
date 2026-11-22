@@ -14,6 +14,7 @@ pub mod graph;
 pub mod import;
 pub mod install;
 pub mod map;
+pub mod onmain;
 pub mod preflight;
 pub mod project;
 pub mod render;

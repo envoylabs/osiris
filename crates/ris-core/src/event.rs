@@ -84,6 +84,19 @@ pub enum Structure {
         /// Taken over the log's head at close, not over the rendering.
         report: Hash,
     },
+    /// The phase's work is on the main line, put there by a merge made
+    /// elsewhere (a git server's, whatever kind it makes): `first` and
+    /// `last` are the commits on the main line where the work starts
+    /// and ends, the same commit when one carries all of it. Written
+    /// with the close of a phase whose closing merge is left to the
+    /// server, after the phase's own events. A phase closed by the
+    /// closing merge made here has none: that merge is found by its
+    /// title.
+    PhaseMerged {
+        phase: PhaseId,
+        first: CommitHash,
+        last: CommitHash,
+    },
     /// The person reviewed the open phase: read its state, walked the
     /// open decisions and read its change set, at `tip`, the commit at
     /// the head of the phase's work, or null when the project is not in

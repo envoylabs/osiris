@@ -116,6 +116,14 @@ line of output per envelope, and ends once no seat is running; without
   `phase_reviewed` event carrying `phase` and `tip`. `ris phase close`
   refuses unless the latest review stands at the tip of the phase's
   work now; `--unreviewed` closes without one.
+- `ris phase close` where the closing merge is left to the git server
+  (`merge_on_close = false`): the close of a phase whose work it found
+  on the main line writes, after the phase's own events, a
+  `phase_merged` event carrying `phase`, `first` and `last`, the commits
+  on the main line where the work starts and ends (the same commit
+  when one carries all of it). `ris map P-n` for that phase reads them:
+  its `tip` is `last`, its `base` the commit before `first`, and its
+  `tip_ref` says `the work of P-n on <main line>`.
 - `ris report` (and `phase` in `ris phase close`'s data): `tally`,
   the items the phase `opened_with` (those tagged for it before it
   opened that `ris phase open` brought in, not those it moved on), the

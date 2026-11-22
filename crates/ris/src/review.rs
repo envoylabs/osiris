@@ -115,10 +115,23 @@ pub fn run(
             open.len()
         ));
     }
-    text.push_str(
-        "\n  next: `ris phase close`; a merge before then moves the phase on, \
-         and the close asks for the review again",
-    );
+    // Where the closing merge is left to the git server, the close
+    // waits for it: say which branch to push. Nothing is pushed here.
+    let to_push = (!p.config.merge_on_close)
+        .then(|| crate::status::phase_branch(p, &l))
+        .flatten();
+    match to_push {
+        Some(branch) => text.push_str(&format!(
+            "\n  next: push {branch}, have it merged into {main} on the git server, pull {main}, \
+             then `ris phase close`, which closes {phase} once its work is on {main}; \
+             a merge here before then moves the phase on, and the close asks for the review again",
+            main = p.config.main_line
+        )),
+        None => text.push_str(
+            "\n  next: `ris phase close`; a merge before then moves the phase on, \
+             and the close asks for the review again",
+        ),
+    }
     Ok(Output::of(
         text,
         &schema::PhaseReviewed {

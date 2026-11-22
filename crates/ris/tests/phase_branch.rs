@@ -205,10 +205,12 @@ fn a_phase_runs_from_open_to_close_on_the_branch_it_was_given() {
 }
 
 #[test]
-fn a_closed_phase_whose_named_branch_is_still_there_is_mapped_from_it() {
-    // The merge into the main line is left to the git server, so the
-    // close leaves the branch where it is.
+fn a_closed_phase_whose_named_branch_is_still_there_is_mapped() {
+    // The merge into the main line is left to the git server, and the
+    // main checkout stays on the phase's branch, so the close cannot
+    // delete it.
     let dir = setup("kept", "merge_on_close = false\n");
+    let before = git(&dir, &["rev-parse", "main"]);
     ok(
         &dir,
         "person",
@@ -220,17 +222,33 @@ fn a_closed_phase_whose_named_branch_is_still_there_is_mapped_from_it() {
     ok(&dir, "heron", &["done", "I-1"]);
     commit(&dir, "work.rs", "I-1");
     ok(&dir, "heron", &["merge", "I-1"]);
-    git(&dir, &["switch", "-q", "main"]);
+    let tip = git(&dir, &["rev-parse", "feature/kept"]);
 
+    // Until its work is on the main line the phase stays open, and the
+    // refusal names the branch to push by the name it was given.
+    let err = refused(&dir, &["phase", "close", "--unreviewed"]);
+    assert!(
+        err.contains("next: push feature/kept, have it merged into main on the server"),
+        "{err}"
+    );
+    assert_eq!(data(&dir, &["report"])["phase"]["state"], "open");
+
+    // The main line is moved forward to the branch, as a pull of a
+    // merge made elsewhere moves it, with the branch still checked out.
+    git(&dir, &["fetch", "-q", ".", "feature/kept:main"]);
     let closed = ok(&dir, "person", &["phase", "close", "--unreviewed"]);
     assert!(
-        closed.contains("push feature/kept and merge it into main there"),
+        closed.contains("closing merge: made elsewhere; P-1's work is on main fast-forwarded"),
+        "{closed}"
+    );
+    assert!(
+        closed.contains("; feature/kept is left in place"),
         "{closed}"
     );
     assert_eq!(branches(&dir), ["feature/kept", "main"]);
     let map = data(&dir, &["map", "P-1"]);
-    assert_eq!(map["tip_ref"], "feature/kept", "{map}");
-    assert_eq!(map["tip"], json!(git(&dir, &["rev-parse", "feature/kept"])));
+    assert_eq!(map["tip"], json!(tip), "{map}");
+    assert_eq!(map["base"], json!(before), "{map}");
     assert_eq!(map["totals"]["changed"], 1, "{map}");
     let _ = fs::remove_dir_all(&dir);
 }

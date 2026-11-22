@@ -47,8 +47,10 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub trailers: bool,
     /// Whether `ris phase close` merges the phase branch into the main
-    /// line. When off, close records the review and leaves the branch
-    /// to be pushed and merged on the git server.
+    /// line. When off, the merge is the git server's: the branch is
+    /// pushed and merged there, the main line pulled, and close looks
+    /// for the phase's work on the main line and refuses, leaving the
+    /// phase open, until it is there.
     #[serde(default = "default_true")]
     pub merge_on_close: bool,
     /// How `ris seat start` runs agents unattended.
@@ -457,8 +459,9 @@ phase_branches = true
 trailers = true
 
 # Whether ris phase close merges the phase branch into main_line. Off,
-# close records the review and leaves the branch for a merge on the
-# git server (a pull or merge request).
+# the merge is made on the git server (a pull or merge request): push
+# the branch, have it merged, pull main_line, then ris phase close,
+# which closes the phase once its work is on main_line and not before.
 merge_on_close = true
 
 # Where each writing seat's worktree goes: a path template, relative to this

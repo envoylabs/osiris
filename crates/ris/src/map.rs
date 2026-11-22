@@ -1240,6 +1240,9 @@ pub fn closing_subject(phase: PhaseId) -> String {
 /// line. An open phase with no branch of its own (phase branches off)
 /// is the caller's checkout against the main line. A closed phase whose
 /// branch is gone is its closing merge against the main line before it.
+/// A phase closed on a merge made elsewhere is the commits recorded at
+/// its close: the last of its work on the main line against the main
+/// line before the first.
 pub fn range(p: &Project, l: &Loaded, phase: Option<PhaseId>) -> Result<Range, CliError> {
     let dir = &p.work;
     if git(dir, &["rev-parse", "--git-dir"]).is_err() {
@@ -1279,6 +1282,19 @@ pub fn range(p: &Project, l: &Loaded, phase: Option<PhaseId>) -> Result<Range, C
             tip_ref: "HEAD".to_owned(),
         });
     };
+    // Closed with its work found on the main line, where a merge made
+    // elsewhere put it: the commits recorded then, whatever that merge
+    // is titled and whether or not the branch is still here.
+    if let Some(on) = l.state.on_main.get(&phase.id)
+        && let Ok(tip) = head(&format!("{}^{{commit}}", on.last.0))
+    {
+        return Ok(Range {
+            phase: Some(phase.id),
+            base: head(&format!("{}^1", on.first.0)).ok(),
+            tip,
+            tip_ref: format!("the work of {} on {main}", phase.id),
+        });
+    }
     let branch = l.phase_branch(phase);
     if let Ok(tip) = head(&format!("refs/heads/{branch}^{{commit}}")) {
         return Ok(Range {

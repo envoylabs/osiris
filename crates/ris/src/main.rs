@@ -328,11 +328,19 @@ enum PhaseCmd {
     Review,
     /// Close the open phase. Its items that have not merged lose their
     /// tag: they are in the backlog until tagged again. Refused unless
-    /// the phase was reviewed at the tip of its work.
+    /// the phase was reviewed at the tip of its work. Where the closing
+    /// merge is left to the git server (merge_on_close = false), also
+    /// refused until the phase's work is on the local main line: push
+    /// the branch, have it merged, pull, then close.
     Close {
         /// Close without a review standing at the tip.
         #[arg(long)]
         unreviewed: bool,
+        /// The commit on the main line that carries the phase's work,
+        /// for a merge made on the git server that the close does not
+        /// recognise (one resolved by hand there).
+        #[arg(long, value_name = "COMMIT")]
+        merged_at: Option<String>,
     },
 }
 
@@ -1183,7 +1191,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 };
                 ris::review::run(&mut p, &actor, &state, !cli.json, &mut std::io::stdout())
             }
-            PhaseCmd::Close { unreviewed } => {
+            PhaseCmd::Close {
+                unreviewed,
+                merged_at,
+            } => {
                 let l = p.load()?;
                 let phase = l
                     .state
@@ -1223,15 +1234,72 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     return Err(CliError::Other(why));
                 }
                 let named = l.phase_branch(&l.state.phases[&phase_id]);
-                let closing = closing_merge(&mut p, phase_id, &goal, named)?;
-                let (l, events) = p.run(&Command::PhaseClose)?;
+                // Left to the git server, the closing merge is looked
+                // for on the main line; otherwise it is made here.
+                let elsewhere =
+                    !p.config.merge_on_close && git(&p.root, &["rev-parse", "--git-dir"]).is_ok();
+                let closing = if elsewhere {
+                    let opened = l.state.phases[&phase_id].at;
+                    let merged: Vec<String> = l
+                        .log
+                        .iter()
+                        .filter(|e| e.seq > opened)
+                        .filter_map(|e| match &e.structure {
+                            ris_core::event::Structure::ItemMerged { commit, .. } => {
+                                Some(commit.0.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    merged_elsewhere(&p, phase_id, named, merged_at.as_deref(), &merged)?
+                } else if merged_at.is_some() {
+                    return Err(CliError::Other(format!(
+                        "refused: --merged-at names a merge made elsewhere, and this project's \
+                         closing merge is made here (merge_on_close = true)\n  \
+                         next: `ris phase close` merges {named} into {}",
+                        p.config.main_line
+                    )));
+                } else {
+                    Closing {
+                        line: closing_merge(&mut p, phase_id, &goal, named)?,
+                        on_main: None,
+                        drop: None,
+                    }
+                };
+                let (l, events) = p.run(&match &closing.on_main {
+                    Some(on) => Command::PhaseCloseMerged {
+                        first: ris_core::ids::CommitHash(on.first.clone()),
+                        last: ris_core::ids::CommitHash(on.last.clone()),
+                    },
+                    None => Command::PhaseClose,
+                })?;
+                // The work is on the main line and the close recorded:
+                // the branch a merge elsewhere left behind goes, as the
+                // closing merge made here removes its own.
+                let mut closing_line = closing.line;
+                if let Some(branch) = &closing.drop {
+                    closing_line.push_str(
+                        &match git(&p.root, &["branch", "--quiet", "-D", branch]) {
+                            Ok(_) => format!("; {branch} deleted"),
+                            Err(_) => format!(
+                                "; {branch} is left in place: it could not be deleted (a branch checked out is not)"
+                            ),
+                        },
+                    );
+                }
+                let closing = closing_line;
                 // The close, then one event for each item it untagged.
                 let closed = events.first().expect("close emits its event first");
                 let report = match &closed.structure {
                     ris_core::event::Structure::PhaseClosed { report, .. } => *report,
                     _ => unreachable!(),
                 };
-                let untagged = events.len() - 1;
+                let untagged = events
+                    .iter()
+                    .filter(|e| {
+                        matches!(e.structure, ris_core::event::Structure::ItemScoped { .. })
+                    })
+                    .count();
                 let left = if untagged > 0 {
                     format!(
                         "\n{untagged} item(s) not merged have no phase now: tag one for a phase with `ris item phase <item> <P-n>`"
@@ -3924,6 +3992,111 @@ fn merge_from_worktree(
     Ok((commit, lines))
 }
 
+/// What became of a phase's branch at its close.
+struct Closing {
+    /// A line saying what happened.
+    line: String,
+    /// Where the phase's work is on the main line, when a merge made
+    /// elsewhere put it there.
+    on_main: Option<ris::onmain::OnMain>,
+    /// The phase's branch, to remove once the close is recorded.
+    drop: Option<String>,
+}
+
+/// The close of a phase whose closing merge is left to the git server
+/// (`merge_on_close = false`): look for the work of the phase's branch,
+/// `named`, on the local main line as it stands, and refuse when it is
+/// not there, so the phase stays open to take whatever the server's
+/// build or review still asks for. `merged_at` is the commit the person
+/// names as carrying the work, for a merge this cannot recognise;
+/// `merged` is the commits of the phase's merged items, oldest first.
+/// Nothing is fetched, pushed or merged here.
+fn merged_elsewhere(
+    p: &Project,
+    phase: ris_core::ids::PhaseId,
+    named: String,
+    merged_at: Option<&str>,
+    merged: &[String],
+) -> Result<Closing, CliError> {
+    use ris::onmain::Found;
+    let main = p.config.main_line.clone();
+    let here = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
+    let made = p.config.phase_branches
+        && git(
+            &p.root,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{named}"),
+            ],
+        )
+        .is_ok();
+    let at = |on: &ris::onmain::OnMain| {
+        format!(
+            "closing merge: made elsewhere; {phase}'s work is on {main} {}",
+            on.said()
+        )
+    };
+    if let Some(name) = merged_at {
+        let on = ris::onmain::named(&p.root, &main, name).map_err(|why| {
+            CliError::Other(format!(
+                "refused: {why}, so {phase} stays open\n  \
+                 next: name the commit on {main} that carries {phase}'s work; \
+                 `git log --first-parent {main}` lists them"
+            ))
+        })?;
+        return Ok(Closing {
+            line: at(&on),
+            on_main: Some(on),
+            drop: made.then_some(named),
+        });
+    }
+    // The phase's branch; with phase branches off, whatever the main
+    // checkout is on stands in for it.
+    let branch = if made {
+        named
+    } else if p.config.phase_branches {
+        return Err(CliError::Other(format!(
+            "refused: {phase}'s branch {named} is not in this repository, so its work cannot be \
+             looked for on {main}, and {phase} stays open\n  \
+             next: `ris phase close --merged-at <commit>` names the commit on {main} that carries it"
+        )));
+    } else if here == main {
+        return Ok(Closing {
+            line: format!("closing merge: none needed; the phase's work is already on {main}"),
+            on_main: None,
+            drop: None,
+        });
+    } else if here == "HEAD" {
+        return Err(CliError::Other(format!(
+            "the main worktree is detached; check out {main} there"
+        )));
+    } else {
+        here
+    };
+    match ris::onmain::find(&p.root, &main, &branch, merged).map_err(CliError::Other)? {
+        Found::At(on) => Ok(Closing {
+            line: at(&on),
+            on_main: Some(on),
+            drop: made.then_some(branch),
+        }),
+        Found::NoWork => Ok(Closing {
+            line: format!("closing merge: none needed; {branch} holds no work that {main} lacks"),
+            on_main: None,
+            drop: made.then_some(branch),
+        }),
+        Found::Missing => Err(CliError::Other(format!(
+            "refused: {branch}'s work is not on {main} in this repository, so {phase} stays open \
+             (merge_on_close = false leaves the merge to the git server)\n  \
+             next: push {branch}, have it merged into {main} on the server, pull {main}, \
+             then `ris phase close` again\n  \
+             next: for a merge this does not recognise (one resolved by hand on the server), \
+             `ris phase close --merged-at <commit>` names the commit on {main} that carries the work"
+        ))),
+    }
+}
+
 /// The closing merge: the phase branch into the main line, `--no-ff`,
 /// in the main worktree, with every check run on the merged result
 /// before the phase closes. When the phase's work is already on the
@@ -3970,12 +4143,6 @@ fn closing_merge(
         return Err(CliError::Other(format!(
             "the main worktree is detached; check out {main} there"
         )));
-    }
-    if !p.config.merge_on_close {
-        return Ok(format!(
-            "closing merge: left to the git server (merge_on_close = false); \
-             push {branch} and merge it into {main} there"
-        ));
     }
     let dirty = git(&p.root, &["status", "--porcelain", "--untracked-files=no"])
         .map_err(CliError::Other)?;

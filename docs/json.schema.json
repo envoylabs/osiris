@@ -4123,6 +4123,32 @@
         },
         {
           "additionalProperties": false,
+          "description": "The phase's work is on the main line, put there by a merge made\nelsewhere (a git server's, whatever kind it makes): `first` and\n`last` are the commits on the main line where the work starts\nand ends, the same commit when one carries all of it. Written\nwith the close of a phase whose closing merge is left to the\nserver, after the phase's own events. A phase closed by the\nclosing merge made here has none: that merge is found by its\ntitle.",
+          "properties": {
+            "event": {
+              "const": "phase_merged",
+              "type": "string"
+            },
+            "first": {
+              "$ref": "#/$defs/CommitHash"
+            },
+            "last": {
+              "$ref": "#/$defs/CommitHash"
+            },
+            "phase": {
+              "$ref": "#/$defs/PhaseId"
+            }
+          },
+          "required": [
+            "event",
+            "phase",
+            "first",
+            "last"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "The person reviewed the open phase: read its state, walked the\nopen decisions and read its change set, at `tip`, the commit at\nthe head of the phase's work, or null when the project is not in\ngit. A merge of one of the phase's items after it means the\nreview no longer covers the phase.",
           "properties": {
             "event": {

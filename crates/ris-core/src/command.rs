@@ -37,6 +37,14 @@ pub enum Command {
     /// head and the previous report, never over a rendering. Its items
     /// that have not merged lose their tag.
     PhaseClose,
+    /// Closes the open phase as `PhaseClose` does, and records where
+    /// its work is on the main line: the commits there where it starts
+    /// and ends. For a phase whose closing merge was made elsewhere,
+    /// which the shell has found on the main line.
+    PhaseCloseMerged {
+        first: CommitHash,
+        last: CommitHash,
+    },
     /// Records that the person reviewed the open phase at `tip`, the
     /// commit at the head of its work (none outside git). The person's
     /// only.
@@ -242,7 +250,7 @@ impl Command {
     pub fn kind(&self) -> CommandKind {
         match self {
             Self::PhaseOpen { .. } => CommandKind::PhaseOpen,
-            Self::PhaseClose => CommandKind::PhaseClose,
+            Self::PhaseClose | Self::PhaseCloseMerged { .. } => CommandKind::PhaseClose,
             Self::PhaseReview { .. } => CommandKind::PhaseReview,
             Self::ItemAdd { .. } => CommandKind::ItemAdd,
             Self::Claim { .. } => CommandKind::Claim,
@@ -451,7 +459,7 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             Ok(effects)
         }
 
-        Command::PhaseClose => {
+        Command::PhaseClose | Command::PhaseCloseMerged { .. } => {
             let phase = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
             // The report covers the log up to and including this close;
             // the close's own hash is not known until sealed, so the
@@ -472,6 +480,15 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                         })
                     }),
             );
+            // Last, so the close is the first event either way and the
+            // report is taken over the same head.
+            if let Command::PhaseCloseMerged { first, last } = command {
+                effects.push(Effect::new(Structure::PhaseMerged {
+                    phase,
+                    first: first.clone(),
+                    last: last.clone(),
+                }));
+            }
             Ok(effects)
         }
 

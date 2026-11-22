@@ -129,9 +129,32 @@ name is a pseudonym, never a real person's name, and `person` is
 reserved.
 
 For a repository merged through a git server's web interface, set
-`merge_on_close = false` (phase close leaves the branch for a pull or
-merge request) and, if the project's commit convention has no room for
-them, `trailers = false`.
+`merge_on_close = false` and, if the project's commit convention has no
+room for them, `trailers = false`. The closing merge is then the
+server's, and the phase stays open until it is made, so a failed build
+or a reviewer's change there still has an open phase to take the fix:
+
+```sh
+ris phase review                       # names the branch to push
+git push origin phase/P-1              # yours to run: ris pushes and fetches nothing
+# ...the pull or merge request is merged on the server...
+git pull                               # on the main line
+ris phase close                        # closes once the phase's work is on the main line
+```
+
+`ris phase close` reads only your local repository. It finds the
+phase's work on the main line whether the server made a merge commit
+or moved the main line forward (the branch's tip is in the main line's
+history), rebased the commits (each has a commit there making the same
+change) or squashed them (one commit there makes the branch's whole
+change). Found, it closes the phase, records the commits on the main
+line where the work starts and ends, and deletes the local branch.
+Not found, it refuses, the phase stays open, and it says what to do
+next. A merge it cannot recognise, such as a squash resolved by hand
+on the server, you name: `ris phase close --merged-at <commit>`, which
+is refused for a commit that is not on the main line. `ris map P-n`
+for a phase closed this way reads the recorded commits, so it does not
+depend on the branch or on what the server called its merge.
 
 Each builder's worktree goes where `worktrees` says: a path template,
 relative to the main checkout unless absolute, in which `{repo}` is the

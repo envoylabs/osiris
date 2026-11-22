@@ -294,6 +294,21 @@ phase has one branch, and every item of the phase merges onto it.
 - **One merge commit per phase.** The phase's branch merges into the
   main line without fast-forward. `git log --first-parent` then shows
   one commit per phase, and the full log shows the items.
+- **A phase closes when its work is on the main line.** The closing
+  merge made here puts it there. Where the merge is left to a git
+  server (`merge_on_close = false`), the person pushes the branch, the
+  server merges it, the person pulls, and `ris phase close` looks for
+  the work on the local main line: the branch's tip in its history (a
+  merge commit or a fast-forward), a commit making the same change for
+  each of the branch's (a rebase), or one commit making the branch's
+  whole change (a squash), compared by git's patch id. Until it is
+  found the close is refused and the phase stays open, so what the
+  server's build or review asks for is still work of that phase. The
+  close records the first and last commits of the work on the main
+  line as a `phase_merged` event, which is what the closed phase's map
+  reads; a merge resolved by hand makes a different change, and the
+  person names its commit (`--merged-at`). `ris` fetches and pushes
+  nothing.
 - **A phase's branch is named once, when the phase opens.** It is
   `phase/P-n`, or the name `ris phase open --branch <name>` gives where
   a project's convention needs another. A given name is kept as the

@@ -49,6 +49,18 @@ pub struct State {
     /// phase's items after it moves the tip, and removes it.
     #[serde(default)]
     pub reviews: BTreeMap<crate::ids::PhaseId, Review>,
+    /// Where each phase's work is on the main line, for a phase whose
+    /// closing merge was made elsewhere and found there at its close.
+    #[serde(default)]
+    pub on_main: BTreeMap<crate::ids::PhaseId, OnMain>,
+}
+
+/// A phase's work on the main line: the commits there where it starts
+/// and ends, the same commit when one carries all of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnMain {
+    pub first: crate::ids::CommitHash,
+    pub last: crate::ids::CommitHash,
 }
 
 /// The person reviewed a phase: the event that recorded it, and the
@@ -488,6 +500,18 @@ impl State {
                     Review {
                         at: seq,
                         tip: tip.clone(),
+                    },
+                );
+            }
+            Structure::PhaseMerged { phase, first, last } => {
+                if !self.phases.contains_key(phase) {
+                    return Err(FoldError::UnknownPhase { seq, phase: *phase });
+                }
+                self.on_main.insert(
+                    *phase,
+                    OnMain {
+                        first: first.clone(),
+                        last: last.clone(),
                     },
                 );
             }
