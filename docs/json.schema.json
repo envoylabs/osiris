@@ -2541,6 +2541,13 @@
     },
     "PhaseHead": {
       "properties": {
+        "branch": {
+          "description": "The name the phase's branch was given when it opened (`ris\nphase open --branch`); null where it took the default,\n`phase/P-n`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "goal": {
           "type": "string"
         },
@@ -2555,7 +2562,8 @@
       "required": [
         "id",
         "goal",
-        "state"
+        "state",
+        "branch"
       ],
       "type": "object"
     },

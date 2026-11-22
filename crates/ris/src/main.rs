@@ -315,6 +315,10 @@ enum PhaseCmd {
         /// instead, so this phase opens with none of them.
         #[arg(long)]
         move_on: bool,
+        /// Create the phase's branch under this name instead of
+        /// phase/P-n, where the project's convention needs another.
+        #[arg(long, value_name = "NAME")]
+        branch: Option<String>,
     },
     /// The review step before closing, the person's: the phase's state,
     /// a walk of the open decisions as `ris decide` gives it, and the
@@ -1058,11 +1062,21 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         }
 
         Cmd::Phase { action } => match action {
-            PhaseCmd::Open { goal, move_on } => {
+            PhaseCmd::Open {
+                goal,
+                move_on,
+                branch: given,
+            } => {
                 let goal = p.text("goal", goal)?;
                 let command = Command::PhaseOpen {
                     goal,
                     move_on: *move_on,
+                    // Recorded with the opening, so whatever reads the
+                    // phase's branch reads this name.
+                    branch: given
+                        .as_deref()
+                        .map(|name| p.text("branch", name))
+                        .transpose()?,
                 };
                 // Refusals first, so a refused open creates no branch.
                 let l = p.load()?;
@@ -1076,7 +1090,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                             .into(),
                     ));
                 }
-                let branch = open_phase_branch(&p, l.state.next_phase_id())?;
+                if let Some(name) = given {
+                    refuse_branch_name(&p, name)?;
+                }
+                let branch = open_phase_branch(&p, l.state.next_phase_id(), given.as_deref())?;
                 // What was tagged for the phase, read before it opens:
                 // it opens with them, or their tags move on.
                 let tagged: Vec<ItemId> = l
@@ -1205,7 +1222,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 {
                     return Err(CliError::Other(why));
                 }
-                let closing = closing_merge(&mut p, phase_id, &goal)?;
+                let named = l.phase_branch(&l.state.phases[&phase_id]);
+                let closing = closing_merge(&mut p, phase_id, &goal, named)?;
                 let (l, events) = p.run(&Command::PhaseClose)?;
                 // The close, then one event for each item it untagged.
                 let closed = events.first().expect("close emits its event first");
@@ -3911,11 +3929,13 @@ fn merge_from_worktree(
 /// before the phase closes. When the phase's work is already on the
 /// main line there is nothing to merge. On a conflict or a failing
 /// check the merge is undone (it was never pushed) and the phase stays
-/// open. Returns a line saying what happened.
+/// open. `named` is the phase's branch by name. Returns a line saying
+/// what happened.
 fn closing_merge(
     p: &mut Project,
     phase: ris_core::ids::PhaseId,
     goal: &str,
+    named: String,
 ) -> Result<String, CliError> {
     let _lock = ris_store_sqlite::MergeLock::acquire(
         &p.root.join(ris::project::DIR).join("merge.lock"),
@@ -3929,8 +3949,7 @@ fn closing_merge(
     // The phase's branch, checked out nowhere since D-43; without one,
     // whatever the main checkout is on (phase branches off, or a layout
     // from before).
-    let named = phase_branch_name(phase);
-    let branch = if p.config.phase_branches
+    let made = p.config.phase_branches
         && git(
             &p.root,
             &[
@@ -3940,12 +3959,8 @@ fn closing_merge(
                 &format!("refs/heads/{named}"),
             ],
         )
-        .is_ok()
-    {
-        named
-    } else {
-        here.clone()
-    };
+        .is_ok();
+    let branch = if made { named } else { here.clone() };
     if branch == main {
         return Ok(format!(
             "closing merge: none needed; the phase's work is already on {main}"
@@ -4041,11 +4056,7 @@ fn closing_merge(
     let head = git(&p.root, &["rev-parse", "HEAD"]).map_err(CliError::Other)?;
     // A phase branch the harness made is deleted once merged; `-d`
     // refuses if it were somehow not merged.
-    let deleted = if p.config.phase_branches && branch == phase_branch_name(phase) {
-        git(&p.root, &["branch", "--quiet", "-d", &branch]).is_ok()
-    } else {
-        false
-    };
+    let deleted = made && git(&p.root, &["branch", "--quiet", "-d", &branch]).is_ok();
     Ok(format!(
         "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}{}{}",
         if deleted {
@@ -4077,23 +4088,81 @@ fn render_rules_into_merge(root: &std::path::Path) -> Result<Vec<(String, String
     Ok(rendered)
 }
 
-fn phase_branch_name(phase: ris_core::ids::PhaseId) -> String {
-    format!("phase/{phase}")
+/// Why the phase's branch cannot take the name `given` (`ris phase open
+/// --branch`), or nothing when it can. Nothing is created here, so a
+/// refusal leaves the repository as it was.
+fn refuse_branch_name(p: &Project, given: &str) -> Result<(), CliError> {
+    let refused =
+        |why: String, next: &str| Err(CliError::Other(format!("refused: {why}\n  next: {next}")));
+    if !p.config.phase_branches {
+        return refused(
+            "phase branches are off (phase_branches = false), so the phase has no branch to name"
+                .to_owned(),
+            "open the phase without --branch, or set phase_branches = true in .osiris/config.toml",
+        );
+    }
+    if git(&p.root, &["rev-parse", "--git-dir"]).is_err() {
+        return refused(
+            "the project is not a git repository, so the phase has no branch to name".to_owned(),
+            "open the phase without --branch",
+        );
+    }
+    // Asked of git, whose rules they are; a name that starts with a
+    // dash would be read as an option, here and by whoever uses it.
+    if given.starts_with('-') || git(&p.root, &["check-ref-format", "--branch", given]).is_err() {
+        return refused(
+            format!("`{given}` is not a valid branch name"),
+            "give a name git takes, such as feature/the-work (`git check-ref-format --branch <name>` says)",
+        );
+    }
+    let main = &p.config.main_line;
+    if given == main {
+        return refused(
+            format!(
+                "`{given}` is the main line, which the phase's branch is made from and merged into"
+            ),
+            "give the phase's branch a name of its own",
+        );
+    }
+    if git(
+        &p.root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{given}"),
+        ],
+    )
+    .is_ok()
+    {
+        return refused(
+            format!(
+                "the branch `{given}` already exists, and a phase's branch is made new from {main}"
+            ),
+            "give a name no branch has, or delete that branch first",
+        );
+    }
+    Ok(())
 }
 
-/// With phase branches on, create `phase/P-n` from the main line. It is
+/// With phase branches on, create the phase's branch from the main
+/// line: under the name `given`, or as `phase/P-n`. It is
 /// checked out nowhere: seats work in their own worktrees and merges move
 /// it by a ref update (D-43), and the main checkout stays where it is. Returns the branch, or `None` when
 /// branches are off or the project is not a git repository.
 fn open_phase_branch(
     p: &Project,
     phase: ris_core::ids::PhaseId,
+    given: Option<&str>,
 ) -> Result<Option<String>, CliError> {
     if !p.config.phase_branches || git(&p.root, &["rev-parse", "--git-dir"]).is_err() {
         return Ok(None);
     }
     let main = &p.config.main_line;
-    let name = phase_branch_name(phase);
+    let name = match given {
+        Some(name) => name.to_owned(),
+        None => ris::project::default_phase_branch(phase),
+    };
     if git(
         &p.root,
         &[

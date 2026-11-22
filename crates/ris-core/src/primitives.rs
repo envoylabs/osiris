@@ -24,7 +24,8 @@ use crate::text::Text;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Phase {
     pub id: PhaseId,
-    /// The event that opened it; its text part holds `goal`.
+    /// The event that opened it; its text part holds `goal`, and
+    /// `branch` where the phase's branch was given a name.
     pub at: u64,
     pub state: PhaseState,
 }

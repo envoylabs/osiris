@@ -28,6 +28,10 @@ pub enum Command {
     PhaseOpen {
         goal: Text,
         move_on: bool,
+        /// The name the phase's branch takes, where the shell was given
+        /// one in place of its default. Kept as the `branch` text of
+        /// the opening event, beside `goal`.
+        branch: Option<Text>,
     },
     /// Closes the open phase. The report hash is taken over the log's
     /// head and the previous report, never over a rendering. Its items
@@ -421,13 +425,20 @@ pub fn report_hash(previous: &Hash, head: &Hash) -> Hash {
 pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
     let kind = command.kind();
     match command {
-        Command::PhaseOpen { goal, move_on } => {
+        Command::PhaseOpen {
+            goal,
+            move_on,
+            branch,
+        } => {
             if state.open_phase().is_some() {
                 return Err(Refusal::PhaseAlreadyOpen);
             }
             let phase = state.next_phase_id();
-            let mut effects =
-                vec![Effect::new(Structure::PhaseOpened { phase }).with("goal", goal)];
+            let mut opened = Effect::new(Structure::PhaseOpened { phase }).with("goal", goal);
+            if let Some(branch) = branch {
+                opened = opened.with("branch", branch);
+            }
+            let mut effects = vec![opened];
             if *move_on {
                 let next = PhaseId(phase.0.saturating_add(1));
                 effects.extend(state.tagged(phase).map(|i| {

@@ -15,7 +15,14 @@ work goes onto its branch, `phase/P-n`, which is checked out nowhere:
 a seat's `ris merge` moves it by a ref update, which needs only the git
 directory, so a seat in its sandbox can merge without writing your
 checkout. `git log phase/P-1` and `git diff main...phase/P-1` show the
-phase's work; `ris phase close` merges it into the main line.
+phase's work; `ris phase close` merges it into the main line. Where
+your project's convention needs another name, `ris phase open "<goal>"
+--branch <name>` creates the phase's branch under it: the name is
+recorded with the phase's opening, so merges, `ris up`, `ris status`,
+`ris map` and the closing merge all use it, and `ris summary` and
+`ris report` show it. The open is refused, with nothing created, when
+the name is not a valid branch name, is the main line or is a branch
+that already exists, and when `phase_branches` is off.
 
 The person runs `ris` with `RIS_AGENT=person`. `ris` refuses every
 command when `RIS_AGENT` is unset, so an agent that loses its seat's

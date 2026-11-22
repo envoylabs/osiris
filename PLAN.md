@@ -294,6 +294,15 @@ phase has one branch, and every item of the phase merges onto it.
 - **One merge commit per phase.** The phase's branch merges into the
   main line without fast-forward. `git log --first-parent` then shows
   one commit per phase, and the full log shows the items.
+- **A phase's branch is named once, when the phase opens.** It is
+  `phase/P-n`, or the name `ris phase open --branch <name>` gives where
+  a project's convention needs another. A given name is kept as the
+  `branch` text of the phase's opening event, beside its goal, and is
+  read back in one place, so merges, `ris up`, `ris status`, `ris map`
+  and the closing merge cannot disagree about which branch the phase's
+  work is on. It is text, not structure: it is scanned as it goes in
+  and can be removed like any other, and a phase whose name was removed
+  is read as having the default.
 - **Commits carry the git identity configured on the machine.** That is
   the user's to set, and the harness does not override it for agents'
   commits. Which agent wrote an item is in the log, under the agent's

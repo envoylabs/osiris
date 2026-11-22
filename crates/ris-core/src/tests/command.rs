@@ -57,6 +57,7 @@ fn with_phase_and_item() -> Harness {
     h.must(Command::PhaseOpen {
         goal: t("slice"),
         move_on: false,
+        branch: None,
     });
     h.must(Command::ItemAdd {
         tag: crate::command::Tag::Open,
@@ -228,6 +229,7 @@ fn apply_follows_the_item_table() {
                 h.must(Command::PhaseOpen {
                     goal: t("next"),
                     move_on: false,
+                    branch: None,
                 });
             }
             let expected = transitions::lookup(transitions::ITEM, state_kind, command_kind);
@@ -261,6 +263,7 @@ fn backlog_item() -> Harness {
     h.must(Command::PhaseOpen {
         goal: t("next"),
         move_on: false,
+        branch: None,
     });
     h.must(Command::ItemAdd {
         tag: crate::command::Tag::Open,
@@ -329,6 +332,7 @@ fn the_person_brings_a_backlog_item_into_the_open_phase() {
     h.must(Command::PhaseOpen {
         goal: t("third"),
         move_on: false,
+        branch: None,
     });
     assert!(matches!(
         h.run(bring(Actor::Person)),
@@ -777,6 +781,7 @@ fn the_reverse_index_always_matches_a_scan() {
         h.must(Command::PhaseOpen {
             goal: t("index"),
             move_on: false,
+            branch: None,
         });
         for _ in 0..60 {
             let items = h.state.items.len() as u32;
@@ -1134,11 +1139,13 @@ fn phases_follow_their_table() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: false,
+        branch: None,
     });
     assert_eq!(
         h.run(Command::PhaseOpen {
             goal: t("two"),
-            move_on: false
+            move_on: false,
+            branch: None,
         }),
         Err(Refusal::PhaseAlreadyOpen)
     );
@@ -1152,6 +1159,7 @@ fn phases_follow_their_table() {
     h.must(Command::PhaseOpen {
         goal: t("two"),
         move_on: false,
+        branch: None,
     });
     assert_eq!(h.state.open_phase().unwrap().id, PhaseId(2));
     assert!(
@@ -1255,6 +1263,7 @@ fn an_item_is_added_with_no_phase_open_and_has_none() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: false,
+        branch: None,
     });
     h.must(Command::PhaseClose);
     h.must(add(Tag::Open));
@@ -1263,6 +1272,7 @@ fn an_item_is_added_with_no_phase_open_and_has_none() {
     h.must(Command::PhaseOpen {
         goal: t("two"),
         move_on: false,
+        branch: None,
     });
     assert_eq!(phases(&h, 1), (None, None));
     assert_eq!(
@@ -1284,11 +1294,13 @@ fn an_item_is_added_tagged_for_the_open_phase_a_later_one_or_none() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: false,
+        branch: None,
     });
     h.must(Command::PhaseClose);
     h.must(Command::PhaseOpen {
         goal: t("two"),
         move_on: false,
+        branch: None,
     });
     // Where it was added is the open phase, whatever the tag.
     h.must(add(Tag::Phase(PhaseId(2))));
@@ -1387,6 +1399,7 @@ fn a_phase_opens_with_the_items_tagged_for_it_or_moves_their_tags_on() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: false,
+        branch: None,
     });
     // Opening writes nothing about the items: the tag already says it.
     assert_eq!(h.log.len(), before + 1);
@@ -1407,6 +1420,7 @@ fn a_phase_opens_with_the_items_tagged_for_it_or_moves_their_tags_on() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: true,
+        branch: None,
     });
     // I-1 moved on beside I-2; the untagged item is not touched.
     assert_eq!(phases(&h, 1).0, Some(PhaseId(2)));

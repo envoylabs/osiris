@@ -29,8 +29,9 @@ pub struct Config {
     /// is nothing to merge.
     #[serde(default = "default_main_line")]
     pub main_line: String,
-    /// Whether `ris phase open` creates `phase/P-n` from the main line
-    /// and `ris phase close` merges it back and deletes it. When off,
+    /// Whether `ris phase open` creates the phase's branch from the
+    /// main line (`phase/P-n`, or the name `--branch` gives) and `ris
+    /// phase close` merges it back and deletes it. When off,
     /// phases leave branches alone and close merges whatever branch the
     /// main worktree has checked out, if it is not the main line.
     #[serde(default = "default_true")]

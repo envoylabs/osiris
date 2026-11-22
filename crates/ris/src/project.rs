@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use ris_core::command::{Command, apply, seal};
 use ris_core::event::{Event, Salt};
-use ris_core::ids::{Actor, AgentName};
+use ris_core::ids::{Actor, AgentName, PhaseId};
+use ris_core::primitives::Phase;
 use ris_core::refusal::Refusal;
 use ris_core::state::State;
 use ris_core::store::{Store, StoreError};
@@ -280,6 +281,28 @@ impl Loaded {
             .map(Text::as_str)
             .unwrap_or("[text removed]")
     }
+
+    /// The name `phase`'s branch was given when it opened (`ris phase
+    /// open --branch`), or `None` when it took the default.
+    pub fn branch_given(&self, phase: &Phase) -> Option<&str> {
+        self.event(phase.at)?.text_field("branch").map(Text::as_str)
+    }
+
+    /// The name of `phase`'s branch: the one it was given when it
+    /// opened, or `phase/P-n`. The one place the name is read, for
+    /// whatever asks which branch a phase's work is on. A name is all
+    /// it is: whether the branch exists is for the caller to ask git.
+    pub fn phase_branch(&self, phase: &Phase) -> String {
+        match self.branch_given(phase) {
+            Some(name) => name.to_owned(),
+            None => default_phase_branch(phase.id),
+        }
+    }
+}
+
+/// The name a phase's branch takes when it is given none.
+pub fn default_phase_branch(phase: PhaseId) -> String {
+    format!("phase/{phase}")
 }
 
 /// An open project.

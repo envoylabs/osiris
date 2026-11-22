@@ -50,6 +50,7 @@ fn scripted(store: &mut SqliteStore) {
         &Command::PhaseOpen {
             goal: t("slice"),
             move_on: false,
+            branch: None,
         },
         &mut s,
     )
@@ -125,6 +126,7 @@ fn concurrent_claimers_from_separate_connections_get_one_winner() {
             &Command::PhaseOpen {
                 goal: t("slice"),
                 move_on: false,
+                branch: None,
             },
             &mut s,
         )
@@ -310,6 +312,7 @@ fn redacted_text_round_trips_as_null() {
         &Command::PhaseOpen {
             goal: t("secretish"),
             move_on: false,
+            branch: None,
         },
     )
     .unwrap();
@@ -354,6 +357,7 @@ fn append_path_has_headroom() {
             Command::PhaseOpen {
                 goal: t("bench"),
                 move_on: false,
+                branch: None,
             }
         } else {
             Command::ItemAdd {

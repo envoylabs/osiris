@@ -1279,7 +1279,7 @@ pub fn range(p: &Project, l: &Loaded, phase: Option<PhaseId>) -> Result<Range, C
             tip_ref: "HEAD".to_owned(),
         });
     };
-    let branch = format!("phase/{}", phase.id);
+    let branch = l.phase_branch(phase);
     if let Ok(tip) = head(&format!("refs/heads/{branch}^{{commit}}")) {
         return Ok(Range {
             phase: Some(phase.id),

@@ -263,6 +263,10 @@ pub struct PhaseHead {
     pub goal: String,
     /// `open` or `closed`.
     pub state: &'static str,
+    /// The name the phase's branch was given when it opened (`ris
+    /// phase open --branch`); null where it took the default,
+    /// `phase/P-n`.
+    pub branch: Option<String>,
 }
 
 /// An item merged before a person action that informs it was done.

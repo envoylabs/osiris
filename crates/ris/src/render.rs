@@ -669,6 +669,15 @@ fn agent_inbox(l: &Loaded, name: &AgentName) -> (String, schema::Inbox) {
     )
 }
 
+/// The line that names `phase`'s branch, under the phase's own line:
+/// only where the branch was given a name when the phase opened, since
+/// the default says nothing the phase's id does not.
+fn branch_line(l: &Loaded, phase: &ris_core::primitives::Phase) -> String {
+    l.branch_given(phase)
+        .map(|name| format!("branch: {name}\n"))
+        .unwrap_or_default()
+}
+
 /// `ris report`: the phase as the person reads it. Substantive
 /// decisions in full, mechanical ones one line each, items by state,
 /// and the chain head.
@@ -723,6 +732,7 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
         },
         l.text(phase.at, "goal")
     );
+    s.push_str(&branch_line(l, phase));
     let mut counts = std::collections::BTreeMap::new();
     for i in &items {
         *counts.entry(shown_state(l, i)).or_insert(0usize) += 1;
@@ -855,6 +865,7 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
                     PhaseState::Open => "open",
                     PhaseState::Closed { .. } => "closed",
                 },
+                branch: l.branch_given(phase).map(str::to_owned),
             },
             items: items.iter().map(|i| item_json(l, i)).collect(),
             tally: t,
@@ -1439,6 +1450,7 @@ pub fn summary(
             phase.id,
             l.text(phase.at, "goal")
         ));
+        s.push_str(&branch_line(l, phase));
         if !counts.is_empty() {
             s.push_str(&format!(
                 "items: {}\n",
