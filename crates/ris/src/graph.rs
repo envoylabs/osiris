@@ -115,7 +115,9 @@ impl Graph {
                     .filter(|i| {
                         !matches!(
                             i.state,
-                            ItemState::Merged { .. } | ItemState::Superseded { .. }
+                            ItemState::Merged { .. }
+                                | ItemState::Superseded { .. }
+                                | ItemState::Retired { .. }
                         )
                     })
                     .map(|i| Node::Item(i.id)),
@@ -344,7 +346,13 @@ fn phase_nodes(l: &Loaded, scope: Scope) -> BTreeSet<Node> {
     let mut queue: Vec<ItemId> = s
         .items
         .values()
-        .filter(|i| scope.item(i) && !matches!(i.state, ItemState::Superseded { .. }))
+        .filter(|i| {
+            scope.item(i)
+                && !matches!(
+                    i.state,
+                    ItemState::Superseded { .. } | ItemState::Retired { .. }
+                )
+        })
         .map(|i| i.id)
         .collect();
     nodes.extend(queue.iter().map(|i| Node::Item(*i)));

@@ -153,6 +153,7 @@ fn every_outcome_is_one_envelope_and_the_data_keys_are_pinned() {
                 "phase",
                 "previous_report",
                 "report",
+                "retired",
                 "substantive",
                 "tally",
             ],

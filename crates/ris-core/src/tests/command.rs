@@ -57,6 +57,7 @@ fn with_phase_and_item() -> Harness {
     h.must(Command::PhaseOpen {
         goal: t("slice"),
         move_on: false,
+        branch: None,
     });
     h.must(Command::ItemAdd {
         tag: crate::command::Tag::Open,
@@ -83,6 +84,10 @@ fn item_in(kind: ItemStateKind) -> Harness {
     }
     if kind == ItemStateKind::Superseded {
         h.must(supersede(item, ItemId(2), Actor::Person));
+        return h;
+    }
+    if kind == ItemStateKind::Retired {
+        h.must(retire(&[1], Actor::Person));
         return h;
     }
     h.must(Command::Claim {
@@ -170,6 +175,7 @@ fn item_command(kind: CommandKind) -> Option<Command> {
             by: agent("wren"),
         },
         CommandKind::Supersede => supersede(item, ItemId(2), Actor::Person),
+        CommandKind::Retire => retire(&[1], Actor::Person),
         // Run by the table test after a new phase opens, so I-1 is
         // in the backlog.
         CommandKind::BringIn => Command::BringIn {
@@ -223,6 +229,7 @@ fn apply_follows_the_item_table() {
                 h.must(Command::PhaseOpen {
                     goal: t("next"),
                     move_on: false,
+                    branch: None,
                 });
             }
             let expected = transitions::lookup(transitions::ITEM, state_kind, command_kind);
@@ -256,6 +263,7 @@ fn backlog_item() -> Harness {
     h.must(Command::PhaseOpen {
         goal: t("next"),
         move_on: false,
+        branch: None,
     });
     h.must(Command::ItemAdd {
         tag: crate::command::Tag::Open,
@@ -324,6 +332,7 @@ fn the_person_brings_a_backlog_item_into_the_open_phase() {
     h.must(Command::PhaseOpen {
         goal: t("third"),
         move_on: false,
+        branch: None,
     });
     assert!(matches!(
         h.run(bring(Actor::Person)),
@@ -659,6 +668,99 @@ fn a_dependency_on_a_superseded_item_waits_on_its_replacement() {
     });
 }
 
+fn retire(items: &[u32], actor: Actor) -> Command {
+    Command::Retire {
+        items: items.iter().map(|n| ItemId(*n)).collect(),
+        reason: t("will not be built"),
+        actor,
+    }
+}
+
+#[test]
+fn only_the_person_retires_with_a_reason_and_a_merged_item_stands() {
+    let mut h = item_in(ItemStateKind::Merged);
+    assert_eq!(
+        h.run(retire(&[2], Actor::Agent(agent("heron")))),
+        Err(Refusal::RetireIsForThePerson)
+    );
+    assert_eq!(
+        h.run(Command::Retire {
+            items: vec![ItemId(2)],
+            reason: t(" "),
+            actor: Actor::Person,
+        }),
+        Err(Refusal::RetireNeedsReason)
+    );
+    assert_eq!(
+        h.run(retire(&[], Actor::Person)),
+        Err(Refusal::NothingToRetire)
+    );
+    // The merged I-1 named beside the ready I-2 refuses both.
+    assert!(matches!(
+        h.run(retire(&[2, 1], Actor::Person)),
+        Err(Refusal::IllegalItemTransition {
+            item: ItemId(1),
+            state: "merged",
+            command: CommandKind::Retire,
+        })
+    ));
+    assert_eq!(
+        item_state_kind(&h.state.items[&ItemId(2)].state),
+        ItemStateKind::Ready
+    );
+    h.must(retire(&[2, 2], Actor::Person));
+    let e = h.log.last().unwrap();
+    assert_eq!(
+        e.structure,
+        Structure::ItemsRetired {
+            items: vec![ItemId(2)]
+        },
+        "each item once"
+    );
+    assert_eq!(
+        h.state.items[&ItemId(2)].state,
+        ItemState::Retired { at: e.seq }
+    );
+}
+
+#[test]
+fn an_item_waited_on_through_a_replacement_is_retired_only_with_its_waiter() {
+    // I-3 depends on I-1, which I-2 replaces: I-3 waits on I-2.
+    let mut h = item_in(ItemStateKind::Ready);
+    h.must(Command::ItemAdd {
+        tag: crate::command::Tag::Open,
+        goal: t("depends on the first"),
+        checks: vec![],
+        depends_on: vec![ItemId(1)],
+    });
+    h.must(supersede(ItemId(1), ItemId(2), Actor::Person));
+    assert_eq!(
+        h.run(retire(&[2], Actor::Person)),
+        Err(Refusal::RetireWaitedOn {
+            item: ItemId(2),
+            waiting: vec![ItemId(3)]
+        })
+    );
+    h.must(retire(&[2, 3], Actor::Person));
+    assert_eq!(h.state.ready().count(), 0);
+    // Nothing new may wait on it, directly or through what it replaced.
+    for dep in [ItemId(1), ItemId(2)] {
+        assert_eq!(
+            h.run(Command::ItemAdd {
+                tag: crate::command::Tag::Open,
+                goal: t("late"),
+                checks: vec![],
+                depends_on: vec![dep],
+            }),
+            Err(Refusal::DependsOnRetired(dep))
+        );
+    }
+    // A retired item is out of the phase's tagged work, and a fold of
+    // the log gives the same state.
+    assert_eq!(h.state.tagged(PhaseId(1)).count(), 0);
+    assert_eq!(State::fold(&h.log).unwrap().items, h.state.items);
+}
+
 /// The reverse index is a second copy of facts the log already
 /// holds, so it is checked against a full scan after every command
 /// of a long pseudo-random history of adds, dependencies, decisions
@@ -679,6 +781,7 @@ fn the_reverse_index_always_matches_a_scan() {
         h.must(Command::PhaseOpen {
             goal: t("index"),
             move_on: false,
+            branch: None,
         });
         for _ in 0..60 {
             let items = h.state.items.len() as u32;
@@ -1036,11 +1139,13 @@ fn phases_follow_their_table() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: false,
+        branch: None,
     });
     assert_eq!(
         h.run(Command::PhaseOpen {
             goal: t("two"),
-            move_on: false
+            move_on: false,
+            branch: None,
         }),
         Err(Refusal::PhaseAlreadyOpen)
     );
@@ -1054,6 +1159,7 @@ fn phases_follow_their_table() {
     h.must(Command::PhaseOpen {
         goal: t("two"),
         move_on: false,
+        branch: None,
     });
     assert_eq!(h.state.open_phase().unwrap().id, PhaseId(2));
     assert!(
@@ -1157,6 +1263,7 @@ fn an_item_is_added_with_no_phase_open_and_has_none() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: false,
+        branch: None,
     });
     h.must(Command::PhaseClose);
     h.must(add(Tag::Open));
@@ -1165,6 +1272,7 @@ fn an_item_is_added_with_no_phase_open_and_has_none() {
     h.must(Command::PhaseOpen {
         goal: t("two"),
         move_on: false,
+        branch: None,
     });
     assert_eq!(phases(&h, 1), (None, None));
     assert_eq!(
@@ -1186,11 +1294,13 @@ fn an_item_is_added_tagged_for_the_open_phase_a_later_one_or_none() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: false,
+        branch: None,
     });
     h.must(Command::PhaseClose);
     h.must(Command::PhaseOpen {
         goal: t("two"),
         move_on: false,
+        branch: None,
     });
     // Where it was added is the open phase, whatever the tag.
     h.must(add(Tag::Phase(PhaseId(2))));
@@ -1289,6 +1399,7 @@ fn a_phase_opens_with_the_items_tagged_for_it_or_moves_their_tags_on() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: false,
+        branch: None,
     });
     // Opening writes nothing about the items: the tag already says it.
     assert_eq!(h.log.len(), before + 1);
@@ -1309,6 +1420,7 @@ fn a_phase_opens_with_the_items_tagged_for_it_or_moves_their_tags_on() {
     h.must(Command::PhaseOpen {
         goal: t("one"),
         move_on: true,
+        branch: None,
     });
     // I-1 moved on beside I-2; the untagged item is not touched.
     assert_eq!(phases(&h, 1).0, Some(PhaseId(2)));

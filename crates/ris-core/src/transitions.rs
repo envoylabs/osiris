@@ -39,6 +39,9 @@ pub enum CommandKind {
     /// The person replacing an item that has not been started with
     /// another.
     Supersede,
+    /// The person taking an item that will not be built out of the
+    /// work, with a reason and no replacement.
+    Retire,
     /// The person bringing an item that has not been started from the
     /// backlog into the open phase.
     BringIn,
@@ -83,6 +86,7 @@ impl CommandKind {
         Self::Audit,
         Self::Explain,
         Self::Supersede,
+        Self::Retire,
         Self::BringIn,
         Self::Tag,
         Self::Pause,
@@ -106,6 +110,7 @@ pub enum ItemStateKind {
     Done,
     Merged,
     Superseded,
+    Retired,
 }
 
 impl ItemStateKind {
@@ -116,6 +121,7 @@ impl ItemStateKind {
         Self::Done,
         Self::Merged,
         Self::Superseded,
+        Self::Retired,
     ];
 }
 
@@ -181,6 +187,12 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         // is released first, and one done or merged stands.
         (S::Ready, C::Supersede, Move::To(S::Superseded)),
         (S::Blocked, C::Supersede, Move::To(S::Superseded)),
+        // An item that will not be built is retired: any no seat is
+        // working on and that has not merged, including one done and
+        // never merged. One being worked on is released first.
+        (S::Ready, C::Retire, Move::To(S::Retired)),
+        (S::Blocked, C::Retire, Move::To(S::Retired)),
+        (S::Done, C::Retire, Move::To(S::Retired)),
         // Likewise an item nobody has started may be brought into the
         // open phase; its state does not change, only its phase.
         (S::Ready, C::BringIn, Move::Stay),
@@ -196,7 +208,7 @@ pub const ITEM: &[(ItemStateKind, CommandKind, Move<ItemStateKind>)] = {
         (S::Claimed, C::RaiseAction, Move::To(S::Blocked)),
         (S::Blocked, C::RaiseAction, Move::Stay),
         (S::Blocked, C::ActionDone, Move::To(S::Ready)),
-        // Superseded: nothing. Final.
+        // Superseded and Retired: nothing. Final.
     ]
 };
 

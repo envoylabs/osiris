@@ -6,7 +6,8 @@
 //! failed check exits 3 with the failures and their evidence ids; any
 //! other error exits 1.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -218,7 +219,8 @@ enum Cmd {
     /// file with the lines the phase added and removed, and how the
     /// files connect. With no phase named, the open phase, or the last
     /// one closed. Run by the person at a terminal with no flags, it
-    /// writes the page inside .osiris and opens it in the browser.
+    /// writes the page inside .osiris and opens it: in a window of its
+    /// own where ris is built with one, in the browser where not.
     /// Given a git range instead, the change set between two commits of
     /// any repository, in a project or not.
     Map {
@@ -237,6 +239,14 @@ enum Cmd {
         #[arg(long, requires = "list")]
         steps: bool,
     },
+    /// Hold a window showing the page in FILE until it is closed.
+    /// `ris map` starts it and leaves it running, so it is not listed
+    /// in help. The person's: a seat never opens a window. Only in a
+    /// ris built with the `window` feature. It has no `--json` data:
+    /// its one line of output says the page is shown, or why not, and
+    /// it ends with the window.
+    #[command(hide = true)]
+    Window { file: PathBuf },
     /// Where each seat is: role, worktree, branch, claim, commits ahead
     /// of and behind the phase branch, uncommitted changes.
     Status,
@@ -306,6 +316,10 @@ enum PhaseCmd {
         /// instead, so this phase opens with none of them.
         #[arg(long)]
         move_on: bool,
+        /// Create the phase's branch under this name instead of
+        /// phase/P-n, where the project's convention needs another.
+        #[arg(long, value_name = "NAME")]
+        branch: Option<String>,
     },
     /// The review step before closing, the person's: the phase's state,
     /// a walk of the open decisions as `ris decide` gives it, and the
@@ -315,11 +329,19 @@ enum PhaseCmd {
     Review,
     /// Close the open phase. Its items that have not merged lose their
     /// tag: they are in the backlog until tagged again. Refused unless
-    /// the phase was reviewed at the tip of its work.
+    /// the phase was reviewed at the tip of its work. Where the closing
+    /// merge is left to the git server (merge_on_close = false), also
+    /// refused until the phase's work is on the local main line: push
+    /// the branch, have it merged, pull, then close.
     Close {
         /// Close without a review standing at the tip.
         #[arg(long)]
         unreviewed: bool,
+        /// The commit on the main line that carries the phase's work,
+        /// for a merge made on the git server that the close does not
+        /// recognise (one resolved by hand there).
+        #[arg(long, value_name = "COMMIT")]
+        merged_at: Option<String>,
     },
 }
 
@@ -369,6 +391,19 @@ enum ItemCmd {
         item: ItemId,
         #[arg(long)]
         by: ItemId,
+    },
+    /// Take items that will not be built out of the work for good, with
+    /// nothing to replace them (the person's only). Each must be
+    /// unmerged and held by no seat; an item still in the work that
+    /// waits on one is retired with it in the same command, or the
+    /// retirement is refused. Final.
+    Retire {
+        #[arg(required = true)]
+        items: Vec<ItemId>,
+        /// Why they will not be built; one reason covers every item
+        /// named.
+        #[arg(long)]
+        reason: String,
     },
     /// Bring an item nobody has started from the backlog into the open
     /// phase, so a seat may claim it (the person's only).
@@ -799,6 +834,9 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     let mut p = Project::find(&cwd)?;
     let actor = p.actor()?;
     forbidden_by_role(&p, &actor, &cli.command)?;
+    if let Cmd::Window { file } = &cli.command {
+        return window(&actor, file);
+    }
     // D-48: the person's ris catches up with the last merge before it
     // does anything else. A seat's never does: it runs in a sandbox.
     if actor == Actor::Person
@@ -855,7 +893,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
     }
 
     match &cli.command {
-        Cmd::Init { .. } | Cmd::Schema => unreachable!(),
+        Cmd::Init { .. } | Cmd::Schema | Cmd::Window { .. } => unreachable!(),
 
         Cmd::Rules { render, to, check } => {
             let (Some(source), Some(to)) = (render, to) else {
@@ -1033,11 +1071,21 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
         }
 
         Cmd::Phase { action } => match action {
-            PhaseCmd::Open { goal, move_on } => {
+            PhaseCmd::Open {
+                goal,
+                move_on,
+                branch: given,
+            } => {
                 let goal = p.text("goal", goal)?;
                 let command = Command::PhaseOpen {
                     goal,
                     move_on: *move_on,
+                    // Recorded with the opening, so whatever reads the
+                    // phase's branch reads this name.
+                    branch: given
+                        .as_deref()
+                        .map(|name| p.text("branch", name))
+                        .transpose()?,
                 };
                 // Refusals first, so a refused open creates no branch.
                 let l = p.load()?;
@@ -1051,7 +1099,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                             .into(),
                     ));
                 }
-                let branch = open_phase_branch(&p, l.state.next_phase_id())?;
+                if let Some(name) = given {
+                    refuse_branch_name(&p, name)?;
+                }
+                let branch = open_phase_branch(&p, l.state.next_phase_id(), given.as_deref())?;
                 // What was tagged for the phase, read before it opens:
                 // it opens with them, or their tags move on.
                 let tagged: Vec<ItemId> = l
@@ -1141,7 +1192,10 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 };
                 ris::review::run(&mut p, &actor, &state, !cli.json, &mut std::io::stdout())
             }
-            PhaseCmd::Close { unreviewed } => {
+            PhaseCmd::Close {
+                unreviewed,
+                merged_at,
+            } => {
                 let l = p.load()?;
                 let phase = l
                     .state
@@ -1154,7 +1208,8 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                     .check_index()
                     .map_err(|e| CliError::Other(e.to_string()))?;
                 // The docs item, if this phase has one, is merged (or
-                // superseded) before the phase closes.
+                // superseded, or retired by the person) before the phase
+                // closes.
                 if let Some(docs) = l.state.items.values().find(|i| {
                     i.phase == Some(phase_id)
                         && l.text(i.at, "goal") == DOCS_GOAL
@@ -1162,11 +1217,12 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                             i.state,
                             ris_core::primitives::ItemState::Merged { .. }
                                 | ris_core::primitives::ItemState::Superseded { .. }
+                                | ris_core::primitives::ItemState::Retired { .. }
                         )
                 }) {
                     return Err(CliError::Other(format!(
                         "refused: {} (the docs) is not merged, so the docs may not describe what this phase built\n  \
-                         next: bring them up to date and merge {}, or supersede it",
+                         next: bring them up to date and merge {}, or supersede or retire it",
                         docs.id, docs.id
                     )));
                 }
@@ -1178,15 +1234,73 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                 {
                     return Err(CliError::Other(why));
                 }
-                let closing = closing_merge(&mut p, phase_id, &goal)?;
-                let (l, events) = p.run(&Command::PhaseClose)?;
+                let named = l.phase_branch(&l.state.phases[&phase_id]);
+                // Left to the git server, the closing merge is looked
+                // for on the main line; otherwise it is made here.
+                let elsewhere =
+                    !p.config.merge_on_close && git(&p.root, &["rev-parse", "--git-dir"]).is_ok();
+                let closing = if elsewhere {
+                    let opened = l.state.phases[&phase_id].at;
+                    let merged: Vec<String> = l
+                        .log
+                        .iter()
+                        .filter(|e| e.seq > opened)
+                        .filter_map(|e| match &e.structure {
+                            ris_core::event::Structure::ItemMerged { commit, .. } => {
+                                Some(commit.0.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    merged_elsewhere(&p, phase_id, named, merged_at.as_deref(), &merged)?
+                } else if merged_at.is_some() {
+                    return Err(CliError::Other(format!(
+                        "refused: --merged-at names a merge made elsewhere, and this project's \
+                         closing merge is made here (merge_on_close = true)\n  \
+                         next: `ris phase close` merges {named} into {}",
+                        p.config.main_line
+                    )));
+                } else {
+                    Closing {
+                        line: closing_merge(&mut p, phase_id, &goal, named)?,
+                        on_main: None,
+                        drop: None,
+                    }
+                };
+                let (l, events) = p.run(&match &closing.on_main {
+                    Some(on) => Command::PhaseCloseMerged {
+                        first: ris_core::ids::CommitHash(on.first.clone()),
+                        last: ris_core::ids::CommitHash(on.last.clone()),
+                    },
+                    None => Command::PhaseClose,
+                })?;
+                // The work is on the main line and the close recorded:
+                // the branch a merge elsewhere left behind goes, as the
+                // closing merge made here removes its own.
+                let mut closing_line = closing.line;
+                if let Some(branch) = &closing.drop {
+                    closing_line.push_str(
+                        &match git(&p.root, &["branch", "--quiet", "-D", branch]) {
+                            Ok(_) => format!("; {branch} deleted"),
+                            Err(_) => format!(
+                                "; {branch} is left in place: it could not be deleted (a branch checked out is not)"
+                            ),
+                        },
+                    );
+                }
+                let closing = closing_line;
                 // The close, then one event for each item it untagged.
                 let closed = events.first().expect("close emits its event first");
                 let report = match &closed.structure {
                     ris_core::event::Structure::PhaseClosed { report, .. } => *report,
                     _ => unreachable!(),
                 };
-                let untagged = events.len() - 1;
+                let untagged = events
+                    .iter()
+                    .filter(|e| {
+                        matches!(e.structure, ris_core::event::Structure::ItemScoped { .. })
+                    })
+                    .count();
                 let left = if untagged > 0 {
                     format!(
                         "\n{untagged} item(s) not merged have no phase now: tag one for a phase with `ris item phase <item> <P-n>`"
@@ -1302,6 +1416,31 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         item: *item,
                         superseded_by: *by,
                     },
+                ))
+            }
+            ItemCmd::Retire { items, reason } => {
+                let reason = p.text("reason", reason)?;
+                p.run(&Command::Retire {
+                    items: items.clone(),
+                    reason,
+                    actor: actor.clone(),
+                })?;
+                let mut named: Vec<ItemId> = Vec::new();
+                for i in items {
+                    if !named.contains(i) {
+                        named.push(*i);
+                    }
+                }
+                Ok(Output::of(
+                    format!(
+                        "retired {}",
+                        named
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    &schema::Retired { items: named },
                 ))
             }
             ItemCmd::BringIn { item } => {
@@ -1928,7 +2067,7 @@ fn run(cli: &Cli) -> Result<Output, CliError> {
                         Show::Open {
                             file: &file,
                             shown: &shown_beside(&p, &file),
-                            opener: &ris::map::Opener::platform(),
+                            opener: &page_opener(),
                         },
                     )
                 }
@@ -2590,6 +2729,48 @@ fn make_worktree(p: &Project, seat: &str) -> Result<PathBuf, CliError> {
 /// agent is not running. Seats in the log but not in the file are
 /// reported and left alone.
 /// `ris install`: the person's, outside any sandbox (D-48).
+/// How `ris map` opens its page: in a window held by this program run
+/// again, where it is built with one and can name itself; otherwise in
+/// the browser.
+fn page_opener() -> ris::map::Opener {
+    match std::env::current_exe() {
+        Ok(exe) if cfg!(feature = "window") => ris::map::Opener::window(&exe),
+        _ => ris::map::Opener::platform(),
+    }
+}
+
+/// `ris window FILE`: serve the page in FILE to a window of its own and
+/// stay until the window is closed. Its first line of output is what
+/// `ris map` waits for: [`ris::map::SHOWN`], or why there is no window.
+fn window(actor: &Actor, file: &Path) -> Result<Output, CliError> {
+    if *actor != Actor::Person {
+        return Err(CliError::Other(
+            "refused: a window is the person's; a seat never opens one\n  \
+             next: `ris map --list` prints the same files, and `ris map --html FILE` writes the page"
+                .into(),
+        ));
+    }
+    #[cfg(feature = "window")]
+    {
+        use std::io::Write;
+        let page = std::fs::read_to_string(file)?;
+        // A reader that has gone is not this command's failure.
+        let say = |line: &str| {
+            let mut out = std::io::stdout();
+            let _ = writeln!(out, "{line}").and_then(|()| out.flush());
+        };
+        let Err(why) = ris_window::show("ris map", page, || say(ris::map::SHOWN));
+        say(&why);
+        Err(CliError::Other(why))
+    }
+    #[cfg(not(feature = "window"))]
+    Err(CliError::Other(format!(
+        "this ris is built without a window, so {} is not shown in one\n  \
+         next: build ris with `--features window`, or open the file in a browser",
+        file.display()
+    )))
+}
+
 fn install(p: &Project, actor: &Actor) -> Result<Output, CliError> {
     if *actor != Actor::Person {
         return Err(CliError::Other(
@@ -2808,14 +2989,18 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
 /// fast-forward, and only when nothing can be lost: the seat's branch
 /// holds no commits of its own, it holds no claimed item, and its
 /// worktree has no uncommitted or untracked files. A seat behind that
-/// fails one of those is left alone and the line says why. The one
-/// exception is a branch with commits of its own behind a change to a
-/// rules file, which is rebased (`rebase_over_rules`). One line per
-/// seat that was behind.
+/// fails one of those is left alone and the line says why. Two kinds
+/// of branch with commits of its own are not left: one whose commits
+/// are all merged items of phases whose work is on the main line, as
+/// after a server's squash or rebase, which is moved to the phase
+/// branch since those commits hold nothing that can be lost; and one
+/// behind a change to a rules file, which is rebased
+/// (`rebase_over_rules`). One line per seat that was behind.
 fn bring_up_to_phase(p: &mut Project, l: &ris::project::Loaded, named: &[String]) -> Vec<String> {
     let Some(phase) = ris::status::phase_branch(p, l) else {
         return Vec::new();
     };
+    let settled = settled_commits(l);
     let mut lines = Vec::new();
     for s in ris::status::seats(p, l) {
         if !named.contains(&s.seat) || !s.role.writes() {
@@ -2831,6 +3016,41 @@ fn bring_up_to_phase(p: &mut Project, l: &ris::project::Loaded, named: &[String]
             continue;
         }
         let seat = &s.seat;
+        // Commits of its own that are all merged items of phases whose
+        // work is on the main line: a server's squash or rebase put
+        // their changes there as other commits, so these are ancestors
+        // of nothing and hold nothing that can be lost. The seat is
+        // moved to the phase's branch, where a fast-forward cannot go.
+        if s.ahead.unwrap_or(1) > 0
+            && let Some((count, phases)) = only_settled(dir, &phase, &settled)
+        {
+            let held = if let Some(item) = &s.claim {
+                Some(format!("it holds {item}"))
+            } else if s.uncommitted.unwrap_or(1) > 0 {
+                Some("its worktree has uncommitted changes".to_owned())
+            } else if s.running {
+                Some(format!(
+                    "its agent is running\n  next: `ris up {seat}` once it has stopped"
+                ))
+            } else {
+                None
+            };
+            lines.push(match held {
+                Some(why) => format!("{seat}: {behind} behind {phase}, left alone: {why}"),
+                None => match git(dir, &["checkout", "--quiet", "-B", seat, &phase]) {
+                    Ok(_) => format!(
+                        "{seat}: moved to {phase}: the {count} commit(s) of its own are merged \
+                         items of {phases}, whose work is on {}, so nothing is lost",
+                        p.config.main_line
+                    ),
+                    Err(e) => format!(
+                        "{seat}: {behind} behind {phase}, left alone: {}",
+                        e.lines().next().unwrap_or("the move failed")
+                    ),
+                },
+            });
+            continue;
+        }
         // A branch with commits of its own is the seat's to rebase, at
         // its merge. It cannot when the phase branch changed a rules
         // file since, which its sandbox will not let it write: then the
@@ -2863,6 +3083,50 @@ fn bring_up_to_phase(p: &mut Project, l: &ris::project::Loaded, named: &[String]
         lines.push(line);
     }
     lines
+}
+
+/// The commit of every item merged in a phase whose work the log
+/// records on the main line (a `phase_merged` event, written when a
+/// phase closes on a merge made elsewhere), with its phase. Such a
+/// commit's change is on the main line whether or not the commit is.
+fn settled_commits(l: &ris::project::Loaded) -> BTreeMap<String, PhaseId> {
+    use ris_core::event::Structure;
+    let mut open = None;
+    let mut commits = BTreeMap::new();
+    for e in &l.log {
+        match &e.structure {
+            Structure::PhaseOpened { phase } => open = Some(*phase),
+            Structure::PhaseClosed { .. } => open = None,
+            Structure::ItemMerged { commit, .. } => {
+                if let Some(phase) = open.filter(|p| l.state.on_main.contains_key(p)) {
+                    commits.insert(commit.0.clone(), phase);
+                }
+            }
+            _ => {}
+        }
+    }
+    commits
+}
+
+/// Whether the branch checked out in `dir` holds, beyond `phase`, only
+/// commits in `settled`: how many, and the phases they are of. `None`
+/// when it holds none, or any other commit.
+fn only_settled(
+    dir: &std::path::Path,
+    phase: &str,
+    settled: &BTreeMap<String, PhaseId>,
+) -> Option<(usize, String)> {
+    let own = git(dir, &["rev-list", &format!("{phase}..HEAD")]).ok()?;
+    let mut phases = std::collections::BTreeSet::new();
+    let mut count = 0;
+    for commit in own.lines().filter(|c| !c.is_empty()) {
+        phases.insert(*settled.get(commit)?);
+        count += 1;
+    }
+    (count > 0).then(|| {
+        let phases: Vec<String> = phases.iter().map(PhaseId::to_string).collect();
+        (count, phases.join(", "))
+    })
 }
 
 /// The rules files the phase branch has changed since the branch checked
@@ -3812,16 +4076,123 @@ fn merge_from_worktree(
     Ok((commit, lines))
 }
 
+/// What became of a phase's branch at its close.
+struct Closing {
+    /// A line saying what happened.
+    line: String,
+    /// Where the phase's work is on the main line, when a merge made
+    /// elsewhere put it there.
+    on_main: Option<ris::onmain::OnMain>,
+    /// The phase's branch, to remove once the close is recorded.
+    drop: Option<String>,
+}
+
+/// The close of a phase whose closing merge is left to the git server
+/// (`merge_on_close = false`): look for the work of the phase's branch,
+/// `named`, on the local main line as it stands, and refuse when it is
+/// not there, so the phase stays open to take whatever the server's
+/// build or review still asks for. `merged_at` is the commit the person
+/// names as carrying the work, for a merge this cannot recognise;
+/// `merged` is the commits of the phase's merged items, oldest first.
+/// Nothing is fetched, pushed or merged here.
+fn merged_elsewhere(
+    p: &Project,
+    phase: ris_core::ids::PhaseId,
+    named: String,
+    merged_at: Option<&str>,
+    merged: &[String],
+) -> Result<Closing, CliError> {
+    use ris::onmain::Found;
+    let main = p.config.main_line.clone();
+    let here = git(&p.root, &["rev-parse", "--abbrev-ref", "HEAD"]).map_err(CliError::Other)?;
+    let made = p.config.phase_branches
+        && git(
+            &p.root,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{named}"),
+            ],
+        )
+        .is_ok();
+    let at = |on: &ris::onmain::OnMain| {
+        format!(
+            "closing merge: made elsewhere; {phase}'s work is on {main} {}",
+            on.said()
+        )
+    };
+    if let Some(name) = merged_at {
+        let on = ris::onmain::named(&p.root, &main, name).map_err(|why| {
+            CliError::Other(format!(
+                "refused: {why}, so {phase} stays open\n  \
+                 next: name the commit on {main} that carries {phase}'s work; \
+                 `git log --first-parent {main}` lists them"
+            ))
+        })?;
+        return Ok(Closing {
+            line: at(&on),
+            on_main: Some(on),
+            drop: made.then_some(named),
+        });
+    }
+    // The phase's branch; with phase branches off, whatever the main
+    // checkout is on stands in for it.
+    let branch = if made {
+        named
+    } else if p.config.phase_branches {
+        return Err(CliError::Other(format!(
+            "refused: {phase}'s branch {named} is not in this repository, so its work cannot be \
+             looked for on {main}, and {phase} stays open\n  \
+             next: `ris phase close --merged-at <commit>` names the commit on {main} that carries it"
+        )));
+    } else if here == main {
+        return Ok(Closing {
+            line: format!("closing merge: none needed; the phase's work is already on {main}"),
+            on_main: None,
+            drop: None,
+        });
+    } else if here == "HEAD" {
+        return Err(CliError::Other(format!(
+            "the main worktree is detached; check out {main} there"
+        )));
+    } else {
+        here
+    };
+    match ris::onmain::find(&p.root, &main, &branch, merged).map_err(CliError::Other)? {
+        Found::At(on) => Ok(Closing {
+            line: at(&on),
+            on_main: Some(on),
+            drop: made.then_some(branch),
+        }),
+        Found::NoWork => Ok(Closing {
+            line: format!("closing merge: none needed; {branch} holds no work that {main} lacks"),
+            on_main: None,
+            drop: made.then_some(branch),
+        }),
+        Found::Missing => Err(CliError::Other(format!(
+            "refused: {branch}'s work is not on {main} in this repository, so {phase} stays open \
+             (merge_on_close = false leaves the merge to the git server)\n  \
+             next: push {branch}, have it merged into {main} on the server, pull {main}, \
+             then `ris phase close` again\n  \
+             next: for a merge this does not recognise (one resolved by hand on the server), \
+             `ris phase close --merged-at <commit>` names the commit on {main} that carries the work"
+        ))),
+    }
+}
+
 /// The closing merge: the phase branch into the main line, `--no-ff`,
 /// in the main worktree, with every check run on the merged result
 /// before the phase closes. When the phase's work is already on the
 /// main line there is nothing to merge. On a conflict or a failing
 /// check the merge is undone (it was never pushed) and the phase stays
-/// open. Returns a line saying what happened.
+/// open. `named` is the phase's branch by name. Returns a line saying
+/// what happened.
 fn closing_merge(
     p: &mut Project,
     phase: ris_core::ids::PhaseId,
     goal: &str,
+    named: String,
 ) -> Result<String, CliError> {
     let _lock = ris_store_sqlite::MergeLock::acquire(
         &p.root.join(ris::project::DIR).join("merge.lock"),
@@ -3835,8 +4206,7 @@ fn closing_merge(
     // The phase's branch, checked out nowhere since D-43; without one,
     // whatever the main checkout is on (phase branches off, or a layout
     // from before).
-    let named = phase_branch_name(phase);
-    let branch = if p.config.phase_branches
+    let made = p.config.phase_branches
         && git(
             &p.root,
             &[
@@ -3846,12 +4216,8 @@ fn closing_merge(
                 &format!("refs/heads/{named}"),
             ],
         )
-        .is_ok()
-    {
-        named
-    } else {
-        here.clone()
-    };
+        .is_ok();
+    let branch = if made { named } else { here.clone() };
     if branch == main {
         return Ok(format!(
             "closing merge: none needed; the phase's work is already on {main}"
@@ -3861,12 +4227,6 @@ fn closing_merge(
         return Err(CliError::Other(format!(
             "the main worktree is detached; check out {main} there"
         )));
-    }
-    if !p.config.merge_on_close {
-        return Ok(format!(
-            "closing merge: left to the git server (merge_on_close = false); \
-             push {branch} and merge it into {main} there"
-        ));
     }
     let dirty = git(&p.root, &["status", "--porcelain", "--untracked-files=no"])
         .map_err(CliError::Other)?;
@@ -3947,11 +4307,7 @@ fn closing_merge(
     let head = git(&p.root, &["rev-parse", "HEAD"]).map_err(CliError::Other)?;
     // A phase branch the harness made is deleted once merged; `-d`
     // refuses if it were somehow not merged.
-    let deleted = if p.config.phase_branches && branch == phase_branch_name(phase) {
-        git(&p.root, &["branch", "--quiet", "-d", &branch]).is_ok()
-    } else {
-        false
-    };
+    let deleted = made && git(&p.root, &["branch", "--quiet", "-d", &branch]).is_ok();
     Ok(format!(
         "closing merge: {branch} into {main} at {head}; the main worktree is now on {main}{}{}",
         if deleted {
@@ -3983,23 +4339,81 @@ fn render_rules_into_merge(root: &std::path::Path) -> Result<Vec<(String, String
     Ok(rendered)
 }
 
-fn phase_branch_name(phase: ris_core::ids::PhaseId) -> String {
-    format!("phase/{phase}")
+/// Why the phase's branch cannot take the name `given` (`ris phase open
+/// --branch`), or nothing when it can. Nothing is created here, so a
+/// refusal leaves the repository as it was.
+fn refuse_branch_name(p: &Project, given: &str) -> Result<(), CliError> {
+    let refused =
+        |why: String, next: &str| Err(CliError::Other(format!("refused: {why}\n  next: {next}")));
+    if !p.config.phase_branches {
+        return refused(
+            "phase branches are off (phase_branches = false), so the phase has no branch to name"
+                .to_owned(),
+            "open the phase without --branch, or set phase_branches = true in .osiris/config.toml",
+        );
+    }
+    if git(&p.root, &["rev-parse", "--git-dir"]).is_err() {
+        return refused(
+            "the project is not a git repository, so the phase has no branch to name".to_owned(),
+            "open the phase without --branch",
+        );
+    }
+    // Asked of git, whose rules they are; a name that starts with a
+    // dash would be read as an option, here and by whoever uses it.
+    if given.starts_with('-') || git(&p.root, &["check-ref-format", "--branch", given]).is_err() {
+        return refused(
+            format!("`{given}` is not a valid branch name"),
+            "give a name git takes, such as feature/the-work (`git check-ref-format --branch <name>` says)",
+        );
+    }
+    let main = &p.config.main_line;
+    if given == main {
+        return refused(
+            format!(
+                "`{given}` is the main line, which the phase's branch is made from and merged into"
+            ),
+            "give the phase's branch a name of its own",
+        );
+    }
+    if git(
+        &p.root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{given}"),
+        ],
+    )
+    .is_ok()
+    {
+        return refused(
+            format!(
+                "the branch `{given}` already exists, and a phase's branch is made new from {main}"
+            ),
+            "give a name no branch has, or delete that branch first",
+        );
+    }
+    Ok(())
 }
 
-/// With phase branches on, create `phase/P-n` from the main line. It is
+/// With phase branches on, create the phase's branch from the main
+/// line: under the name `given`, or as `phase/P-n`. It is
 /// checked out nowhere: seats work in their own worktrees and merges move
 /// it by a ref update (D-43), and the main checkout stays where it is. Returns the branch, or `None` when
 /// branches are off or the project is not a git repository.
 fn open_phase_branch(
     p: &Project,
     phase: ris_core::ids::PhaseId,
+    given: Option<&str>,
 ) -> Result<Option<String>, CliError> {
     if !p.config.phase_branches || git(&p.root, &["rev-parse", "--git-dir"]).is_err() {
         return Ok(None);
     }
     let main = &p.config.main_line;
-    let name = phase_branch_name(phase);
+    let name = match given {
+        Some(name) => name.to_owned(),
+        None => ris::project::default_phase_branch(phase),
+    };
     if git(
         &p.root,
         &[

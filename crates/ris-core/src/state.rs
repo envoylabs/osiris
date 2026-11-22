@@ -49,6 +49,18 @@ pub struct State {
     /// phase's items after it moves the tip, and removes it.
     #[serde(default)]
     pub reviews: BTreeMap<crate::ids::PhaseId, Review>,
+    /// Where each phase's work is on the main line, for a phase whose
+    /// closing merge was made elsewhere and found there at its close.
+    #[serde(default)]
+    pub on_main: BTreeMap<crate::ids::PhaseId, OnMain>,
+}
+
+/// A phase's work on the main line: the commits there where it starts
+/// and ends, the same commit when one carries all of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnMain {
+    pub first: crate::ids::CommitHash,
+    pub last: crate::ids::CommitHash,
 }
 
 /// The person reviewed a phase: the event that recorded it, and the
@@ -154,11 +166,15 @@ impl State {
         self.open_phase().is_some_and(|p| p.id == phase) || phase.0 as usize > self.phases.len()
     }
 
-    /// The items tagged for `phase` that are not superseded, in id
-    /// order.
+    /// The items tagged for `phase` that are neither superseded nor
+    /// retired, in id order.
     pub fn tagged(&self, phase: PhaseId) -> impl Iterator<Item = &Item> {
         self.items.values().filter(move |i| {
-            i.phase == Some(phase) && !matches!(i.state, ItemState::Superseded { .. })
+            i.phase == Some(phase)
+                && !matches!(
+                    i.state,
+                    ItemState::Superseded { .. } | ItemState::Retired { .. }
+                )
         })
     }
 
@@ -487,6 +503,18 @@ impl State {
                     },
                 );
             }
+            Structure::PhaseMerged { phase, first, last } => {
+                if !self.phases.contains_key(phase) {
+                    return Err(FoldError::UnknownPhase { seq, phase: *phase });
+                }
+                self.on_main.insert(
+                    *phase,
+                    OnMain {
+                        first: first.clone(),
+                        last: last.clone(),
+                    },
+                );
+            }
             Structure::RunStopped { seat, .. } => {
                 self.running.remove(seat);
             }
@@ -502,6 +530,11 @@ impl State {
                 let r = self.index.replaced.entry(*by).or_default();
                 r.push(*item);
                 r.sort();
+            }
+            Structure::ItemsRetired { items } => {
+                for item in items {
+                    self.item_mut(seq, *item)?.state = ItemState::Retired { at: seq };
+                }
             }
             Structure::DecisionRaised {
                 decision,

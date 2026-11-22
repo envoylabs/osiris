@@ -131,6 +131,17 @@ pub enum Refusal {
     ScopeIsForThePerson(ItemId),
     /// Reviewing the phase is the person's step before closing it.
     ReviewIsForThePerson,
+    /// Retiring items is the person's to do: it is final.
+    RetireIsForThePerson,
+    /// A retirement records why; the reason given was empty.
+    RetireNeedsReason,
+    /// A retirement names at least one item.
+    NothingToRetire,
+    /// Items left in the work wait on this one, so it would hold them
+    /// for ever; it is retired only with them, in the same command.
+    RetireWaitedOn { item: ItemId, waiting: Vec<ItemId> },
+    /// A new item cannot depend on a retired one, which never merges.
+    DependsOnRetired(ItemId),
 }
 
 impl Refusal {
@@ -243,6 +254,20 @@ impl Refusal {
             }
             Self::ReviewIsForThePerson => {
                 "leave it to the person, who runs `ris phase review` before closing".into()
+            }
+            Self::RetireIsForThePerson => {
+                "raise it with the person, who runs `ris item retire`".into()
+            }
+            Self::RetireNeedsReason => "say why with --reason \"<why>\"".into(),
+            Self::NothingToRetire => "name the items: `ris item retire I-n [I-m ...]`".into(),
+            Self::RetireWaitedOn { item, waiting } => format!(
+                "retire {} in the same command as {item}, or leave {item} in the work",
+                join(waiting)
+            ),
+            Self::DependsOnRetired(item) => {
+                format!(
+                    "leave {item} out of --depends-on; `ris show {item}` says why it was retired"
+                )
             }
         }
     }
@@ -391,6 +416,15 @@ impl fmt::Display for Refusal {
                 "refused: only the person moves {item} into or out of the open phase"
             ),
             Self::ReviewIsForThePerson => f.write_str("refused: only the person reviews the phase"),
+            Self::RetireIsForThePerson => f.write_str("refused: only the person retires items"),
+            Self::RetireNeedsReason => f.write_str("refused: a retirement needs a reason"),
+            Self::NothingToRetire => f.write_str("refused: no item named to retire"),
+            Self::RetireWaitedOn { item, waiting } => {
+                write!(f, "refused: {} waits on {item}", join(waiting))
+            }
+            Self::DependsOnRetired(item) => {
+                write!(f, "refused: {item} is retired and will never merge")
+            }
         }
     }
 }

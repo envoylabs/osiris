@@ -15,7 +15,14 @@ work goes onto its branch, `phase/P-n`, which is checked out nowhere:
 a seat's `ris merge` moves it by a ref update, which needs only the git
 directory, so a seat in its sandbox can merge without writing your
 checkout. `git log phase/P-1` and `git diff main...phase/P-1` show the
-phase's work; `ris phase close` merges it into the main line.
+phase's work; `ris phase close` merges it into the main line. Where
+your project's convention needs another name, `ris phase open "<goal>"
+--branch <name>` creates the phase's branch under it: the name is
+recorded with the phase's opening, so merges, `ris up`, `ris status`,
+`ris map` and the closing merge all use it, and `ris summary` and
+`ris report` show it. The open is refused, with nothing created, when
+the name is not a valid branch name, is the main line or is a branch
+that already exists, and when `phase_branches` is off.
 
 The person runs `ris` with `RIS_AGENT=person`. `ris` refuses every
 command when `RIS_AGENT` is unset, so an agent that loses its seat's
@@ -30,6 +37,7 @@ export RIS_AGENT=person
 
 ```sh
 cargo install --path crates/ris        # from the osiris repository
+                                       # --features window: `ris map` in a native window
 cd your-repo
 ris init --local
 ```
@@ -122,9 +130,40 @@ name is a pseudonym, never a real person's name, and `person` is
 reserved.
 
 For a repository merged through a git server's web interface, set
-`merge_on_close = false` (phase close leaves the branch for a pull or
-merge request) and, if the project's commit convention has no room for
-them, `trailers = false`.
+`merge_on_close = false` and, if the project's commit convention has no
+room for them, `trailers = false`. The closing merge is then the
+server's, and the phase stays open until it is made, so a failed build
+or a reviewer's change there still has an open phase to take the fix:
+
+```sh
+ris phase review                       # names the branch to push
+git push origin phase/P-1              # yours to run: ris pushes and fetches nothing
+# ...the pull or merge request is merged on the server...
+git pull                               # on the main line
+ris phase close                        # closes once the phase's work is on the main line
+```
+
+`ris phase close` reads only your local repository. It finds the
+phase's work on the main line whether the server made a merge commit
+or moved the main line forward (the branch's tip is in the main line's
+history), rebased the commits (each has a commit there making the same
+change) or squashed them (one commit there makes the branch's whole
+change). Found, it closes the phase, records the commits on the main
+line where the work starts and ends, and deletes the local branch.
+Not found, it refuses, the phase stays open, and it says what to do
+next. A merge it cannot recognise, such as a squash resolved by hand
+on the server, you name: `ris phase close --merged-at <commit>`, which
+is refused for a commit that is not on the main line. `ris map P-n`
+for a phase closed this way reads the recorded commits, so it does not
+depend on the branch or on what the server called its merge.
+
+After a squash or a rebase on the server, a seat's branch still holds
+the closed phase's own commits, which are in the main line's history
+nowhere. `ris up` for the next phase moves such a seat to the new
+phase's branch when every commit of its own is a merged item of a phase
+closed this way, since their changes are on the main line; its line
+says so. A seat holding an item, uncommitted files, a running agent or
+a commit that no closed phase carries is left alone, as before.
 
 Each builder's worktree goes where `worktrees` says: a path template,
 relative to the main checkout unless absolute, in which `{repo}` is the
@@ -179,6 +218,7 @@ ris import backlog.toml                # then import
 ris item bring-in I-7                  # an unstarted item from the backlog, into this phase
 ris item add "later" --phase P-2       # planned for a phase not open yet
 ris item phase I-7 P-2                 # the same for an item there already; `none` untags it
+ris item retire I-7 I-8 --reason "..." # out of the work for good, with nothing to replace them
 ```
 
 Every phase gets an item to bring the docs up to date, and `ris phase
@@ -303,7 +343,7 @@ names the installed one.
 ```sh
 ris summary                            # the phase in one picture: its state, each seat, its items and what they wait on
 ris decide                             # each queued decision's case, then pick with one key, or o for your own answer
-ris map                                # the phase's change set drawn over the source files, as one page in the browser
+ris map                                # the phase's change set drawn over the source files, as one page in a window or the browser
 ris eli5 D-3                           # one decision's full case
 ris decide D-3 --choose 1 --rationale "..."
 ris action done A-2 --note "what happened"
@@ -325,7 +365,7 @@ with which seats, how many are set aside and how many not started,
 then whatever waits on you with the command for it (open decisions:
 `ris decide`; a seat's setup fault: `ris status`, then `ris up
 <seat>`), and, when items remain and no seat is running, that `ris up`
-starts them. Superseded items are not counted.
+starts them. Superseded and retired items are not counted.
 
 Below that line the summary is one picture of the open phase and
 nothing else: its
@@ -378,7 +418,14 @@ stands where there is one, and hovering shows both and the reasons.
 `ris map`, run by you at a terminal, writes one page to
 `.osiris/map.html` (which git ignores), replacing the last one, opens
 it in your browser and prints where it is; if the browser does not
-open, it says so and you open the file yourself. The page needs no
+open, it says so and you open the file yourself. A `ris` built with
+its `window` feature (`cargo build --release -p ris --features window`;
+put the same command in `build` under `[install]` and the installed
+`ris` has it) opens the page in a native window of its own instead:
+`ris map` returns once the page is shown, and the window stays until
+you close it. That build needs the system's web view: on macOS it is
+part of the system, and on Linux it is the package
+`libwebkit2gtk-4.1-dev`. The page needs no
 network (d3 is inlined) and has two views of the same files, switched
 in its header. It opens on the list: the changed files ranked by risk,
 the highest first, each with its lines added and removed and the
@@ -456,8 +503,12 @@ ris phase close                        # merges phase/P-1 into main
 `ris phase close` merges what is merged into the main line and carries
 the rest over: an item not merged loses its phase tag and stays open,
 in the backlog, until you tag it for a later phase with `ris item
-phase` or bring it into the open one with `ris item bring-in`. The
-report it prints says how many items the phase opened with (those
+phase` or bring it into the open one with `ris item bring-in`. An
+item that will not be built, and that nothing replaces, you retire
+with `ris item retire I-n --reason "<why>"`: it leaves the work for
+good, is never carried over again, and `ris show I-n` gives the
+reason. An item still in the work that waits on it is retired in the
+same command, or the retirement is refused. The report it prints says how many items the phase opened with (those
 tagged for it before it opened), how many were added while it was
 open (planned), how many were merged while it was open, and how many
 carry over; `ris report` shows the same line for the open phase, as

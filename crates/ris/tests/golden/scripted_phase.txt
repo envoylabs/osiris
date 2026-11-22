@@ -35,6 +35,11 @@ With it unset, `ris` refuses every command. Use only your own seat;
 as it is, with no `RIS_AGENT=` or path in front, since the seat's
 allow rules match `ris ...`.
 
+The code is yours. The seats are the maintainers of the project they
+work in, and its long-term quality is up to you: not only that an item
+passes its checks, but that what it leaves behind is code you would
+want to keep working in.
+
 ## The loop
 
 ```
@@ -438,12 +443,14 @@ $ ris --json report
     "merged_ahead": [],
     "messages": 0,
     "phase": {
+      "branch": null,
       "goal": "first slice",
       "id": "P-1",
       "state": "open"
     },
     "previous_report": "<hash>",
     "report": "<hash>",
+    "retired": 0,
     "substantive": [
       {
         "about": "I-3",
@@ -573,12 +580,14 @@ $ ris --json report
     "merged_ahead": [],
     "messages": 0,
     "phase": {
+      "branch": null,
       "goal": "first slice",
       "id": "P-1",
       "state": "open"
     },
     "previous_report": "<hash>",
     "report": "<hash>",
+    "retired": 0,
     "substantive": [
       {
         "about": "I-3",
@@ -718,12 +727,14 @@ $ ris --json report
     "merged_ahead": [],
     "messages": 0,
     "phase": {
+      "branch": null,
       "goal": "first slice",
       "id": "P-1",
       "state": "open"
     },
     "previous_report": "<hash>",
     "report": "<hash>",
+    "retired": 0,
     "substantive": [
       {
         "about": "I-3",
@@ -1243,12 +1254,14 @@ $ ris --json report
     "merged_ahead": [],
     "messages": 1,
     "phase": {
+      "branch": null,
       "goal": "first slice",
       "id": "P-1",
       "state": "closed"
     },
     "previous_report": "<hash>",
     "report": "<hash>",
+    "retired": 0,
     "substantive": [
       {
         "about": "I-3",

@@ -28,11 +28,23 @@ pub enum Command {
     PhaseOpen {
         goal: Text,
         move_on: bool,
+        /// The name the phase's branch takes, where the shell was given
+        /// one in place of its default. Kept as the `branch` text of
+        /// the opening event, beside `goal`.
+        branch: Option<Text>,
     },
     /// Closes the open phase. The report hash is taken over the log's
     /// head and the previous report, never over a rendering. Its items
     /// that have not merged lose their tag.
     PhaseClose,
+    /// Closes the open phase as `PhaseClose` does, and records where
+    /// its work is on the main line: the commits there where it starts
+    /// and ends. For a phase whose closing merge was made elsewhere,
+    /// which the shell has found on the main line.
+    PhaseCloseMerged {
+        first: CommitHash,
+        last: CommitHash,
+    },
     /// Records that the person reviewed the open phase at `tip`, the
     /// commit at the head of its work (none outside git). The person's
     /// only.
@@ -195,6 +207,15 @@ pub enum Command {
         by: ItemId,
         actor: Actor,
     },
+    /// Take items that will not be built out of the work for good, with
+    /// one reason for them all and nothing to replace them. Each must be
+    /// unmerged and held by no seat, and none may be waited on by an
+    /// item left unretired. The person's only.
+    Retire {
+        items: Vec<ItemId>,
+        reason: Text,
+        actor: Actor,
+    },
     /// Bring an unstarted item from the backlog into the open phase.
     /// The person's only.
     BringIn {
@@ -229,7 +250,7 @@ impl Command {
     pub fn kind(&self) -> CommandKind {
         match self {
             Self::PhaseOpen { .. } => CommandKind::PhaseOpen,
-            Self::PhaseClose => CommandKind::PhaseClose,
+            Self::PhaseClose | Self::PhaseCloseMerged { .. } => CommandKind::PhaseClose,
             Self::PhaseReview { .. } => CommandKind::PhaseReview,
             Self::ItemAdd { .. } => CommandKind::ItemAdd,
             Self::Claim { .. } => CommandKind::Claim,
@@ -250,6 +271,7 @@ impl Command {
             Self::Release { .. } => CommandKind::Release,
             Self::Audit { .. } => CommandKind::Audit,
             Self::Supersede { .. } => CommandKind::Supersede,
+            Self::Retire { .. } => CommandKind::Retire,
             Self::BringIn { .. } => CommandKind::BringIn,
             Self::Tag { .. } => CommandKind::Tag,
             Self::RunStart { .. } => CommandKind::RunStart,
@@ -305,6 +327,7 @@ fn item_state_kind(s: &ItemState) -> ItemStateKind {
         ItemState::Done { .. } => ItemStateKind::Done,
         ItemState::Merged { .. } => ItemStateKind::Merged,
         ItemState::Superseded { .. } => ItemStateKind::Superseded,
+        ItemState::Retired { .. } => ItemStateKind::Retired,
     }
 }
 
@@ -316,6 +339,7 @@ fn item_state_name(k: ItemStateKind) -> &'static str {
         ItemStateKind::Done => "done",
         ItemStateKind::Merged => "merged",
         ItemStateKind::Superseded => "superseded",
+        ItemStateKind::Retired => "retired",
     }
 }
 
@@ -409,13 +433,20 @@ pub fn report_hash(previous: &Hash, head: &Hash) -> Hash {
 pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
     let kind = command.kind();
     match command {
-        Command::PhaseOpen { goal, move_on } => {
+        Command::PhaseOpen {
+            goal,
+            move_on,
+            branch,
+        } => {
             if state.open_phase().is_some() {
                 return Err(Refusal::PhaseAlreadyOpen);
             }
             let phase = state.next_phase_id();
-            let mut effects =
-                vec![Effect::new(Structure::PhaseOpened { phase }).with("goal", goal)];
+            let mut opened = Effect::new(Structure::PhaseOpened { phase }).with("goal", goal);
+            if let Some(branch) = branch {
+                opened = opened.with("branch", branch);
+            }
+            let mut effects = vec![opened];
             if *move_on {
                 let next = PhaseId(phase.0.saturating_add(1));
                 effects.extend(state.tagged(phase).map(|i| {
@@ -428,7 +459,7 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
             Ok(effects)
         }
 
-        Command::PhaseClose => {
+        Command::PhaseClose | Command::PhaseCloseMerged { .. } => {
             let phase = state.open_phase().ok_or(Refusal::NoOpenPhase)?.id;
             // The report covers the log up to and including this close;
             // the close's own hash is not known until sealed, so the
@@ -449,6 +480,15 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                         })
                     }),
             );
+            // Last, so the close is the first event either way and the
+            // report is taken over the same head.
+            if let Command::PhaseCloseMerged { first, last } = command {
+                effects.push(Effect::new(Structure::PhaseMerged {
+                    phase,
+                    first: first.clone(),
+                    last: last.clone(),
+                }));
+            }
             Ok(effects)
         }
 
@@ -477,8 +517,11 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                 Tag::Phase(p) => return Err(Refusal::PhaseIsClosed(*p)),
             };
             for d in depends_on {
-                if !state.items.contains_key(d) {
-                    return Err(Refusal::UnknownItem(*d));
+                let dep = state.items.get(d).ok_or(Refusal::UnknownItem(*d))?;
+                // A retired item never merges: depending on it would wait
+                // for ever.
+                if let ItemState::Retired { .. } = state.items[&state.current(dep.id)].state {
+                    return Err(Refusal::DependsOnRetired(*d));
                 }
             }
             let item = state.next_item_id();
@@ -829,7 +872,9 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                 let i = state.items.get(item).ok_or(Refusal::UnknownItem(*item))?;
                 if matches!(
                     i.state,
-                    ItemState::Merged { .. } | ItemState::Superseded { .. }
+                    ItemState::Merged { .. }
+                        | ItemState::Superseded { .. }
+                        | ItemState::Retired { .. }
                 ) {
                     return Err(Refusal::SettledItem(*item));
                 }
@@ -956,6 +1001,60 @@ pub fn apply(state: &State, command: &Command) -> Result<Vec<Effect>, Refusal> {
                 item: *item,
                 by: *by,
             })])
+        }
+
+        Command::Retire {
+            items,
+            reason,
+            actor,
+        } => {
+            if *actor != Actor::Person {
+                return Err(Refusal::RetireIsForThePerson);
+            }
+            if reason.as_str().trim().is_empty() {
+                return Err(Refusal::RetireNeedsReason);
+            }
+            // Each item once, in the order named.
+            let mut named = Vec::new();
+            for item in items {
+                if !named.contains(item) {
+                    named.push(*item);
+                }
+            }
+            if named.is_empty() {
+                return Err(Refusal::NothingToRetire);
+            }
+            for item in &named {
+                item_move(state, *item, kind)?;
+            }
+            // An item still in the work that waits on one named here would
+            // wait for ever: refuse, unless it is named too.
+            for item in &named {
+                let waiting: Vec<ItemId> = state
+                    .items
+                    .values()
+                    .filter(|w| {
+                        !named.contains(&w.id)
+                            && !matches!(
+                                w.state,
+                                ItemState::Merged { .. }
+                                    | ItemState::Superseded { .. }
+                                    | ItemState::Retired { .. }
+                            )
+                            && w.depends_on.iter().any(|d| state.current(*d) == *item)
+                    })
+                    .map(|w| w.id)
+                    .collect();
+                if !waiting.is_empty() {
+                    return Err(Refusal::RetireWaitedOn {
+                        item: *item,
+                        waiting,
+                    });
+                }
+            }
+            Ok(vec![
+                Effect::new(Structure::ItemsRetired { items: named }).with("reason", reason),
+            ])
         }
 
         Command::BringIn { item, actor } => {

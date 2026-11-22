@@ -112,6 +112,7 @@ fn state_name(s: &ItemState) -> &'static str {
         ItemState::Done { .. } => "done",
         ItemState::Merged { .. } => "merged",
         ItemState::Superseded { .. } => "superseded",
+        ItemState::Retired { .. } => "retired",
     }
 }
 
@@ -140,6 +141,7 @@ fn item_json(l: &Loaded, i: &Item) -> schema::Item {
         evidence: None,
         commit: None,
         superseded_by: None,
+        retired_reason: None,
         waiting_on: None,
         decisions: None,
         check_runs: None,
@@ -153,6 +155,7 @@ fn item_json(l: &Loaded, i: &Item) -> schema::Item {
             v.commit = Some(commit.clone());
         }
         ItemState::Superseded { by } => v.superseded_by = Some(*by),
+        ItemState::Retired { at } => v.retired_reason = Some(l.text(*at, "reason").to_owned()),
         ItemState::Ready => {
             let waiting = l.state.unlanded_dependencies(i);
             if !waiting.is_empty() {
@@ -666,6 +669,15 @@ fn agent_inbox(l: &Loaded, name: &AgentName) -> (String, schema::Inbox) {
     )
 }
 
+/// The line that names `phase`'s branch, under the phase's own line:
+/// only where the branch was given a name when the phase opened, since
+/// the default says nothing the phase's id does not.
+fn branch_line(l: &Loaded, phase: &ris_core::primitives::Phase) -> String {
+    l.branch_given(phase)
+        .map(|name| format!("branch: {name}\n"))
+        .unwrap_or_default()
+}
+
 /// `ris report`: the phase as the person reads it. Substantive
 /// decisions in full, mechanical ones one line each, items by state,
 /// and the chain head.
@@ -694,8 +706,10 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
         .state
         .items
         .values()
+        // A retired item is out of the work: counted below, never listed.
         .filter(|i| {
             scope.item(i)
+                && !matches!(i.state, ItemState::Retired { .. })
                 && (i.phase == Some(phase.id)
                     || !matches!(
                         i.state,
@@ -718,6 +732,7 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
         },
         l.text(phase.at, "goal")
     );
+    s.push_str(&branch_line(l, phase));
     let mut counts = std::collections::BTreeMap::new();
     for i in &items {
         *counts.entry(shown_state(l, i)).or_insert(0usize) += 1;
@@ -815,6 +830,18 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
         "audited: {audited} of {} done or merged\n",
         finished.len()
     ));
+    let retired = l
+        .state
+        .items
+        .values()
+        .filter(|i| matches!(i.state, ItemState::Retired { .. }))
+        .count();
+    if retired > 0 {
+        s.push_str(&format!(
+            "retired: {retired} item{}, out of the work for good\n",
+            if retired == 1 { "" } else { "s" }
+        ));
+    }
     s.push_str(&format!(
         "messages: {}\nlog: {} events, head {}\nreport: {}{}\nprevious report: {}",
         l.state.messages.len(),
@@ -838,6 +865,7 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
                     PhaseState::Open => "open",
                     PhaseState::Closed { .. } => "closed",
                 },
+                branch: l.branch_given(phase).map(str::to_owned),
             },
             items: items.iter().map(|i| item_json(l, i)).collect(),
             tally: t,
@@ -852,6 +880,7 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
                     action: *action,
                 })
                 .collect(),
+            retired,
             log: schema::LogHead {
                 len: l.state.len,
                 head: l.state.head,
@@ -865,7 +894,8 @@ fn report_in(l: &Loaded, scope: Scope) -> (String, schema::Report) {
 /// What a phase came to: the items it opened with, the items planned
 /// in it, the merges made while it was open (an item carried in from an
 /// earlier phase counts where it merged), and the items left unsettled,
-/// neither merged nor superseded, which the next phase inherits.
+/// neither merged, superseded nor retired, which the next phase
+/// inherits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Tally {
     /// The items tagged for the phase before it opened that it opened
@@ -910,7 +940,7 @@ pub fn tally(l: &Loaded, phase: PhaseId) -> Tally {
         planned += usize::from(i.added_in == Some(phase));
         carried_over += usize::from(!matches!(
             i.state,
-            ItemState::Merged { .. } | ItemState::Superseded { .. }
+            ItemState::Merged { .. } | ItemState::Superseded { .. } | ItemState::Retired { .. }
         ));
     }
     Tally {
@@ -1141,6 +1171,9 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
             }
         }
         ItemState::Superseded { by } => s.push_str(&format!("  superseded by: {by}\n")),
+        ItemState::Retired { at } => {
+            s.push_str(&format!("  retired: {}\n", l.text(*at, "reason")));
+        }
         ItemState::Ready => {}
     }
     if !i.audited_by.is_empty() {
@@ -1201,7 +1234,8 @@ fn show_item(l: &Loaded, i: &Item) -> Output {
 /// tip of the phase's work now ([`crate::review::stands`]). `None` with
 /// no phase open.
 ///
-/// Every item of the phase that is not superseded is in exactly one of
+/// Every item of the phase that is neither superseded nor retired is in
+/// exactly one of
 /// `merged`, `in_progress` (claimed, or done and not yet merged),
 /// `set_aside` (blocked) and `not_started`, so the four add up to
 /// `items` and can be checked against the item list.
@@ -1216,7 +1250,7 @@ pub fn phase_state(
     let (mut in_progress, mut set_aside) = (Vec::new(), Vec::new());
     for i in l.state.items.values().filter(|i| scope.item(i)) {
         match &i.state {
-            ItemState::Superseded { .. } => continue,
+            ItemState::Superseded { .. } | ItemState::Retired { .. } => continue,
             ItemState::Merged { .. } => merged += 1,
             ItemState::Ready => not_started += 1,
             ItemState::Claimed { agent } => in_progress.push(schema::InProgress {
@@ -1338,8 +1372,9 @@ pub fn summary(
     let (rep_text, rep) = report_in(l, scope);
     let (rdy_text, rdy) = ready_in(l, scope);
     let graph = crate::graph::Graph::of_scope(l, scope);
-    // Unsettled work left out: items not merged or superseded and open
-    // decisions that are outside the scope and not drawn in the graph.
+    // Unsettled work left out: items not merged, superseded or retired
+    // and open decisions that are outside the scope and not drawn in
+    // the graph.
     let carried_items = l
         .state
         .items
@@ -1349,7 +1384,9 @@ pub fn summary(
                 && !graph.nodes.contains(&Node::Item(i.id))
                 && !matches!(
                     i.state,
-                    ItemState::Merged { .. } | ItemState::Superseded { .. }
+                    ItemState::Merged { .. }
+                        | ItemState::Superseded { .. }
+                        | ItemState::Retired { .. }
                 )
         })
         .count();
@@ -1413,6 +1450,7 @@ pub fn summary(
             phase.id,
             l.text(phase.at, "goal")
         ));
+        s.push_str(&branch_line(l, phase));
         if !counts.is_empty() {
             s.push_str(&format!(
                 "items: {}\n",

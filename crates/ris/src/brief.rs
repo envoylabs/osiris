@@ -223,5 +223,6 @@ fn state_word(s: &ItemState) -> &'static str {
         ItemState::Done { .. } => "done",
         ItemState::Merged { .. } => "merged",
         ItemState::Superseded { .. } => "superseded",
+        ItemState::Retired { .. } => "retired",
     }
 }

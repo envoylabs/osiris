@@ -294,6 +294,30 @@ phase has one branch, and every item of the phase merges onto it.
 - **One merge commit per phase.** The phase's branch merges into the
   main line without fast-forward. `git log --first-parent` then shows
   one commit per phase, and the full log shows the items.
+- **A phase closes when its work is on the main line.** The closing
+  merge made here puts it there. Where the merge is left to a git
+  server (`merge_on_close = false`), the person pushes the branch, the
+  server merges it, the person pulls, and `ris phase close` looks for
+  the work on the local main line: the branch's tip in its history (a
+  merge commit or a fast-forward), a commit making the same change for
+  each of the branch's (a rebase), or one commit making the branch's
+  whole change (a squash), compared by git's patch id. Until it is
+  found the close is refused and the phase stays open, so what the
+  server's build or review asks for is still work of that phase. The
+  close records the first and last commits of the work on the main
+  line as a `phase_merged` event, which is what the closed phase's map
+  reads; a merge resolved by hand makes a different change, and the
+  person names its commit (`--merged-at`). `ris` fetches and pushes
+  nothing.
+- **A phase's branch is named once, when the phase opens.** It is
+  `phase/P-n`, or the name `ris phase open --branch <name>` gives where
+  a project's convention needs another. A given name is kept as the
+  `branch` text of the phase's opening event, beside its goal, and is
+  read back in one place, so merges, `ris up`, `ris status`, `ris map`
+  and the closing merge cannot disagree about which branch the phase's
+  work is on. It is text, not structure: it is scanned as it goes in
+  and can be removed like any other, and a phase whose name was removed
+  is read as having the default.
 - **Commits carry the git identity configured on the machine.** That is
   the user's to set, and the harness does not override it for agents'
   commits. Which agent wrote an item is in the log, under the agent's
@@ -569,7 +593,14 @@ Functional core, imperative shell; hexagonal between components.
   JSON. Given a git range instead of a phase (`ris map A..B`), it maps
   the change between two commits of any repository, a project or not.
   The person's `ris map` at a terminal writes that page inside
-  `.osiris` and opens it in the browser; a seat's never opens anything,
+  `.osiris` and opens it: in a native window of its own where `ris` is
+  built with its `window` feature, in the browser where not. The window
+  holds the system's web view (wry with tao, in the crate `ris-window`,
+  which the command line builds without) and is held by `ris` run again
+  as a process of its own, which serves the page to it under a scheme
+  of its own, with no port and no server, and stays until the window is
+  closed, so `ris map` returns as soon as the page is shown. A seat's
+  never opens anything,
   and `ris map --list` prints the files ranked with their reasons. The
   page has three views of the one document: the ranked list, which it
   opens on; the graph of files; and one changed function laid out as

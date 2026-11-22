@@ -186,7 +186,7 @@ pub fn phase_branch(p: &Project, l: &Loaded) -> Option<String> {
     if !p.config.phase_branches {
         return None;
     }
-    let name = format!("phase/{}", l.state.open_phase()?.id);
+    let name = l.phase_branch(l.state.open_phase()?);
     git(
         &p.root,
         &[

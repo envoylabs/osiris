@@ -548,7 +548,8 @@ fn a_local_setup_leaves_nothing_for_git_to_see() {
 
 /// The remote-merge settings: without trailers, a plain commit merges;
 /// without merge_on_close, closing leaves the main line and the phase
-/// branch untouched for a merge on the git server.
+/// branch untouched for a merge on the git server, and the phase stays
+/// open until that merge is on the main line here.
 #[test]
 fn trailers_and_the_closing_merge_can_be_left_to_the_git_server() {
     let (main, trees) = setup("remote", "[checks.ok]\ncommand = \"true\"\n", &["heron"]);
@@ -572,13 +573,26 @@ fn trailers_and_the_closing_merge_can_be_left_to_the_git_server() {
     );
     ok(h, Some("heron"), &["merge", "I-1"]);
     let main_before = rev(&main, "main");
-    let out = ok(&main, None, &["phase", "close", "--unreviewed"]);
-    assert!(out.contains("left to the git server"), "{out}");
+    let out = ris(&main, None, &["phase", "close", "--unreviewed"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("leaves the merge to the git server"), "{err}");
+    assert!(err.contains("next: push phase/P-1"), "{err}");
     assert_eq!(rev(&main, "main"), main_before, "main did not move");
     assert_eq!(branch(&main), "main");
+    let tip = rev(&main, "phase/P-1");
+    assert!(!tip.is_empty(), "the phase branch is kept");
+    assert!(ok(&main, None, &["report"]).starts_with("P-1 open"));
+
+    // The main line moved forward to the branch, as a pull of the
+    // server's merge moves it: the close finds the work and closes.
+    git(&main, &["merge", "-q", "--ff-only", "phase/P-1"]);
+    let out = ok(&main, None, &["phase", "close", "--unreviewed"]);
     assert!(
-        !rev(&main, "phase/P-1").is_empty(),
-        "the phase branch is kept"
+        out.contains("closing merge: made elsewhere; P-1's work is on main"),
+        "{out}"
     );
+    assert!(out.contains("; phase/P-1 deleted"), "{out}");
+    assert_eq!(rev(&main, "main"), tip, "the close moved nothing");
     assert!(ok(&main, None, &["report"]).starts_with("P-1 closed"));
 }
