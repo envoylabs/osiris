@@ -6,6 +6,7 @@
 //! failed check exits 3 with the failures and their evidence ids; any
 //! other error exits 1.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -2988,14 +2989,18 @@ fn up(p: &mut Project, actor: &Actor, named: &[String]) -> Result<Output, CliErr
 /// fast-forward, and only when nothing can be lost: the seat's branch
 /// holds no commits of its own, it holds no claimed item, and its
 /// worktree has no uncommitted or untracked files. A seat behind that
-/// fails one of those is left alone and the line says why. The one
-/// exception is a branch with commits of its own behind a change to a
-/// rules file, which is rebased (`rebase_over_rules`). One line per
-/// seat that was behind.
+/// fails one of those is left alone and the line says why. Two kinds
+/// of branch with commits of its own are not left: one whose commits
+/// are all merged items of phases whose work is on the main line, as
+/// after a server's squash or rebase, which is moved to the phase
+/// branch since those commits hold nothing that can be lost; and one
+/// behind a change to a rules file, which is rebased
+/// (`rebase_over_rules`). One line per seat that was behind.
 fn bring_up_to_phase(p: &mut Project, l: &ris::project::Loaded, named: &[String]) -> Vec<String> {
     let Some(phase) = ris::status::phase_branch(p, l) else {
         return Vec::new();
     };
+    let settled = settled_commits(l);
     let mut lines = Vec::new();
     for s in ris::status::seats(p, l) {
         if !named.contains(&s.seat) || !s.role.writes() {
@@ -3011,6 +3016,41 @@ fn bring_up_to_phase(p: &mut Project, l: &ris::project::Loaded, named: &[String]
             continue;
         }
         let seat = &s.seat;
+        // Commits of its own that are all merged items of phases whose
+        // work is on the main line: a server's squash or rebase put
+        // their changes there as other commits, so these are ancestors
+        // of nothing and hold nothing that can be lost. The seat is
+        // moved to the phase's branch, where a fast-forward cannot go.
+        if s.ahead.unwrap_or(1) > 0
+            && let Some((count, phases)) = only_settled(dir, &phase, &settled)
+        {
+            let held = if let Some(item) = &s.claim {
+                Some(format!("it holds {item}"))
+            } else if s.uncommitted.unwrap_or(1) > 0 {
+                Some("its worktree has uncommitted changes".to_owned())
+            } else if s.running {
+                Some(format!(
+                    "its agent is running\n  next: `ris up {seat}` once it has stopped"
+                ))
+            } else {
+                None
+            };
+            lines.push(match held {
+                Some(why) => format!("{seat}: {behind} behind {phase}, left alone: {why}"),
+                None => match git(dir, &["checkout", "--quiet", "-B", seat, &phase]) {
+                    Ok(_) => format!(
+                        "{seat}: moved to {phase}: the {count} commit(s) of its own are merged \
+                         items of {phases}, whose work is on {}, so nothing is lost",
+                        p.config.main_line
+                    ),
+                    Err(e) => format!(
+                        "{seat}: {behind} behind {phase}, left alone: {}",
+                        e.lines().next().unwrap_or("the move failed")
+                    ),
+                },
+            });
+            continue;
+        }
         // A branch with commits of its own is the seat's to rebase, at
         // its merge. It cannot when the phase branch changed a rules
         // file since, which its sandbox will not let it write: then the
@@ -3043,6 +3083,50 @@ fn bring_up_to_phase(p: &mut Project, l: &ris::project::Loaded, named: &[String]
         lines.push(line);
     }
     lines
+}
+
+/// The commit of every item merged in a phase whose work the log
+/// records on the main line (a `phase_merged` event, written when a
+/// phase closes on a merge made elsewhere), with its phase. Such a
+/// commit's change is on the main line whether or not the commit is.
+fn settled_commits(l: &ris::project::Loaded) -> BTreeMap<String, PhaseId> {
+    use ris_core::event::Structure;
+    let mut open = None;
+    let mut commits = BTreeMap::new();
+    for e in &l.log {
+        match &e.structure {
+            Structure::PhaseOpened { phase } => open = Some(*phase),
+            Structure::PhaseClosed { .. } => open = None,
+            Structure::ItemMerged { commit, .. } => {
+                if let Some(phase) = open.filter(|p| l.state.on_main.contains_key(p)) {
+                    commits.insert(commit.0.clone(), phase);
+                }
+            }
+            _ => {}
+        }
+    }
+    commits
+}
+
+/// Whether the branch checked out in `dir` holds, beyond `phase`, only
+/// commits in `settled`: how many, and the phases they are of. `None`
+/// when it holds none, or any other commit.
+fn only_settled(
+    dir: &std::path::Path,
+    phase: &str,
+    settled: &BTreeMap<String, PhaseId>,
+) -> Option<(usize, String)> {
+    let own = git(dir, &["rev-list", &format!("{phase}..HEAD")]).ok()?;
+    let mut phases = std::collections::BTreeSet::new();
+    let mut count = 0;
+    for commit in own.lines().filter(|c| !c.is_empty()) {
+        phases.insert(*settled.get(commit)?);
+        count += 1;
+    }
+    (count > 0).then(|| {
+        let phases: Vec<String> = phases.iter().map(PhaseId::to_string).collect();
+        (count, phases.join(", "))
+    })
 }
 
 /// The rules files the phase branch has changed since the branch checked

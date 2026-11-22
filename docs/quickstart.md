@@ -156,6 +156,14 @@ is refused for a commit that is not on the main line. `ris map P-n`
 for a phase closed this way reads the recorded commits, so it does not
 depend on the branch or on what the server called its merge.
 
+After a squash or a rebase on the server, a seat's branch still holds
+the closed phase's own commits, which are in the main line's history
+nowhere. `ris up` for the next phase moves such a seat to the new
+phase's branch when every commit of its own is a merged item of a phase
+closed this way, since their changes are on the main line; its line
+says so. A seat holding an item, uncommitted files, a running agent or
+a commit that no closed phase carries is left alone, as before.
+
 Each builder's worktree goes where `worktrees` says: a path template,
 relative to the main checkout unless absolute, in which `{repo}` is the
 checkout's directory name and `{seat}` the seat's name. The default,
